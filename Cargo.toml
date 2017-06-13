@@ -1,0 +1,12 @@
+[package]
+name = "locomix"
+version = "0.1.0"
+authors = ["Sergey Ulanov <sulanov@gmail.com>"]
+
+[dependencies]
+alsa = "0.1.4"
+libc = "0.2.21"
+getopts = "0.2"
+rouille = "1.0.1"
+rustc-serialize = "0.3.22"
+nix = "0.8.0"
