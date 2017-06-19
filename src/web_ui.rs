@@ -1,5 +1,6 @@
 use base::*;
 use rouille;
+use rouille::Response;
 use ui::*;
 use std::fs::File;
 use std::io::Read;
@@ -20,16 +21,16 @@ fn serve_web(address: &str, shared_state: SharedState) {
         router!(request,
             (GET) (/) => {
                 match load_file("web/index.html") {
-                    Ok(html) => rouille::Response::html(html),
+                    Ok(html) => Response::html(html),
                     Err(error) => {
                         println!("Can't load index.html: {}", error);
-                        rouille::Response::text("Internal Server Error").with_status_code(500)
+                        Response::text("Internal Server Error").with_status_code(500)
                     }
                 }
             },
             (GET) (/api/state) => {
                 let state_controller = shared_state.lock();
-                rouille::Response::json(state_controller.state())
+                Response::json(state_controller.state())
             },
             (POST) (/api/state) => {
                  #[derive(RustcDecodable)]
@@ -72,7 +73,7 @@ fn serve_web(address: &str, shared_state: SharedState) {
                 match json.output {
                     Some(output) => {
                           if output > state_controller.state().outputs.len() {
-                            return rouille::Response::text("Invalid output id").with_status_code(404)
+                            return Response::text("Invalid output id").with_status_code(404)
                           }
                           state_controller.select_output(output);
                         }
@@ -118,7 +119,7 @@ fn serve_web(address: &str, shared_state: SharedState) {
                     state_controller.set_crossfeed(crossfeed_config);
                 });
 
-                rouille::Response::json(&EmptyResponse{})
+                Response::json(&EmptyResponse{})
             },
             (POST) (/api/inputs/{id: usize}) => {
                  #[derive(RustcDecodable)]
@@ -131,14 +132,14 @@ fn serve_web(address: &str, shared_state: SharedState) {
 
                 let mut state_controller = shared_state.lock();
                 if id >= state_controller.state().inputs.len() {
-                    return rouille::Response::text("Invalid input id").with_status_code(404)
+                    return Response::text("Invalid input id").with_status_code(404)
                 }
 
                 state_controller.set_input_gain(id, gain);
 
-                rouille::Response::json(&EmptyResponse{})
+                Response::json(&EmptyResponse{})
             },
-            _ => rouille::Response::empty_404()
+            _ => Response::empty_404()
         )
     });
 }

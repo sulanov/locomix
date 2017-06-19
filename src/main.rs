@@ -226,7 +226,10 @@ fn run() -> Result<()> {
     opts.optmulti("o", "output", "Output device name", "OUTPUT");
     opts.optopt("r", "sample-rate", "Output sample rate", "RATE");
     opts.optopt("w", "web-address", "Address:port for web UI", "ADDRESS");
-    opts.optopt("s", "state-script", "Script to run on state change", "SCRIPT");
+    opts.optopt("s",
+                "state-script",
+                "Script to run on state change",
+                "SCRIPT");
     opts.optmulti("c", "control-device", "Control input device", "INPUT_DEV");
     opts.optmulti("l", "light-device", "Light device", "LIGHT_DEV");
     opts.optflag("g", "loudness-graph", "Print out loudness graph");
