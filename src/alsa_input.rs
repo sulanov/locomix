@@ -71,8 +71,8 @@ pub struct AlsaInput {
 const TARGET_RATE: usize = 48000;
 const INPUT_FRAME_SIZE: usize = 256;
 
-// Deactivate input after 60 seconds of silence.
-const SILENCE_PERIOD_SECONDS: usize = 60;
+// Deactivate input after 30 seconds of silence.
+const SILENCE_PERIOD_SECONDS: usize = 30;
 
 impl AlsaInput {
     pub fn open(name: &str) -> Result<AlsaInput> {

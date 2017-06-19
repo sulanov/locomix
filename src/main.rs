@@ -129,7 +129,7 @@ fn run_loop(mut inputs: Vec<Box<Input>>,
     let mut voice_boost_filter: Option<StereoFilter<VoiceBoostFilter>> = None;
     let mut crossfeed_filter = CrossfeedFilter::new();
 
-    let mut exclusive_mux_mode = false;
+    let mut exclusive_mux_mode = true;
 
     loop {
         let mut frame = Frame::new(sample_rate, outputs[selected_output].period_size());
