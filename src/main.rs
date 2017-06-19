@@ -129,12 +129,15 @@ fn run_loop(mut inputs: Vec<Box<Input>>,
     let mut voice_boost_filter: Option<StereoFilter<VoiceBoostFilter>> = None;
     let mut crossfeed_filter = CrossfeedFilter::new();
 
+    let mut exclusive_mux_mode = false;
+
     loop {
         let mut frame = Frame::new(sample_rate, outputs[selected_output].period_size());
 
         let mut have_data = false;
         for m in mixers.iter_mut() {
             have_data |= try!(m.mix_into(&mut frame));
+            if have_data && exclusive_mux_mode { break }
         }
 
         let now = Instant::now();
@@ -204,6 +207,12 @@ fn run_loop(mut inputs: Vec<Box<Input>>,
                 }
                 ui::UiMessage::SetCrossfeed { level, delay_ms } => {
                     crossfeed_filter.set_params(level, delay_ms);
+                }
+                ui::UiMessage::SetMuxMode { mux_mode: ui::MuxMode::Exclusive } => {
+                    exclusive_mux_mode = true;
+                }
+                ui::UiMessage::SetMuxMode { mux_mode: ui::MuxMode::Mixer } => {
+                    exclusive_mux_mode = false;
                 }
             }
         }

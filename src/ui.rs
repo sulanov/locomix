@@ -116,11 +116,18 @@ impl FeatureConfig {
     }
 }
 
+#[derive(Copy, Clone, RustcEncodable)]
+pub enum MuxMode {
+    Exclusive,
+    Mixer,
+}
+
 #[derive(RustcEncodable)]
 pub struct State {
     pub inputs: Vec<InputState>,
     pub outputs: Vec<OutputState>,
     pub output: usize,
+    pub mux_mode: MuxMode,
     pub loudness: LoudnessConfig,
     pub crossfeed: CrossfeedConfig,
     pub voice_boost: FeatureConfig,
@@ -133,6 +140,7 @@ pub enum UiMessage {
     SetInputGain { device: DeviceId, gain: Gain },
     SetVoiceBoost { boost: Gain },
     SetCrossfeed { level: f32, delay_ms: f32 },
+    SetMuxMode { mux_mode: MuxMode },
 }
 
 pub type UiMessageReceiver = mpsc::Receiver<UiMessage>;
@@ -169,6 +177,7 @@ impl StateController {
                 inputs: inputs,
                 outputs: outputs,
                 output: 0,
+                mux_mode: MuxMode::Exclusive,
                 loudness: LoudnessConfig::default(),
                 crossfeed: CrossfeedConfig::default(),
                 voice_boost: FeatureConfig::default(),
