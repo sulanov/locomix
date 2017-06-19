@@ -137,7 +137,9 @@ fn run_loop(mut inputs: Vec<Box<Input>>,
         let mut have_data = false;
         for m in mixers.iter_mut() {
             have_data |= try!(m.mix_into(&mut frame));
-            if have_data && exclusive_mux_mode { break }
+            if have_data && exclusive_mux_mode {
+                break;
+            }
         }
 
         let now = Instant::now();

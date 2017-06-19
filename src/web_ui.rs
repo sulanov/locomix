@@ -57,6 +57,7 @@ fn serve_web(address: &str, shared_state: SharedState) {
                  struct RequestParams {
                      volume: Option<f32>,
                      output: Option<usize>,
+                     mux_mode: Option<MuxMode>,
                      loudness: Option<LoudnessParams>,
                      voice_boost: Option<FeatureParams>,
                      crossfeed: Option<CrossfeedParams>,
@@ -79,6 +80,10 @@ fn serve_web(address: &str, shared_state: SharedState) {
                         }
                     None => ()
                 };
+
+                json.mux_mode.map( |mux_mode| {
+                    state_controller.set_mux_mode(mux_mode);
+                });
 
                 json.loudness.map( |loudness| {
                     let mut loudness_config = state_controller.state().loudness.clone();

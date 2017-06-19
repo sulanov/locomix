@@ -27,9 +27,16 @@
   </div>
 
   <div class="output_selector">
+    <header>Output</header>
     <div class="template">
       <label><input type="radio" name="output"></input><span class="name"></span></label>
     </div>
+  </div>
+
+  <div class="mode_selector">
+    <header>Mode</header>
+    <label><input type="radio" name="mux_mode" value="Exclusive"></input>Exclusive</label>
+    <label><input type="radio" name="mux_mode" value="Mixer"></input>Mixer</label>
   </div>
 
   <div class="loudness_box">
@@ -239,8 +246,23 @@ document.body.onload = () => {
     update_volume_slider(state);
 
     let template = document.querySelector(".output_selector .template")
-    for (output_id in state.outputs) {
+    for (var output_id in state.outputs) {
       add_output(state, output_id, template);
+    }
+
+    document.querySelector(
+        'input[value="' +  state.mux_mode +'"][name="mux_mode"]')
+      .checked = true;
+    for (var mode_radio of document.querySelectorAll('input[name="mux_mode"]')) {
+      mode_radio.onchange = (event) => {
+        if (event.target.checked) {
+          makeRequest({
+            method: "POST",
+            url: "/api/state",
+            params: {"mux_mode": event.target.value}
+          })
+        }
+      }
     }
 
     let loudness_box = document.querySelector(".loudness_box");

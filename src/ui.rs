@@ -116,7 +116,7 @@ impl FeatureConfig {
     }
 }
 
-#[derive(Copy, Clone, RustcEncodable)]
+#[derive(Copy, Clone, RustcEncodable, RustcDecodable)]
 pub enum MuxMode {
     Exclusive,
     Mixer,
@@ -254,6 +254,11 @@ impl StateController {
     pub fn toggle_output(&mut self) {
         let next_output = (self.state.output + 1) % self.state.outputs.len();
         self.select_output(next_output);
+    }
+
+    pub fn set_mux_mode(&mut self, mux_mode: MuxMode) {
+        self.state.mux_mode = mux_mode;
+        self.broadcast(UiMessage::SetMuxMode { mux_mode: mux_mode });
     }
 
     pub fn set_loudness(&mut self, loudness: LoudnessConfig) {
