@@ -1,0 +1,285 @@
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    .master_volume_box {
+      display: block;
+    }
+    .master_volume_box header {
+      font-weight: bold;
+    }
+    .input {
+      display: block;
+    }
+    .template {
+      display: none;
+    }
+    .slider {
+      width: 250px;
+    }
+  </style>
+</head>
+<body>
+  <div class="master_volume_box">
+    <header>Volume</header>
+    <input class="slider" type="range" min="-50" max="0" step="0.5"></input>
+    <value></value> dB
+  </div>
+
+  <div class="output_selector">
+    <div class="template">
+      <label><input type="radio" name="output"></input><span class="name"></span></label>
+    </div>
+  </div>
+
+  <div class="loudness_box">
+    <label><input id="enable" type="checkbox"></input>Loudness</label>
+    <label><input id="auto" type="checkbox"></input>Auto</label>
+    </br>
+    <input class="slider" type="range" min="0" max="1.0" step="0.05"></input>
+    <value></value>
+  </div>
+
+  <div class="voice_boost_box">
+    <label><input id="enable" type="checkbox"></input>Voice Boost</label>
+    </br>
+    <input class="slider" type="range" min="0" max="1.0" step="0.05"></input>
+    <value></value>
+  </div>
+
+  <div class="crossfeed_box">
+    <label><input id="enable" type="checkbox"></input>Crossfeed</label>
+    </br>
+    <input class="slider" type="range" min="0" max="1.0" step="0.05"></input>
+    <value></value>
+  </div>
+  <div class="crossfeed_delay_box">
+    Crossfeed delay
+    </br>
+    <input class="slider" type="range" min="0" max="1.0" step="0.05"></input>
+    <value></value> ms
+  </div>
+
+  <div class="input template">
+    <header>Input 0</header>
+    <input class="slider" type="range" min="-40" max="20" step="0.5"></input>
+    <value></value> dB
+  </div>
+
+<script type="text/javascript">
+function makeRequest (opts) {
+  return new Promise((resolve, reject) => {
+    var xhr = new XMLHttpRequest();
+    xhr.open(opts.method, opts.url);
+    xhr.onload = function() {
+      if (this.status >= 200 && this.status < 300) {
+        resolve(xhr.response);
+      } else {
+        reject({
+          status: this.status,
+          statusText: xhr.statusText
+        });
+      }
+    };
+    xhr.onerror = function() {
+      reject({
+        status: this.status,
+        statusText: xhr.statusText
+      });
+    };
+    if (opts.headers) {
+      Object.keys(opts.headers).forEach(function (key) {
+        xhr.setRequestHeader(key, opts.headers[key]);
+      });
+    }
+    var params = opts.params;
+    if (params && typeof params === 'object') {
+      params = JSON.stringify(params);
+      xhr.setRequestHeader("Content-type", "application/json");
+    }
+    xhr.send(params);
+  });
+}
+
+function autoupdate_slider(slider_container, update_callback) {
+  let slider = slider_container.querySelector(".slider");
+  let value = slider_container.querySelector("value");
+
+  var update_pending = false;
+  function update() {
+    if (update_pending) {
+      return;
+    }
+    let volume = slider.value;
+    update_pending = true;
+    update_callback(volume)
+    .then(() => {
+      update_pending = false;
+      if (volume != slider.value) {
+        update();
+      }
+    })
+  }
+
+  slider.oninput = () => {
+    value.innerText = slider.value;
+    update();
+  }
+  value.innerText = slider.value;
+}
+
+function autoupdate_checkbox(checkbox, update_callback) {
+  var update_pending = false;
+  function update() {
+    if (update_pending) {
+      return;
+    }
+    let checked = checkbox.checked;
+    update_pending = true;
+    update_callback(checked)
+    .then(() => {
+      update_pending = false;
+      if (checked != checked) {
+        update();
+      }
+    })
+  }
+
+  if (checkbox) {
+    checkbox.onchange = function () {
+      update();
+    }
+  }
+}
+
+function update_volume_slider(state) {
+  let value = state.outputs[state.output].gain;
+  let volume_box = document.querySelector(".master_volume_box");
+  volume_box.querySelector(".slider").value = value;
+  volume_box.querySelector("value").innerText = value;
+}
+
+function add_output(state, output_id, template) {
+  let i = template.cloneNode(true);
+  i.classList.remove("template");
+  i.querySelector(".name").innerText = state.outputs[output_id].name;
+  let radio = i.querySelector("input");
+  radio.checked = state.output == output_id;
+  radio.onchange = () => {
+    if (radio.checked) {
+      state.output = output_id;
+      update_volume_slider(state);
+      makeRequest({
+        method: "POST",
+        url: "/api/state",
+        params: {"output": output_id}
+      })
+    }
+  }
+
+  template.parentElement.insertBefore(i, template);
+}
+
+function add_input(id, input, template) {
+  let i = template.cloneNode(true);
+  i.classList.remove("template");
+  i.querySelector("header").innerText = input.name;
+  i.querySelector(".slider").value = input.gain;
+
+  autoupdate_slider(i, (gain) => (
+    makeRequest({
+      method: "POST",
+      url: "/api/inputs/" + id,
+      params: {"gain": gain}
+    })
+  ));
+
+  template.parentElement.insertBefore(i, template);
+}
+
+function slider_with_checkbox(container, state, name) {
+  container.querySelector(".slider").value = state.level;
+  autoupdate_slider(container, (level) => {
+    let params = {};
+    params[name] = {"level": level};
+    return makeRequest({
+      method: "POST",
+      url: "/api/state",
+      params: params
+    })
+  });
+
+  let enable_checkbox = container.querySelector("#enable");
+  enable_checkbox.checked = state.enabled;
+  autoupdate_checkbox(enable_checkbox, (enabled) => {
+    let params = {};
+    params[name] = {"enabled": enabled};
+    return makeRequest({
+      method: "POST",
+      url: "/api/state",
+      params: params
+    })
+  });
+}
+
+document.body.onload = () => {
+  makeRequest({method: "GET", url: "/api/state"})
+  .then((result) => {
+    let state = JSON.parse(result);
+
+    let volume_box = document.querySelector(".master_volume_box");
+    autoupdate_slider(volume_box, (volume) => {
+      state.outputs[state.output].gain = volume;
+      return makeRequest({
+        method: "POST",
+        url: "/api/state",
+        params: {"volume": volume}
+      })
+    });
+    update_volume_slider(state);
+
+    let template = document.querySelector(".output_selector .template")
+    for (output_id in state.outputs) {
+      add_output(state, output_id, template);
+    }
+
+    let loudness_box = document.querySelector(".loudness_box");
+    slider_with_checkbox(loudness_box, state.loudness, "loudness");
+
+    let auto_checkbox = loudness_box.querySelector("#auto");
+    auto_checkbox.checked = state.loudness.auto;
+    autoupdate_checkbox(auto_checkbox, (auto) => (
+      makeRequest({
+        method: "POST",
+        url: "/api/state",
+        params: {"loudness": {"auto": auto } }
+      })
+    ));
+
+    slider_with_checkbox(document.querySelector(".voice_boost_box"),
+                         state.voice_boost, "voice_boost");
+
+    slider_with_checkbox(document.querySelector(".crossfeed_box"),
+                         state.crossfeed, "crossfeed");
+
+    let crossfeed_delay_box = document.querySelector(".crossfeed_delay_box");
+    crossfeed_delay_box.querySelector(".slider").value = state.crossfeed.delay_ms;
+    autoupdate_slider(crossfeed_delay_box, (delay_ms) => (
+      makeRequest({
+        method: "POST",
+        url: "/api/state",
+        params: {"crossfeed": { "delay_ms": delay_ms} }
+      })
+    ));
+
+    let input_template = document.querySelector(".input.template")
+    var id = 0;
+    for (input of state.inputs) {
+      add_input(id++, input, input_template);
+    }
+  })
+};
+
+</script>
+</body>
+</html>
