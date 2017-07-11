@@ -3,6 +3,7 @@ use std::f32::consts::PI;
 use std::f64::consts::PI as PI64;
 use std::sync::Arc;
 use std::collections::HashMap;
+use base::convolve;
 
 struct QuadFunction {
     a: f32,
@@ -190,7 +191,7 @@ impl ResamplerTable {
         for n in 0..config.freq_denom {
             let mut row = Vec::with_capacity(config.size + 1);
             for i in 0..(config.size * 2) {
-                let x = i as f64 - config.size as f64 + n as f64 / config.freq_denom as f64;
+                let x = config.size as f64 - i as f64 + n as f64 / config.freq_denom as f64;
                 row.push((sinc64(PI64 * x) * sinc64(PI64 * x / config.size as f64)) as f32);
             }
             kernel.push(row);
@@ -250,22 +251,20 @@ impl FastResampler {
                     0
                 };
 
-                let k = &self.table.kernel[self.i_pos_frac];
-
-                let mut k_pos = self.i_pos + table.config.size - start;
+                let kernel = &self.table.kernel[self.i_pos_frac];
+                let mut k_pos = table.config.size - self.i_pos + start;
 
                 if start < queue_len {
-                    for i in start..queue_len {
-                        result += self.queue[i] * k[k_pos as usize];
-                        k_pos -= 1;
-                    }
+                    result += convolve(&self.queue[start..queue_len],
+                                       &kernel[k_pos..(k_pos + queue_len - start)]);
+                    k_pos += queue_len - start;
                     start = queue_len;
                 }
 
-                for i in (start - queue_len)..(self.i_pos + table.config.size - queue_len) {
-                    result += input[i] * k[k_pos as usize];
-                    k_pos -= 1;
-                }
+                let len = self.i_pos + table.config.size - start;
+                result += convolve(
+                    &input[(start - queue_len)..(self.i_pos + table.config.size - queue_len)],
+                    &kernel[k_pos..(k_pos + len)]);
             };
 
             output.push(result);

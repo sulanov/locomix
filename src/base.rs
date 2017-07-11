@@ -1,10 +1,12 @@
 extern crate alsa;
+extern crate simd;
 
 use std;
 use std::fmt;
 use std::error;
 use std::result;
 use std::io;
+use self::simd::f32x4;
 
 pub const CHANNELS: usize = 2;
 pub const FRAME_SIZE_APPROX_MS: usize = 10;
@@ -111,6 +113,49 @@ fn read_sample_s32le(buf: &[u8], pos: usize) -> f32 {
       f64 + 0.5) / 2147483648f64) as f32
 }
 
+// Fast SIMD-optimized convolution. Optimized for NEON on Raspberry PI 3.
+pub fn convolve(v1: &[f32], v2: &[f32]) ->f32 {
+    assert!(v1.len() == v2.len());
+
+    let mut sum_0 = f32x4::splat(0.0);
+    let mut sum_4 = f32x4::splat(0.0);
+    let mut sum_8 = f32x4::splat(0.0);
+
+    let mut i = 0;
+    while i + 12 <= v1.len() {
+        let v1_0 = f32x4::load(v1, i);
+        let v1_4 = f32x4::load(v1, i + 4);
+        let v1_8 = f32x4::load(v1, i + 8);
+
+        let v2_0 = f32x4::load(v2, i);
+        let v2_4 = f32x4::load(v2, i + 4);
+        let v2_8 = f32x4::load(v2, i + 8);
+
+        sum_0 = sum_0 + v1_0 * v2_0;
+        sum_4 = sum_4 + v1_4 * v2_4;
+        sum_8 = sum_8 + v1_8 * v2_8;
+
+        i += 12;
+    }
+
+    while i + 4 <= v1.len() {
+        let r1a = f32x4::load(v1, i);
+        let r2a = f32x4::load(v2, i);
+        sum_0 = sum_0 + r1a * r2a;
+        i += 4;
+    }
+
+    let mut sum_end = 0.0;
+    while i < v1.len() {
+        sum_end += v1[i] * v2[i];
+        i += 1;
+    }
+
+    sum_0.extract(0) + sum_0.extract(1) + sum_0.extract(2) + sum_0.extract(3) +
+    sum_4.extract(0) + sum_4.extract(1) + sum_4.extract(2) + sum_4.extract(3) +
+    sum_8.extract(0) + sum_8.extract(1) + sum_8.extract(2) + sum_8.extract(3) +
+    sum_end
+}
 
 impl Frame {
     pub fn new(sample_rate: usize, samples: usize) -> Frame {
