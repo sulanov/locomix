@@ -129,6 +129,7 @@ pub struct State {
     pub output: usize,
     pub mux_mode: MuxMode,
     pub loudness: LoudnessConfig,
+    pub enable_drc: bool,
     pub crossfeed: CrossfeedConfig,
     pub voice_boost: FeatureConfig,
 }
@@ -138,9 +139,10 @@ pub enum UiMessage {
     SelectOutput { output: usize },
     SetMasterVolume { volume: Gain, loudness: Gain },
     SetInputGain { device: DeviceId, gain: Gain },
+    SetMuxMode { mux_mode: MuxMode },
+    SetEnableDrc { enable: bool },
     SetVoiceBoost { boost: Gain },
     SetCrossfeed { level: f32, delay_ms: f32 },
-    SetMuxMode { mux_mode: MuxMode },
 }
 
 pub type UiMessageReceiver = mpsc::Receiver<UiMessage>;
@@ -178,6 +180,7 @@ impl StateController {
                 outputs: outputs,
                 output: 0,
                 mux_mode: MuxMode::Exclusive,
+                enable_drc: true,
                 loudness: LoudnessConfig::default(),
                 crossfeed: CrossfeedConfig::default(),
                 voice_boost: FeatureConfig::default(),
@@ -259,6 +262,11 @@ impl StateController {
     pub fn set_mux_mode(&mut self, mux_mode: MuxMode) {
         self.state.mux_mode = mux_mode;
         self.broadcast(UiMessage::SetMuxMode { mux_mode: mux_mode });
+    }
+
+    pub fn set_enable_drc(&mut self, enable_drc: bool) {
+        self.state.enable_drc = enable_drc;
+        self.broadcast(UiMessage::SetEnableDrc { enable: enable_drc });
     }
 
     pub fn set_loudness(&mut self, loudness: LoudnessConfig) {

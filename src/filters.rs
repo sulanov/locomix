@@ -1,11 +1,16 @@
+extern crate byteorder;
+
 use base::*;
-use std::time::Instant;
+use self::byteorder::{NativeEndian, ReadBytesExt};
 use std::f32::consts::PI;
+use std::fs::File;
+use std::sync::Arc;
+use std::time::Instant;
 
 type FCoef = f32;
 
 pub trait AudioFilter<T> {
-    type Params: Copy;
+    type Params: Clone;
     fn new(params: Self::Params) -> T;
     fn set_params(&mut self, params: Self::Params);
     fn apply_one(&mut self, sample: FCoef) -> FCoef;
@@ -237,13 +242,20 @@ pub struct StereoFilter<T: AudioFilter<T>> {
 impl<T: AudioFilter<T>> StereoFilter<T> {
     pub fn new(params: T::Params) -> StereoFilter<T> {
         StereoFilter {
-            left: T::new(params),
+            left: T::new(params.clone()),
             right: T::new(params),
         }
     }
 
+    pub fn new_pair(left: T::Params, right: T::Params) -> StereoFilter<T> {
+        StereoFilter {
+            left: T::new(left),
+            right: T::new(right),
+        }
+    }
+
     pub fn set_params(&mut self, params: T::Params) {
-        self.left.set_params(params);
+        self.left.set_params(params.clone());
         self.right.set_params(params);
     }
 
@@ -253,6 +265,85 @@ impl<T: AudioFilter<T>> StereoFilter<T> {
         self.right
             .apply_multi(&frame.right[..], &mut out.right[..]);
         out
+    }
+}
+
+
+#[derive(Clone)]
+pub struct FirFilterParams {
+    coefficients: Arc<Vec<FCoef>>,
+}
+
+impl FirFilterParams {
+    pub fn new(filename: &str) -> Result<FirFilterParams> {
+        let mut file = try!(File::open(filename));
+        let mut result = Vec::<FCoef>::new();
+        loop {
+            match file.read_f32::<NativeEndian>() {
+                Ok(value) => result.push(value),
+                Err(_) => break
+            }
+        }
+        Ok(FirFilterParams { coefficients: Arc::new(result) })
+    }
+
+    pub fn reduce(&self, size: usize) -> FirFilterParams {
+        let mut start: usize = 0;
+        let mut max_sum: f64 = 0.0;
+        let mut sum: f64 = 0.0;
+        for i in 0..self.coefficients.len() {
+            let v = self.coefficients[i] as f64;
+            sum += v * v;
+            if i >= size {
+                let v = self.coefficients[i - size] as f64;
+                sum -= v * v;
+            }
+            if sum > max_sum {
+                max_sum = sum;
+                start = if i >= size { i - size + 1 } else { 0 }
+            }
+        }
+        FirFilterParams { coefficients:
+              Arc::new(self.coefficients[start..(start + size)].to_vec()) }
+    }
+}
+
+pub struct FirFilter {
+    params: FirFilterParams,
+
+    // Circular buffer for input samples.
+    buffer: Vec<f32>,
+
+    // Current position in the buffer.
+    buffer_pos: usize,
+}
+
+impl AudioFilter<FirFilter> for FirFilter {
+    type Params = FirFilterParams;
+
+    fn new(params: FirFilterParams) -> FirFilter {
+        let size = params.coefficients.len();
+        FirFilter {
+            params: params,
+            buffer: vec![0.0; size],
+            buffer_pos: 0,
+        }
+    }
+
+    fn set_params(&mut self, params: FirFilterParams) {
+        self.params = params;
+        self.buffer = vec![0.0; self.params.coefficients.len()];
+        self.buffer_pos = 0;
+    }
+
+    fn apply_one(&mut self, x0: FCoef) -> FCoef {
+        self.buffer[self.buffer_pos] = x0;
+        self.buffer_pos = (self.buffer_pos + 1) % self.params.coefficients.len();
+
+        convolve(&self.buffer[self.buffer_pos..],
+                 &self.params.coefficients[0..(self.buffer.len()-self.buffer_pos)]) +
+        convolve(&self.buffer[0..self.buffer_pos],
+                 &self.params.coefficients[(self.buffer.len()-self.buffer_pos)..])
     }
 }
 

@@ -395,7 +395,7 @@ mod tests {
             let nsr_db = 10.0 * nsr.log(10.0);
             println!("{} {} {} {}", signal, noise, 1.0 / nsr, nsr_db);
             // Target: -97
-            assert!(nsr_db < -70.0);
+            assert!(nsr_db < -97.0);
         }
     }
 }

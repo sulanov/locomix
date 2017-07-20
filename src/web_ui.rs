@@ -58,6 +58,7 @@ fn serve_web(address: &str, shared_state: SharedState) {
                      volume: Option<f32>,
                      output: Option<usize>,
                      mux_mode: Option<MuxMode>,
+                     enable_drc: Option<bool>,
                      loudness: Option<LoudnessParams>,
                      voice_boost: Option<FeatureParams>,
                      crossfeed: Option<CrossfeedParams>,
@@ -83,6 +84,10 @@ fn serve_web(address: &str, shared_state: SharedState) {
 
                 json.mux_mode.map( |mux_mode| {
                     state_controller.set_mux_mode(mux_mode);
+                });
+
+                json.enable_drc.map( |enable_drc| {
+                    state_controller.set_enable_drc(enable_drc);
                 });
 
                 json.loudness.map( |loudness| {

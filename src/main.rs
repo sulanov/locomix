@@ -111,7 +111,8 @@ const STANDBY_SECONDS: u64 = 3600;
 fn run_loop(mut inputs: Vec<Box<Input>>,
             mut outputs: Vec<Box<output::Output>>,
             sample_rate: usize,
-            shared_state: ui::SharedState)
+            shared_state: ui::SharedState,
+            mut drc_filter: Option<StereoFilter<FirFilter>>)
             -> Result<()> {
     let ui_channel = shared_state.lock().add_observer();
 
@@ -130,6 +131,7 @@ fn run_loop(mut inputs: Vec<Box<Input>>,
     let mut crossfeed_filter = CrossfeedFilter::new();
 
     let mut exclusive_mux_mode = true;
+    let mut enable_drc = true;
 
     loop {
         let mut frame = Frame::new(sample_rate, outputs[selected_output].period_size());
@@ -166,15 +168,23 @@ fn run_loop(mut inputs: Vec<Box<Input>>,
         }
 
         if state == ui::StreamState::Active {
-            let mut filtered = loudness_filter.apply(&frame);
+            frame = loudness_filter.apply(&frame);
             match voice_boost_filter.as_mut() {
                 Some(ref mut f) => {
-                    filtered = f.apply(&filtered);
+                    frame = f.apply(&frame);
                 }
                 None => (),
             }
-            filtered = crossfeed_filter.apply(filtered);
-            try!(outputs[selected_output].write(&filtered));
+            frame = crossfeed_filter.apply(frame);
+
+            match (enable_drc, drc_filter.as_mut()) {
+                (true, Some(ref mut f)) => {
+                    frame = f.apply(&frame);
+                }
+                _ => (),
+            }
+
+            try!(outputs[selected_output].write(&frame));
         } else {
             std::thread::sleep(Duration::from_millis(500));
         }
@@ -193,6 +203,9 @@ fn run_loop(mut inputs: Vec<Box<Input>>,
                 }
                 ui::UiMessage::SetInputGain { device, gain } => {
                     mixers[device as usize].set_input_gain(gain);
+                }
+                ui::UiMessage::SetEnableDrc { enable } => {
+                    enable_drc = enable
                 }
                 ui::UiMessage::SetVoiceBoost { boost } => {
                     if boost.db > 0.0 {
@@ -243,6 +256,7 @@ fn run() -> Result<()> {
                 "SCRIPT");
     opts.optmulti("c", "control-device", "Control input device", "INPUT_DEV");
     opts.optmulti("l", "light-device", "Light device", "LIGHT_DEV");
+    opts.optmulti("F", "filter", "FIR filter file", "FIR_FILTER");
     opts.optflag("g", "loudness-graph", "Print out loudness graph");
     opts.optflag("h", "help", "Print this help menu");
 
@@ -319,16 +333,30 @@ fn run() -> Result<()> {
         state_script::start_state_script_contoller(&s, shared_state.clone());
     }
 
+    let mut fir_filters = Vec::new();
+    for filename in matches.opt_strs("F") {
+        let params = try!(FirFilterParams::new(&filename));
+        fir_filters.push(params.reduce(1000));
+    }
+
+    let drc_filter = if fir_filters.len() == 0 {
+        None
+    } else if fir_filters.len() == 2 {
+        Some(StereoFilter::<FirFilter>::new_pair(fir_filters[0].clone(), fir_filters[1].clone()))
+    } else {
+        return Err(Error::new("Expected 0 or 2 FIR filters"))
+    };
+
     let wrapped_inputs = inputs
         .drain(..)
         .map(|input| {
-                 let i: Box<Input> = Box::new(async_input::AsyncInput::new(
-                Box::new(input::InputResampler::new(input, output_rate))));
-                 i
-             })
+              Box::<async_input::AsyncInput>::new(async_input::AsyncInput::new(
+                Box::new(input::InputResampler::new(input, output_rate))))
+              as Box<Input>
+          })
         .collect();
 
-    run_loop(wrapped_inputs, outputs, output_rate, shared_state)
+    run_loop(wrapped_inputs, outputs, output_rate, shared_state, drc_filter)
 }
 
 fn main() {

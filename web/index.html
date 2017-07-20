@@ -39,6 +39,10 @@
     <label><input type="radio" name="mux_mode" value="Mixer"></input>Mixer</label>
   </div>
 
+  <div class="enable_drc_box">
+    <label><input type="checkbox" id="enable_drc_checkbox"></input>Enable room correction</label>
+  </div>
+
   <div class="loudness_box">
     <label><input id="enable" type="checkbox"></input>Loudness</label>
     <label><input id="auto" type="checkbox"></input>Auto</label>
@@ -263,6 +267,16 @@ document.body.onload = () => {
           })
         }
       }
+    }
+
+    let drc_box = document.querySelector('#enable_drc_checkbox');
+    drc_box.checked = state.enable_drc;
+    drc_box.onchange = (event) => {
+      makeRequest({
+        method: "POST",
+        url: "/api/state",
+        params: {"enable_drc": drc_box.checked}
+      })
     }
 
     let loudness_box = document.querySelector(".loudness_box");
