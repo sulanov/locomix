@@ -39,9 +39,9 @@ impl Input for InputResampler {
                 self.current_input_rate = frame.sample_rate;
                 self.resamplers =
                     Some([self.resampler_factory
-                              .create_resampler(frame.sample_rate, self.sample_rate, 100),
+                              .create_resampler(frame.sample_rate, self.sample_rate, 200),
                           self.resampler_factory
-                              .create_resampler(frame.sample_rate, self.sample_rate, 100)]);
+                              .create_resampler(frame.sample_rate, self.sample_rate, 200)]);
             };
             Frame {
                 sample_rate: self.current_input_rate,
