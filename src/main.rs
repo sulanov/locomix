@@ -257,6 +257,7 @@ fn run() -> Result<()> {
     opts.optmulti("c", "control-device", "Control input device", "INPUT_DEV");
     opts.optmulti("l", "light-device", "Light device", "LIGHT_DEV");
     opts.optmulti("F", "filter", "FIR filter file", "FIR_FILTER");
+    opts.optopt("L", "filter-length", "Length for FIR filter (1000 by default)", "FILTER_LENGTH");
     opts.optflag("g", "loudness-graph", "Print out loudness graph");
     opts.optflag("h", "help", "Print this help menu");
 
@@ -333,10 +334,16 @@ fn run() -> Result<()> {
         state_script::start_state_script_contoller(&s, shared_state.clone());
     }
 
+    let filter_length = match matches.opt_str("L").map(|x| x.parse::<usize>()) {
+        None => 1000,
+        Some(Ok(length)) => length,
+        Some(Err(_)) => return Err(Error::new("Cannot parse filter length.")),
+    };
+
     let mut fir_filters = Vec::new();
     for filename in matches.opt_strs("F") {
         let params = try!(FirFilterParams::new(&filename));
-        fir_filters.push(params.reduce(1000));
+        fir_filters.push(params.reduce(filter_length));
     }
 
     let drc_filter = if fir_filters.len() == 0 {
