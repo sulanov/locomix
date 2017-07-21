@@ -14,10 +14,9 @@ pub trait AudioFilter<T> {
     fn new(params: Self::Params) -> T;
     fn set_params(&mut self, params: Self::Params);
     fn apply_one(&mut self, sample: FCoef) -> FCoef;
-    fn apply_multi(&mut self, input: &[f32], output: &mut [f32]) {
-        assert!(input.len() == output.len());
-        for i in 0..input.len() {
-            output[i] = self.apply_one(input[i] as FCoef) as f32;
+    fn apply_multi(&mut self, buffer: &mut [f32]) {
+        for i in 0..buffer.len() {
+            buffer[i] = self.apply_one(buffer[i] as FCoef) as f32;
         }
     }
 }
@@ -259,12 +258,9 @@ impl<T: AudioFilter<T>> StereoFilter<T> {
         self.right.set_params(params);
     }
 
-    pub fn apply(&mut self, frame: &Frame) -> Frame {
-        let mut out = Frame::new(frame.sample_rate, frame.len());
-        self.left.apply_multi(&frame.left[..], &mut out.left[..]);
-        self.right
-            .apply_multi(&frame.right[..], &mut out.right[..]);
-        out
+    pub fn apply(&mut self, frame: &mut Frame) {
+        self.left.apply_multi(&mut frame.left[..]);
+        self.right.apply_multi(&mut frame.right[..]);
     }
 }
 
@@ -411,20 +407,19 @@ fn get_filter_response<T: AudioFilter<T>>(p: T::Params, sample_rate: FCoef, freq
     for i in 0..test_signal.len() {
         test_signal[i] = (i as FCoef / sample_rate * freq * 2.0 * PI).sin() as f32;
     }
-    let mut result = vec![0.0; test_signal.len()];
-    f.apply_multi(&test_signal, &mut result);
+    f.apply_multi(&mut test_signal);
 
     let t = Instant::now();
 
     let mut p_sum = 0.0;
-    for i in 0..result.len() {
-        p_sum += (result[i] as FCoef).powi(2);
+    for i in 0..test_signal.len() {
+        p_sum += (test_signal[i] as FCoef).powi(2);
     }
 
     let d = t.elapsed();
     println!("{} ", d.subsec_nanos() as f32 / 1000.0);
 
-    ((p_sum / (result.len() as FCoef)) * (2 as FCoef)).log(10.0) * 10.0
+    ((p_sum / (test_signal.len() as FCoef)) * (2 as FCoef)).log(10.0) * 10.0
 }
 
 pub fn draw_filter_graph<T: AudioFilter<T>>(params: T::Params) {

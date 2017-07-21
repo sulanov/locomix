@@ -168,10 +168,10 @@ fn run_loop(mut inputs: Vec<Box<Input>>,
         }
 
         if state == ui::StreamState::Active {
-            frame = loudness_filter.apply(&frame);
+            loudness_filter.apply(&mut frame);
             match voice_boost_filter.as_mut() {
                 Some(ref mut f) => {
-                    frame = f.apply(&frame);
+                    f.apply(&mut frame);
                 }
                 None => (),
             }
@@ -179,7 +179,7 @@ fn run_loop(mut inputs: Vec<Box<Input>>,
 
             match (enable_drc, drc_filter.as_mut()) {
                 (true, Some(ref mut f)) => {
-                    frame = f.apply(&frame);
+                    f.apply(&mut frame);
                 }
                 _ => (),
             }
