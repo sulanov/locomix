@@ -114,7 +114,7 @@ fn read_sample_s32le(buf: &[u8], pos: usize) -> f32 {
 }
 
 // Fast SIMD-optimized convolution. Optimized for NEON on Raspberry PI 3.
-pub fn convolve(v1: &[f32], v2: &[f32]) ->f32 {
+pub fn convolve(v1: &[f32], v2: &[f32]) -> f32 {
     assert!(v1.len() == v2.len());
 
     let mut sum_0 = f32x4::splat(0.0);
@@ -153,8 +153,8 @@ pub fn convolve(v1: &[f32], v2: &[f32]) ->f32 {
 
     sum_0.extract(0) + sum_0.extract(1) + sum_0.extract(2) + sum_0.extract(3) +
     sum_4.extract(0) + sum_4.extract(1) + sum_4.extract(2) + sum_4.extract(3) +
-    sum_8.extract(0) + sum_8.extract(1) + sum_8.extract(2) + sum_8.extract(3) +
-    sum_end
+    sum_8.extract(0) + sum_8.extract(1) + sum_8.extract(2) +
+    sum_8.extract(3) + sum_end
 }
 
 impl Frame {

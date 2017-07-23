@@ -204,9 +204,7 @@ fn run_loop(mut inputs: Vec<Box<Input>>,
                 ui::UiMessage::SetInputGain { device, gain } => {
                     mixers[device as usize].set_input_gain(gain);
                 }
-                ui::UiMessage::SetEnableDrc { enable } => {
-                    enable_drc = enable
-                }
+                ui::UiMessage::SetEnableDrc { enable } => enable_drc = enable,
                 ui::UiMessage::SetVoiceBoost { boost } => {
                     if boost.db > 0.0 {
                         let p = SimpleFilterParams::new(sample_rate, boost.db);
@@ -257,7 +255,10 @@ fn run() -> Result<()> {
     opts.optmulti("c", "control-device", "Control input device", "INPUT_DEV");
     opts.optmulti("l", "light-device", "Light device", "LIGHT_DEV");
     opts.optmulti("F", "filter", "FIR filter file", "FIR_FILTER");
-    opts.optopt("L", "filter-length", "Length for FIR filter (1000 by default)", "FILTER_LENGTH");
+    opts.optopt("L",
+                "filter-length",
+                "Length for FIR filter (1000 by default)",
+                "FILTER_LENGTH");
     opts.optflag("g", "loudness-graph", "Print out loudness graph");
     opts.optflag("h", "help", "Print this help menu");
 
@@ -271,16 +272,53 @@ fn run() -> Result<()> {
     let mut inputs = Vec::<Box<Input>>::new();
     let mut input_states = Vec::<ui::InputState>::new();
 
-    let output_rate = match matches.opt_str("r").map(|x| x.parse::<usize>()) {
-        None => 88200,
+    let sample_rate = match matches.opt_str("r").map(|x| x.parse::<usize>()) {
+        None => 48000,
         Some(Ok(rate)) => rate,
         Some(Err(_)) => return Err(Error::new("Cannot parse sample-rate parameter.")),
     };
 
+    let filter_length = match matches.opt_str("L").map(|x| x.parse::<usize>()) {
+        None => 1000,
+        Some(Ok(length)) => length,
+        Some(Err(_)) => return Err(Error::new("Cannot parse filter length.")),
+    };
+
+    let mut fir_filters = Vec::new();
+    for filename in matches.opt_strs("F") {
+        let params = try!(FirFilterParams::new(&filename));
+        fir_filters.push(params);
+    }
+
     if matches.opt_present("g") {
-        filters::draw_filter_graph::<VoiceBoostFilter>(SimpleFilterParams::new(88100, 10.0));
+        print!("Loudness filter");
+        filters::draw_filter_graph::<LoudnessFilter>(sample_rate,
+                                                     SimpleFilterParams::new(sample_rate, 10.0));
+
+        print!("Voice Boost filter");
+        filters::draw_filter_graph::<VoiceBoostFilter>(sample_rate,
+                                                       SimpleFilterParams::new(sample_rate, 10.0));
+
+        for i in 0..fir_filters.len() {
+            print!("FIR filter {}", i);
+            filters::draw_filter_graph::<FirFilter>(sample_rate,
+                                                    filters::reduce_fir(fir_filters[i].clone(),
+                                                                        filter_length));
+        }
+
         return Ok(());
     }
+
+    let drc_filter = if fir_filters.len() == 0 {
+        None
+    } else if fir_filters.len() == 2 {
+        let (left, right) = reduce_fir_pair(fir_filters[0].clone(),
+                                            fir_filters[1].clone(),
+                                            filter_length);
+        Some(StereoFilter::<FirFilter>::new_pair(left, right))
+    } else {
+        return Err(Error::new("Expected 0 or 2 FIR filters"));
+    };
 
     for f in matches.opt_strs("f") {
         inputs.push(Box::new(try!(file_input::FileInput::open(&f))));
@@ -310,7 +348,7 @@ fn run() -> Result<()> {
     let mut output_states = Vec::<ui::OutputState>::new();
 
     for o in matches.opt_strs("o") {
-        outputs.push(Box::new(output::ResilientAlsaOutput::new(&o, output_rate)));
+        outputs.push(Box::new(output::ResilientAlsaOutput::new(&o, sample_rate)));
         output_states.push(ui::OutputState::new(&o));
     }
 
@@ -334,36 +372,20 @@ fn run() -> Result<()> {
         state_script::start_state_script_contoller(&s, shared_state.clone());
     }
 
-    let filter_length = match matches.opt_str("L").map(|x| x.parse::<usize>()) {
-        None => 1000,
-        Some(Ok(length)) => length,
-        Some(Err(_)) => return Err(Error::new("Cannot parse filter length.")),
-    };
-
-    let mut fir_filters = Vec::new();
-    for filename in matches.opt_strs("F") {
-        let params = try!(FirFilterParams::new(&filename));
-        fir_filters.push(params.reduce(filter_length));
-    }
-
-    let drc_filter = if fir_filters.len() == 0 {
-        None
-    } else if fir_filters.len() == 2 {
-        Some(StereoFilter::<FirFilter>::new_pair(fir_filters[0].clone(), fir_filters[1].clone()))
-    } else {
-        return Err(Error::new("Expected 0 or 2 FIR filters"))
-    };
-
     let wrapped_inputs = inputs
         .drain(..)
         .map(|input| {
-              Box::<async_input::AsyncInput>::new(async_input::AsyncInput::new(
-                Box::new(input::InputResampler::new(input, output_rate))))
+                 Box::<async_input::AsyncInput>::new(async_input::AsyncInput::new(
+                Box::new(input::InputResampler::new(input, sample_rate))))
               as Box<Input>
-          })
+             })
         .collect();
 
-    run_loop(wrapped_inputs, outputs, output_rate, shared_state, drc_filter)
+    run_loop(wrapped_inputs,
+             outputs,
+             sample_rate,
+             shared_state,
+             drc_filter)
 }
 
 fn main() {

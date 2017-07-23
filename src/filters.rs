@@ -277,31 +277,58 @@ impl FirFilterParams {
         loop {
             match file.read_f32::<NativeEndian>() {
                 Ok(value) => result.push(value),
-                Err(_) => break
+                Err(_) => break,
             }
         }
         Ok(FirFilterParams { coefficients: Arc::new(result) })
     }
+}
 
-    pub fn reduce(&self, size: usize) -> FirFilterParams {
-        let mut start: usize = 0;
-        let mut max_sum: f64 = 0.0;
-        let mut sum: f64 = 0.0;
-        for i in 0..self.coefficients.len() {
-            let v = self.coefficients[i] as f64;
-            sum += v * v;
-            if i >= size {
-                let v = self.coefficients[i - size] as f64;
-                sum -= v * v;
-            }
-            if sum > max_sum {
-                max_sum = sum;
-                start = if i >= size { i - size + 1 } else { 0 }
-            }
+pub fn reduce_fir(fir: FirFilterParams, size: usize) -> FirFilterParams {
+    let mut start: usize = 0;
+    let mut max_sum: f64 = 0.0;
+    let mut sum: f64 = 0.0;
+    for i in 0..fir.coefficients.len() {
+        let l = fir.coefficients[i] as f64;
+        sum += l * l;
+
+        if i >= size {
+            let l = fir.coefficients[i - size] as f64;
+            sum -= l * l;
         }
-        FirFilterParams { coefficients:
-              Arc::new(self.coefficients[start..(start + size)].to_vec()) }
+        if sum > max_sum {
+            max_sum = sum;
+            start = if i >= size { i - size + 1 } else { 0 }
+        }
     }
+    FirFilterParams { coefficients: Arc::new(fir.coefficients[start..(start + size)].to_vec()) }
+}
+
+pub fn reduce_fir_pair(left: FirFilterParams,
+                       right: FirFilterParams,
+                       size: usize)
+                       -> (FirFilterParams, FirFilterParams) {
+    assert!(left.coefficients.len() == right.coefficients.len());
+    let mut start: usize = 0;
+    let mut max_sum: f64 = 0.0;
+    let mut sum: f64 = 0.0;
+    for i in 0..left.coefficients.len() {
+        let l = left.coefficients[i] as f64;
+        let r = right.coefficients[i] as f64;
+        sum += l * l + r * r;
+
+        if i >= size {
+            let l = left.coefficients[i - size] as f64;
+            let r = right.coefficients[i - size] as f64;
+            sum -= l * l + r * r;
+        }
+        if sum > max_sum {
+            max_sum = sum;
+            start = if i >= size { i - size + 1 } else { 0 }
+        }
+    }
+    (FirFilterParams { coefficients: Arc::new(left.coefficients[start..(start + size)].to_vec()) },
+     FirFilterParams { coefficients: Arc::new(right.coefficients[start..(start + size)].to_vec()) })
 }
 
 pub struct FirFilter {
@@ -333,13 +360,13 @@ impl AudioFilter<FirFilter> for FirFilter {
     }
 
     fn apply_one(&mut self, x0: FCoef) -> FCoef {
+        self.buffer_pos = (self.buffer_pos + self.buffer.len() - 1) % self.buffer.len();
         self.buffer[self.buffer_pos] = x0;
-        self.buffer_pos = (self.buffer_pos + 1) % self.params.coefficients.len();
 
         convolve(&self.buffer[self.buffer_pos..],
-                 &self.params.coefficients[0..(self.buffer.len()-self.buffer_pos)]) +
+                 &self.params.coefficients[0..(self.buffer.len() - self.buffer_pos)]) +
         convolve(&self.buffer[0..self.buffer_pos],
-                 &self.params.coefficients[(self.buffer.len()-self.buffer_pos)..])
+                 &self.params.coefficients[(self.buffer.len() - self.buffer_pos)..])
     }
 }
 
@@ -409,24 +436,18 @@ fn get_filter_response<T: AudioFilter<T>>(p: T::Params, sample_rate: FCoef, freq
     }
     f.apply_multi(&mut test_signal);
 
-    let t = Instant::now();
-
     let mut p_sum = 0.0;
     for i in 0..test_signal.len() {
         p_sum += (test_signal[i] as FCoef).powi(2);
     }
 
-    let d = t.elapsed();
-    println!("{} ", d.subsec_nanos() as f32 / 1000.0);
-
     ((p_sum / (test_signal.len() as FCoef)) * (2 as FCoef)).log(10.0) * 10.0
 }
 
-pub fn draw_filter_graph<T: AudioFilter<T>>(params: T::Params) {
-    let sample_rate: FCoef = 88100.0;
+pub fn draw_filter_graph<T: AudioFilter<T>>(sample_rate: usize, params: T::Params) {
     let mut freq: FCoef = 20.0;
     for _ in 0..82 {
-        let response = get_filter_response::<T>(params.clone(), sample_rate, freq);
+        let response = get_filter_response::<T>(params.clone(), sample_rate as FCoef, freq);
         println!("{} {}", freq as usize, response);
         freq = freq * (2 as FCoef).powf(0.125);
     }

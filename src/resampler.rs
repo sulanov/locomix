@@ -262,9 +262,9 @@ impl FastResampler {
                 }
 
                 let len = self.i_pos + table.config.size - start;
-                result += convolve(
-                    &input[(start - queue_len)..(self.i_pos + table.config.size - queue_len)],
-                    &kernel[k_pos..(k_pos + len)]);
+                result += convolve(&input[(start - queue_len)..
+                                    (self.i_pos + table.config.size - queue_len)],
+                                   &kernel[k_pos..(k_pos + len)]);
             };
 
             output.push(result);
