@@ -252,7 +252,7 @@ impl FastResampler {
                 };
 
                 let kernel = &self.table.kernel[self.i_pos_frac];
-                let mut k_pos = table.config.size - self.i_pos + start;
+                let mut k_pos = start + table.config.size - self.i_pos;
 
                 if start < queue_len {
                     result += convolve(&self.queue[start..queue_len],

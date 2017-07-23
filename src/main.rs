@@ -184,7 +184,7 @@ fn run_loop(mut inputs: Vec<Box<Input>>,
                 _ => (),
             }
 
-            try!(outputs[selected_output].write(&frame));
+            try!(outputs[selected_output].write(frame));
         } else {
             std::thread::sleep(Duration::from_millis(500));
         }
@@ -348,7 +348,7 @@ fn run() -> Result<()> {
     let mut output_states = Vec::<ui::OutputState>::new();
 
     for o in matches.opt_strs("o") {
-        outputs.push(Box::new(output::ResilientAlsaOutput::new(&o, sample_rate)));
+        outputs.push(Box::new(output::ResamplingOutput::open(&o, sample_rate)));
         output_states.push(ui::OutputState::new(&o));
     }
 

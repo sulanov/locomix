@@ -5,7 +5,6 @@ use self::byteorder::{NativeEndian, ReadBytesExt};
 use std::f32::consts::PI;
 use std::fs::File;
 use std::sync::Arc;
-use std::time::Instant;
 
 type FCoef = f32;
 
