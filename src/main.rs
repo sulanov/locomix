@@ -348,7 +348,6 @@ fn run() -> Result<()> {
             try!(alsa_input::AlsaInput::open(&matches.opt_strs("i")[0], 192000, false))));
         let r = try!(get_impulse_response(&mut outputs[0], &mut input));
         let mut s = 0;
-        println!(" {}", r.len());
         for i in 100..r.len() {
             if r[i].abs() > 0.02 {
                 s = i - 100;
