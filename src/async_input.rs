@@ -65,8 +65,8 @@ impl AsyncInput {
                 sender.error(e);
                 break;
             }
-                              Ok(Some(frame)) => sender.frame(frame),
                               Ok(None) => (),
+                              Ok(Some(frame)) => sender.frame(frame),
                           }
                       });
 

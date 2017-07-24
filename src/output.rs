@@ -9,7 +9,7 @@ use std::thread;
 use std::time::{Instant, Duration};
 use resampler;
 
-pub trait Output : Send {
+pub trait Output: Send {
     fn write(&mut self, frame: Frame) -> Result<()>;
     fn deactivate(&mut self);
     fn sample_rate(&self) -> usize;
@@ -56,13 +56,17 @@ impl AlsaOutput {
             } else {
                 let mut selected: usize = 0;
                 for rate in [192000, 96000, 88200, 48000, 44100].iter() {
-                    match hwp.set_rate(*rate as u32,  alsa::ValueOr::Nearest) {
-                        Ok(_) => {selected = *rate; break},
+                    match hwp.set_rate(*rate as u32, alsa::ValueOr::Nearest) {
+                        Ok(_) => {
+                            selected = *rate;
+                            break;
+                        }
                         Err(_) => (),
                     }
                 }
                 if selected == 0 {
-                    return Err(Error::new(&format!("Can't find appropriate sample rate for {}", name)))
+                    return Err(Error::new(&format!("Can't find appropriate sample rate for {}",
+                                                   name)));
                 }
                 sample_rate = selected;
             }
@@ -161,7 +165,7 @@ impl ResilientAlsaOutput {
             output: device,
             target_sample_rate: target_sample_rate,
             last_open_attempt: Instant::now(),
-            period_size: period_size
+            period_size: period_size,
         }
     }
 
@@ -186,8 +190,8 @@ impl Output for ResilientAlsaOutput {
             self.try_reopen()
         }
 
-        let frame_duration =
-            Duration::from_millis((frame.len() * 1000 / self.sample_rate()) as u64);
+        let frame_duration = Duration::from_millis((frame.len() * 1000 / self.sample_rate()) as
+                                                   u64);
 
         if self.output.is_some() {
             let mut reset = false;
@@ -215,7 +219,7 @@ impl Output for ResilientAlsaOutput {
     fn sample_rate(&self) -> usize {
         match self.output.as_ref() {
             Some(o) => o.sample_rate(),
-            None => 0
+            None => 0,
         }
     }
 
@@ -246,7 +250,7 @@ impl ResamplingOutput {
         let result = ResamplingOutput {
             sender: sender,
             sample_rate: input_sample_rate,
-            period_size: input_sample_rate * FRAME_SIZE_APPROX_MS / 1000
+            period_size: input_sample_rate * FRAME_SIZE_APPROX_MS / 1000,
         };
 
         thread::spawn(move || {
@@ -256,13 +260,13 @@ impl ResamplingOutput {
 
             loop {
                 let frame = match receiver.recv() {
-                    Ok(PipeMessage::Frame(frame)) =>  frame,
+                    Ok(PipeMessage::Frame(frame)) => frame,
                     Ok(PipeMessage::Deactivate) => {
                         output.deactivate();
                         continue;
-                    },
+                    }
                     Err(_) => {
-                        println!("ERROR: Failed to receive next output frame. Quitting output thread.");
+                        println!("ERROR: Failed to receive next output frame.");
                         return;
                     }
                 };
@@ -280,10 +284,12 @@ impl ResamplingOutput {
                 if current_rate != out_sample_rate {
                     current_rate = out_sample_rate;
                     resamplers = if input_sample_rate != out_sample_rate {
-                        Some([resampler_factory
-                                  .create_resampler(input_sample_rate, out_sample_rate, 200),
-                              resampler_factory
-                                  .create_resampler(input_sample_rate, out_sample_rate, 200)])
+                        Some([resampler_factory.create_resampler(input_sample_rate,
+                                                                 out_sample_rate,
+                                                                 200),
+                              resampler_factory.create_resampler(input_sample_rate,
+                                                                 out_sample_rate,
+                                                                 200)])
                     } else {
                         None
                     };
@@ -291,10 +297,12 @@ impl ResamplingOutput {
 
                 let resampled_frame = match resamplers.as_mut() {
                     None => frame,
-                    Some(resamplers) => Frame {
-                        sample_rate: out_sample_rate,
-                        left: resamplers[0].resample(&frame.left),
-                        right: resamplers[1].resample(&frame.right),
+                    Some(resamplers) => {
+                        Frame {
+                            sample_rate: out_sample_rate,
+                            left: resamplers[0].resample(&frame.left),
+                            right: resamplers[1].resample(&frame.right),
+                        }
                     }
                 };
 

@@ -75,7 +75,10 @@ const INPUT_FRAME_SIZE: usize = 256;
 const SILENCE_PERIOD_SECONDS: usize = 30;
 
 impl AlsaInput {
-    pub fn open(name: &str, target_sample_rate: usize, auto_sample_rate: bool) -> Result<AlsaInput> {
+    pub fn open(name: &str,
+                target_sample_rate: usize,
+                auto_sample_rate: bool)
+                -> Result<AlsaInput> {
         let pcm = try!(alsa::PCM::open(&*CString::new(name).unwrap(),
                                        alsa::Direction::Capture,
                                        false));
@@ -130,7 +133,11 @@ impl AlsaInput {
                sample_rate: sample_rate,
                format: format,
                period_size: period_size,
-               rate_detector: if auto_sample_rate { Some(RateDetector::new()) } else { None },
+               rate_detector: if auto_sample_rate {
+                   Some(RateDetector::new())
+               } else {
+                   None
+               },
                state: State::Inactive,
            })
     }
