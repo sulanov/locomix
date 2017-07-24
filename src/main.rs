@@ -94,10 +94,7 @@ impl InputMixer {
 
         if self.input.is_synchronized() {
             while try!(self.input.samples_buffered()) > MAX_QUEUED_FRAMES * mixed_frame.len() {
-                let len = try!(self.input.read()).unwrap().len();
-                println!("DROPPED {}, left {}",
-                         len,
-                         try!(self.input.samples_buffered()));
+                try!(self.input.read());
             }
         }
 
@@ -237,6 +234,34 @@ fn print_usage(program: &str, opts: Options) {
     print!("{}", opts.usage(&brief));
 }
 
+fn get_impulse_response(output: &mut Box<output::Output>, input: &mut Input) -> Result<Vec<f32>> {
+    // Silence for 100 ms.
+    for _ in 0..10 {
+        let zero = Frame::new(output.sample_rate(), output.sample_rate() / 100);
+        try!(output.write(zero));
+    }
+
+    // Impulse at -6db.
+    let mut impulse = Frame::new(output.sample_rate(), 1);
+    impulse.left[0] = 0.5;
+    impulse.right[0] = 0.5;
+    try!(output.write(impulse));
+
+    // Silence for 500 ms.
+    for _ in 0..50 {
+        let zero = Frame::new(output.sample_rate(), output.sample_rate() / 100);
+        try!(output.write(zero));
+    }
+
+    let mut result = Vec::<f32>::new();
+    loop {
+        match try!(input.read()) {
+            None => return Ok(result),
+            Some(s) => result.extend_from_slice(&s.left)
+        };
+    }
+}
+
 fn run() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     let program = args[0].clone();
@@ -260,6 +285,7 @@ fn run() -> Result<()> {
                 "Length for FIR filter (1000 by default)",
                 "FILTER_LENGTH");
     opts.optflag("g", "loudness-graph", "Print out loudness graph");
+    opts.optflag("m", "impulse-response", "Measure impulse response");
     opts.optflag("h", "help", "Print this help menu");
 
     let matches = try!(opts.parse(&args[1..]));
@@ -273,7 +299,7 @@ fn run() -> Result<()> {
     let mut input_states = Vec::<ui::InputState>::new();
 
     let sample_rate = match matches.opt_str("r").map(|x| x.parse::<usize>()) {
-        None => 48000,
+        None => 88200,
         Some(Ok(rate)) => rate,
         Some(Err(_)) => return Err(Error::new("Cannot parse sample-rate parameter.")),
     };
@@ -309,6 +335,32 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
+    let mut outputs = Vec::<Box<output::Output>>::new();
+    let mut output_states = Vec::<ui::OutputState>::new();
+
+    for o in matches.opt_strs("o") {
+        outputs.push(Box::new(output::ResamplingOutput::open(&o, sample_rate)));
+        output_states.push(ui::OutputState::new(&o));
+    }
+
+    if matches.opt_present("m") {
+        let mut input = async_input::AsyncInput::new(Box::new(
+            try!(alsa_input::AlsaInput::open(&matches.opt_strs("i")[0], 192000, false))));
+        let r = try!(get_impulse_response(&mut outputs[0], &mut input));
+        let mut s = 0;
+        for i in 100..r.len() {
+            if r[i].abs() > 0.02 {
+                s = i - 100;
+                break;
+            }
+        }
+
+        for i in s..r.len() {
+            println!("{} {}", i, r[i]);
+        }
+        return Ok(());
+    }
+
     let drc_filter = if fir_filters.len() == 0 {
         None
     } else if fir_filters.len() == 2 {
@@ -335,21 +387,8 @@ fn run() -> Result<()> {
         input_states.push(ui::InputState::new(&i));
     }
 
-    if matches.opt_present("h") {
-        print_usage(&program, opts);
-        return Ok(());
-    }
-
     if inputs.is_empty() {
         return Err(Error::new("No inputs specified."));
-    }
-
-    let mut outputs = Vec::<Box<output::Output>>::new();
-    let mut output_states = Vec::<ui::OutputState>::new();
-
-    for o in matches.opt_strs("o") {
-        outputs.push(Box::new(output::ResamplingOutput::open(&o, sample_rate)));
-        output_states.push(ui::OutputState::new(&o));
     }
 
     let shared_state = ui::SharedState::new(input_states, output_states);

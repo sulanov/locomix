@@ -64,18 +64,18 @@ pub struct AlsaInput {
     sample_rate: usize,
     format: SampleFormat,
     period_size: usize,
-    rate_detector: RateDetector,
+    rate_detector: Option<RateDetector>,
     state: State,
 }
 
-const TARGET_RATE: usize = 48000;
+const TARGET_SAMPLE_RATE: usize = 48000;
 const INPUT_FRAME_SIZE: usize = 256;
 
 // Deactivate input after 30 seconds of silence.
 const SILENCE_PERIOD_SECONDS: usize = 30;
 
 impl AlsaInput {
-    pub fn open(name: &str) -> Result<AlsaInput> {
+    pub fn open(name: &str, target_sample_rate: usize, auto_sample_rate: bool) -> Result<AlsaInput> {
         let pcm = try!(alsa::PCM::open(&*CString::new(name).unwrap(),
                                        alsa::Direction::Capture,
                                        false));
@@ -102,7 +102,7 @@ impl AlsaInput {
                                           alsa::ValueOr::Nearest));
             try!(hwp.set_periods(10, alsa::ValueOr::Nearest));
             try!(hwp.set_rate_resample(false));
-            try!(hwp.set_rate(TARGET_RATE as u32, alsa::ValueOr::Nearest));
+            try!(hwp.set_rate(target_sample_rate as u32, alsa::ValueOr::Nearest));
             try!(hwp.set_access(alsa::pcm::Access::RWInterleaved));
             try!(pcm.hw_params(&hwp));
 
@@ -130,7 +130,7 @@ impl AlsaInput {
                sample_rate: sample_rate,
                format: format,
                period_size: period_size,
-               rate_detector: RateDetector::new(),
+               rate_detector: if auto_sample_rate { Some(RateDetector::new()) } else { None },
                state: State::Inactive,
            })
     }
@@ -157,16 +157,18 @@ impl Input for AlsaInput {
 
         assert!(samples > 0);
 
-        match self.rate_detector.update(samples) {
-            Some(rate) => {
-                if rate != self.sample_rate {
-                    println!("INFO: rate changed {}", rate);
-                    self.sample_rate = rate;
+        if self.rate_detector.is_some() {
+            match self.rate_detector.as_mut().unwrap().update(samples) {
+                Some(rate) => {
+                    if rate != self.sample_rate {
+                        println!("INFO: rate changed {}", rate);
+                        self.sample_rate = rate;
+                    }
                 }
-            }
-            None => {
-                // Drop all data if we don't know sample rate.
-                return Ok(None);
+                None => {
+                    // Drop all data if we don't know sample rate.
+                    return Ok(None);
+                }
             }
         }
 
@@ -220,7 +222,7 @@ pub struct ResilientAlsaInput {
 
 impl ResilientAlsaInput {
     pub fn new(name: &str) -> ResilientAlsaInput {
-        let device = match AlsaInput::open(name) {
+        let device = match AlsaInput::open(name, TARGET_SAMPLE_RATE, true) {
             Ok(device) => Some(device),
             Err(e) => {
                 println!("warning: failed to open {}: {}", name, e);
@@ -238,7 +240,7 @@ impl ResilientAlsaInput {
         let now = Instant::now();
         if (now - self.last_open_attempt).as_secs() >= RETRY_PERIOD_SECS {
             self.last_open_attempt = now;
-            match AlsaInput::open(&self.device_name) {
+            match AlsaInput::open(&self.device_name, TARGET_SAMPLE_RATE, true) {
                 Ok(input) => self.input = Some(input),
                 Err(e) => println!("info: Failed to reopen {}", e),
             }
