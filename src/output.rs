@@ -306,9 +306,7 @@ impl ResamplingOutput {
                     }
                 };
 
-                if resampled_frame.len() > 0 {
-                    output.write(resampled_frame);
-                }
+                output.write(resampled_frame);
             }
         });
 

@@ -69,7 +69,7 @@ pub struct AlsaInput {
 }
 
 const TARGET_SAMPLE_RATE: usize = 48000;
-const INPUT_FRAME_SIZE: usize = 96;
+const INPUT_FRAME_SIZE: usize = 256;
 
 // Deactivate input after 30 seconds of silence.
 const SILENCE_PERIOD_SECONDS: usize = 30;
