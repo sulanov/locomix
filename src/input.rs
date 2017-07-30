@@ -34,21 +34,29 @@ impl InputResampler {
 
 impl Input for InputResampler {
     fn read(&mut self) -> Result<Option<Frame>> {
-        Ok(try!(self.input.read()).map(|frame| {
-            if self.current_input_rate != frame.sample_rate {
-                self.current_input_rate = frame.sample_rate;
-                self.resamplers =
-                    Some([self.resampler_factory
-                              .create_resampler(frame.sample_rate, self.sample_rate, 200),
-                          self.resampler_factory
-                              .create_resampler(frame.sample_rate, self.sample_rate, 200)]);
-            };
-            Frame {
-                sample_rate: self.current_input_rate,
-                left: self.resamplers.as_mut().unwrap()[0].resample(&frame.left),
-                right: self.resamplers.as_mut().unwrap()[1].resample(&frame.right),
-            }
-        }))
+        Ok(match try!(self.input.read()) {
+            Some(frame) => {
+                if self.current_input_rate != frame.sample_rate {
+                    self.current_input_rate = frame.sample_rate;
+                    self.resamplers =
+                        Some([self.resampler_factory
+                                  .create_resampler(frame.sample_rate, self.sample_rate, 200),
+                              self.resampler_factory
+                                  .create_resampler(frame.sample_rate, self.sample_rate, 200)]);
+                };
+                let f = Frame {
+                    sample_rate: self.current_input_rate,
+                    left: self.resamplers.as_mut().unwrap()[0].resample(&frame.left),
+                    right: self.resamplers.as_mut().unwrap()[1].resample(&frame.right),
+                };
+                if f.len() > 0 {
+                    Some(f)
+                } else {
+                    None
+                }
+            },
+            None => None
+        })
     }
 
     fn samples_buffered(&mut self) -> Result<usize> {

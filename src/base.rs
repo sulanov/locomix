@@ -9,7 +9,7 @@ use std::io;
 use self::simd::f32x4;
 
 pub const CHANNELS: usize = 2;
-pub const FRAME_SIZE_APPROX_MS: usize = 10;
+pub const FRAME_SIZE_APPROX_MS: usize = 2;
 pub const MAX_QUEUED_FRAMES: usize = 3;
 
 #[derive(Clone, Copy)]
