@@ -2,11 +2,10 @@ extern crate alsa;
 
 use base::*;
 use std;
-use std::error;
 use std::ffi::CString;
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Instant, Duration};
+use time::{Time, TimeDelta};
 use resampler;
 
 pub trait Output: Send {
@@ -71,7 +70,7 @@ impl AlsaOutput {
                 sample_rate = selected;
             }
 
-            try!(hwp.set_period_size_near((sample_rate * FRAME_SIZE_APPROX_MS / 1000) as
+            try!(hwp.set_period_size_near((sample_rate * FRAME_SIZE_MS / 1000) as
                                           alsa::pcm::Frames,
                                           alsa::ValueOr::Nearest));
             try!(hwp.set_periods(3, alsa::ValueOr::Nearest));
@@ -118,10 +117,8 @@ impl Output for AlsaOutput {
             }
             Err(e) => {
                 println!("Recovering output {}", e);
-                match self.pcm.recover(e.code(), true) {
-                    Ok(_) => self.write(frame),
-                    Err(_) => Err(Error::new(error::Error::description(&e))),
-                }
+                try!(self.pcm.recover(e.code(), true));
+                self.write(frame)
             }
         }
     }
@@ -137,19 +134,19 @@ impl Output for AlsaOutput {
     }
 }
 
-const RETRY_PERIOD_SECS: u64 = 3;
+const RETRY_PERIOD_SECS: i64 = 3;
 
 pub struct ResilientAlsaOutput {
     device_name: String,
     output: Option<AlsaOutput>,
     target_sample_rate: usize,
-    last_open_attempt: Instant,
+    last_open_attempt: Time,
     period_size: usize,
 }
 
 impl ResilientAlsaOutput {
     pub fn new(name: &str, target_sample_rate: usize) -> ResilientAlsaOutput {
-        let mut period_size = target_sample_rate * FRAME_SIZE_APPROX_MS / 1000;
+        let mut period_size = target_sample_rate * FRAME_SIZE_MS / 1000;
         let device = match AlsaOutput::open(name, target_sample_rate) {
             Ok(device) => {
                 period_size = device.period_size();
@@ -164,14 +161,14 @@ impl ResilientAlsaOutput {
             device_name: String::from(name),
             output: device,
             target_sample_rate: target_sample_rate,
-            last_open_attempt: Instant::now(),
+            last_open_attempt: Time::now(),
             period_size: period_size,
         }
     }
 
     pub fn try_reopen(&mut self) {
-        let now = Instant::now();
-        if (now - self.last_open_attempt).as_secs() >= RETRY_PERIOD_SECS {
+        let now = Time::now();
+        if now - self.last_open_attempt >= TimeDelta::seconds(RETRY_PERIOD_SECS) {
             self.last_open_attempt = now;
             match AlsaOutput::open(&self.device_name, self.target_sample_rate) {
                 Ok(output) => {
@@ -190,9 +187,6 @@ impl Output for ResilientAlsaOutput {
             self.try_reopen()
         }
 
-        let frame_duration = Duration::from_millis((frame.len() * 1000 / self.sample_rate()) as
-                                                   u64);
-
         if self.output.is_some() {
             let mut reset = false;
             match self.output.as_mut().unwrap().write(frame) {
@@ -206,7 +200,7 @@ impl Output for ResilientAlsaOutput {
                 self.output = None;
             }
         } else {
-            std::thread::sleep(frame_duration);
+            std::thread::sleep((frame.timestamp - Time::now()).as_duration());
         }
 
         Ok(())
@@ -234,7 +228,7 @@ enum PipeMessage {
 }
 
 pub struct ResamplingOutput {
-    sender: mpsc::SyncSender<PipeMessage>,
+    sender: mpsc::Sender<PipeMessage>,
     sample_rate: usize,
     period_size: usize,
 }
@@ -245,18 +239,16 @@ impl ResamplingOutput {
     }
 
     pub fn new(mut output: ResilientAlsaOutput, input_sample_rate: usize) -> ResamplingOutput {
-        let (sender, receiver) = mpsc::sync_channel(2);
+        let (sender, receiver) = mpsc::channel();
 
         let result = ResamplingOutput {
             sender: sender,
             sample_rate: input_sample_rate,
-            period_size: input_sample_rate * FRAME_SIZE_APPROX_MS / 1000,
+            period_size: input_sample_rate * FRAME_SIZE_MS / 1000,
         };
 
         thread::spawn(move || {
-            let mut resampler_factory = resampler::ResamplerFactory::new();
-            let mut current_rate = 0;
-            let mut resamplers: Option<[resampler::FastResampler; 2]> = None;
+            let mut resampler = resampler::StreamResampler::new(48000);
 
             loop {
                 let frame = match receiver.recv() {
@@ -276,37 +268,35 @@ impl ResamplingOutput {
                 }
 
                 let out_sample_rate = output.sample_rate();
-
                 if out_sample_rate == 0 {
                     continue;
                 }
 
-                if current_rate != out_sample_rate {
-                    current_rate = out_sample_rate;
-                    resamplers = if input_sample_rate != out_sample_rate {
-                        Some([resampler_factory.create_resampler(input_sample_rate,
-                                                                 out_sample_rate,
-                                                                 200),
-                              resampler_factory.create_resampler(input_sample_rate,
-                                                                 out_sample_rate,
-                                                                 200)])
-                    } else {
-                        None
-                    };
+                if resampler.get_output_sample_rate() != out_sample_rate {
+                    resampler.set_output_sample_rate(out_sample_rate);
                 }
 
-                let resampled_frame = match resamplers.as_mut() {
-                    None => frame,
-                    Some(resamplers) => {
-                        Frame {
-                            sample_rate: out_sample_rate,
-                            left: resamplers[0].resample(&frame.left),
-                            right: resamplers[1].resample(&frame.right),
-                        }
-                    }
-                };
+                let resampled_frame = resampler.resample(&frame);
+                if resampled_frame.is_none() {
+                    continue;
+                }
 
-                output.write(resampled_frame);
+                let resampled_frame = resampled_frame.unwrap();
+
+                let now = Time::now();
+                if resampled_frame.timestamp < now {
+                    println!("ERROR: Dropping frame: Missed target output time after resampling.");
+                    continue;
+                }
+
+                // Sleep if the frame is too far into the future.
+                if resampled_frame.timestamp - now > TimeDelta::milliseconds(FRAME_SIZE_MS as i64) * 4 {
+                    std::thread::sleep((resampled_frame.timestamp - now).as_duration());
+                }
+
+                output
+                    .write(resampled_frame)
+                    .expect("Failed to write samples");
             }
         });
 
@@ -316,11 +306,15 @@ impl ResamplingOutput {
 
 impl Output for ResamplingOutput {
     fn write(&mut self, frame: Frame) -> Result<()> {
-        self.sender.send(PipeMessage::Frame(frame));
+        self.sender
+            .send(PipeMessage::Frame(frame))
+            .expect("Failed to send");
         Ok(())
     }
     fn deactivate(&mut self) {
-        self.sender.send(PipeMessage::Deactivate);
+        self.sender
+            .send(PipeMessage::Deactivate)
+            .expect("Failed to send");
     }
     fn sample_rate(&self) -> usize {
         self.sample_rate

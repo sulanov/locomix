@@ -3,7 +3,11 @@ use std::f32::consts::PI;
 use std::f64::consts::PI as PI64;
 use std::sync::Arc;
 use std::collections::HashMap;
+use base;
 use base::convolve;
+use time::{Time, TimeDelta};
+
+pub const RESAMPLE_WINDOW_SIZE: usize = 200;
 
 struct QuadFunction {
     a: f32,
@@ -205,6 +209,7 @@ impl ResamplerTable {
 }
 
 pub struct FastResampler {
+    input_rate: usize,
     table: Arc<ResamplerTable>,
     queue: Vec<f32>,
 
@@ -215,8 +220,9 @@ pub struct FastResampler {
 }
 
 impl FastResampler {
-    fn new(table: Arc<ResamplerTable>) -> FastResampler {
+    fn new(input_rate: usize, table: Arc<ResamplerTable>) -> FastResampler {
         FastResampler {
+            input_rate: input_rate,
             table: table,
             queue: Vec::new(),
             i_pos: 0,
@@ -267,6 +273,7 @@ impl FastResampler {
                                    &kernel[k_pos..(k_pos + len)]);
             };
 
+
             output.push(result);
 
             self.i_pos_frac += table.config.freq_num;
@@ -310,7 +317,7 @@ impl ResamplerFactory {
         ResamplerFactory { table_cache: HashMap::new() }
     }
 
-    pub fn create_resampler(&mut self, i_freq: usize, o_freq: usize, size: usize) -> FastResampler {
+    pub fn create_resampler(&mut self, i_freq: usize, o_freq: usize) -> FastResampler {
         let gcd = get_greatest_common_divisor(i_freq, o_freq);
         let freq_num = i_freq / gcd;
         let freq_denom = o_freq / gcd;
@@ -318,7 +325,7 @@ impl ResamplerFactory {
         let config = ResamplerConfig {
             freq_num: freq_num,
             freq_denom: freq_denom,
-            size: size,
+            size: RESAMPLE_WINDOW_SIZE,
         };
 
         let table = self.table_cache
@@ -326,10 +333,79 @@ impl ResamplerFactory {
             .or_insert_with(|| Arc::new(ResamplerTable::new(config)))
             .clone();
 
-        FastResampler::new(table)
+        FastResampler::new(i_freq, table)
     }
 }
 
+pub struct StreamResampler {
+    input_sample_rate: usize,
+    output_sample_rate: usize,
+    resampler_factory: ResamplerFactory,
+    resamplers: Option<[FastResampler; 2]>,
+    reference_time: Time,
+    input_pos: i64,
+    output_pos: i64,
+}
+
+impl StreamResampler {
+    pub fn new(output_sample_rate: usize) -> StreamResampler {
+        StreamResampler {
+            input_sample_rate: 0,
+            output_sample_rate: output_sample_rate,
+            resampler_factory: ResamplerFactory::new(),
+            resamplers: None,
+            reference_time: Time::now(),
+            input_pos: 0,
+            output_pos: 0,
+        }
+    }
+
+    pub fn get_output_sample_rate(&self) -> usize {
+        self.output_sample_rate
+    }
+
+    pub fn set_output_sample_rate(&mut self, output_sample_rate: usize) {
+        self.output_sample_rate = output_sample_rate;
+        self.resamplers = None;
+    }
+
+
+    pub fn resample(&mut self, frame: &base::Frame) -> Option<base::Frame> {
+        if self.input_sample_rate != frame.sample_rate ||
+            base::get_sample_timestamp(self.reference_time,
+                                       frame.sample_rate,
+                                       self.input_pos) != frame.timestamp {
+            self.resamplers = None;
+            self.input_sample_rate = frame.sample_rate;
+            self.reference_time = frame.timestamp;
+            self.input_pos = 0;
+            self.output_pos = 0;
+        }
+
+        if self.resamplers.is_none() {
+            self.resamplers =
+                Some([self.resampler_factory
+                          .create_resampler(frame.sample_rate, self.output_sample_rate),
+                      self.resampler_factory
+                          .create_resampler(frame.sample_rate, self.output_sample_rate)]);
+        }
+
+
+        let result = base::Frame {
+            sample_rate: self.output_sample_rate,
+            timestamp: base::get_sample_timestamp(self.reference_time,
+                                                  self.output_sample_rate,
+                                                  self.output_pos),
+            left: self.resamplers.as_mut().unwrap()[0].resample(&frame.left),
+            right: self.resamplers.as_mut().unwrap()[1].resample(&frame.right),
+        };
+
+        self.input_pos += frame.len() as i64;
+        self.output_pos += result.len() as i64;
+
+        if result.len() > 0 { Some(result) } else { None }
+    }
+}
 
 #[cfg(test)]
 mod tests {

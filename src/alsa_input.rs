@@ -4,7 +4,7 @@ extern crate libc;
 use std;
 use std::ffi::CString;
 use std::error;
-use std::time::{Instant, Duration};
+use time::{Time, TimeDelta};
 use std::collections::VecDeque;
 use base::*;
 
@@ -12,11 +12,11 @@ use super::input::*;
 
 const ACCEPTED_RATES: [usize; 6] = [44100, 48000, 88200, 96000, 176400, 192000];
 
-const RATE_DETECTION_SECONDS: usize = 1;
-const RATE_DETECTION_MIN_PERIOD_MS: usize = 950;
+const RATE_DETECTION_PERIOD_MS: i64 = 1000;
+const RATE_DETECTION_MIN_PERIOD_MS: i64 = 950;
 
 struct RateDetector {
-    history: VecDeque<(Instant, usize)>,
+    history: VecDeque<(Time, usize)>,
     sum: usize,
 }
 
@@ -29,20 +29,21 @@ impl RateDetector {
     }
 
     fn update(&mut self, samples: usize) -> Option<usize> {
-        let now = Instant::now();
+        let now = Time::now();
         self.sum += samples;
         self.history.push_back((now, samples));
         while self.history.len() > 0 &&
-              (now - self.history[0].0).as_secs() >= RATE_DETECTION_SECONDS as u64 {
+              (now - self.history[0].0).in_seconds() >= RATE_DETECTION_PERIOD_MS as i64 {
             self.sum -= self.history.pop_front().unwrap().1;
         }
 
-        let period_ms = ((now - self.history[0].0).subsec_nanos() / 1000000) as usize;
-        if period_ms < RATE_DETECTION_MIN_PERIOD_MS {
+        let period = now - self.history[0].0;
+        if period < TimeDelta::milliseconds(RATE_DETECTION_MIN_PERIOD_MS) {
             return None;
         }
 
-        let current_rate = (self.sum - self.history[0].1) * 1000 / period_ms;
+        let current_rate = (self.sum - self.history[0].1) as i64 * 1000_000_000 /
+                           period.in_nanoseconds();
 
         for rate in ACCEPTED_RATES.iter() {
             // Check if the current rate is within 5% of a known value
@@ -66,6 +67,8 @@ pub struct AlsaInput {
     period_size: usize,
     rate_detector: Option<RateDetector>,
     state: State,
+    reference_time: Time,
+    pos: i64,
 }
 
 const TARGET_SAMPLE_RATE: usize = 48000;
@@ -73,6 +76,8 @@ const INPUT_FRAME_SIZE: usize = 256;
 
 // Deactivate input after 30 seconds of silence.
 const SILENCE_PERIOD_SECONDS: usize = 30;
+
+const MAX_TIME_DEVIATION_MS: i64 = FRAME_SIZE_MS as i64;
 
 impl AlsaInput {
     pub fn open(name: &str,
@@ -139,6 +144,8 @@ impl AlsaInput {
                    None
                },
                state: State::Inactive,
+               reference_time: Time::now(),
+               pos: 0,
            })
     }
 }
@@ -205,26 +212,29 @@ impl Input for AlsaInput {
             _ => (),
         }
 
+        let mut timestamp =
+            get_sample_timestamp(self.reference_time, self.sample_rate, self.pos);
+        self.pos += samples as i64;
+
+        let now = Time::now();
+        if (now - timestamp).abs() > TimeDelta::milliseconds(MAX_TIME_DEVIATION_MS) {
+            println!("INFO: Resetting input reference time.");
+            self.reference_time = now;
+            timestamp = now;
+            self.pos = 0;
+        }
 
         let bytes = samples * CHANNELS * self.format.bytes_per_sample();
-        Ok(Some(Frame::from_buffer(self.format, self.sample_rate, &buf[0..bytes])))
-    }
-
-    fn samples_buffered(&mut self) -> Result<usize> {
-        Ok(try!(self.pcm.status()).get_avail() as usize)
-    }
-
-    fn is_synchronized(&self) -> bool {
-        true
+        Ok(Some(Frame::from_buffer(self.format, self.sample_rate, &buf[0..bytes], timestamp)))
     }
 }
 
-const RETRY_PERIOD_SECS: u64 = 3;
+const RETRY_PERIOD_SECS: i64 = 3;
 
 pub struct ResilientAlsaInput {
     device_name: String,
     input: Option<AlsaInput>,
-    last_open_attempt: Instant,
+    last_open_attempt: Time,
 }
 
 impl ResilientAlsaInput {
@@ -239,13 +249,13 @@ impl ResilientAlsaInput {
         ResilientAlsaInput {
             device_name: String::from(name),
             input: device,
-            last_open_attempt: Instant::now(),
+            last_open_attempt: Time::now(),
         }
     }
 
     fn try_reopen(&mut self) {
-        let now = Instant::now();
-        if (now - self.last_open_attempt).as_secs() >= RETRY_PERIOD_SECS {
+        let now = Time::now();
+        if (now - self.last_open_attempt).in_seconds() >= RETRY_PERIOD_SECS {
             self.last_open_attempt = now;
             match AlsaInput::open(&self.device_name, TARGET_SAMPLE_RATE, true) {
                 Ok(input) => self.input = Some(input),
@@ -281,38 +291,9 @@ impl Input for ResilientAlsaInput {
             self.input = None;
         }
         if self.input.is_none() {
-            std::thread::sleep(Duration::from_millis(FRAME_SIZE_APPROX_MS as u64));
+            std::thread::sleep(TimeDelta::milliseconds(FRAME_SIZE_MS as i64).as_duration());
         }
 
         Ok(result)
-    }
-
-    fn samples_buffered(&mut self) -> Result<usize> {
-        let mut reset = false;
-        let result = match self.input.as_mut() {
-            Some(input) => {
-                match input.samples_buffered() {
-                    Ok(r) => Ok(r),
-                    Err(e) => {
-                        println!("warning: samples_buffered() call failed for {}: {}",
-                                 self.device_name,
-                                 e);
-                        reset = true;
-                        Ok(0)
-                    }
-                }
-            }
-            None => Ok(0),
-        };
-
-        if reset {
-            self.input = None;
-        }
-
-        result
-    }
-
-    fn is_synchronized(&self) -> bool {
-        true
     }
 }

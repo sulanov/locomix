@@ -1,16 +1,16 @@
 use input_device::*;
 use std;
-use std::time::{Duration, Instant};
+use time::{Time, TimeDelta};
 use ui::*;
 
-const REOPEN_PERIOD_SECONDS: u64 = 3;
+const REOPEN_PERIOD_SECONDS: i64 = 3;
 
 struct LightController {
     device_path: String,
     dev: Option<InputDevice>,
     state: SharedState,
     ui_receiver: UiMessageReceiver,
-    last_open_attempt: Instant,
+    last_open_attempt: Time,
 }
 
 impl LightController {
@@ -21,13 +21,13 @@ impl LightController {
             dev: None,
             state: state,
             ui_receiver: receiver,
-            last_open_attempt: Instant::now() - Duration::from_secs(REOPEN_PERIOD_SECONDS),
+            last_open_attempt: Time::now() - TimeDelta::seconds(REOPEN_PERIOD_SECONDS),
         }
     }
 
     fn try_open(&mut self, log_error: bool) {
         if self.dev.is_some() ||
-           self.last_open_attempt.elapsed().as_secs() < REOPEN_PERIOD_SECONDS {
+           Time::now() - self.last_open_attempt < TimeDelta::seconds(REOPEN_PERIOD_SECONDS) {
             return;
         }
         match InputDevice::new(&self.device_path) {
@@ -88,9 +88,9 @@ impl LightController {
             let volume = self.state.lock().volume().db;
 
             self.set_light(0.0);
-            std::thread::sleep(Duration::from_millis(50));
+            std::thread::sleep(TimeDelta::milliseconds(50).as_duration());
             self.set_light((volume - VOLUME_MIN) / (VOLUME_MAX - VOLUME_MIN));
-            std::thread::sleep(Duration::from_millis(50));
+            std::thread::sleep(TimeDelta::milliseconds(50).as_duration());
         }
     }
 }

@@ -393,7 +393,7 @@ impl CrossfeedFilter {
         if self.level == 0.0 {
             return frame;
         }
-        let mut out = Frame::new(frame.sample_rate, frame.len());
+        let mut out = Frame::new(frame.sample_rate, frame.timestamp, frame.len());
         let b = self.level * 0.5;
         let a = 1.0 - b;
 

@@ -1,16 +1,15 @@
 extern crate alsa;
 extern crate simd;
 
-use std;
-use std::fmt;
-use std::error;
-use std::result;
-use std::io;
 use self::simd::f32x4;
+use std::error;
+use std::fmt;
+use std::io;
+use std::result;
+use time::{Time, TimeDelta};
 
 pub const CHANNELS: usize = 2;
-pub const FRAME_SIZE_APPROX_MS: usize = 10;
-pub const MAX_QUEUED_FRAMES: usize = 3;
+pub const FRAME_SIZE_MS: usize = 5;
 
 #[derive(Clone, Copy)]
 pub enum SampleFormat {
@@ -44,12 +43,6 @@ impl fmt::Display for SampleFormat {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.to_str())
     }
-}
-
-pub struct Frame {
-    pub sample_rate: usize,
-    pub left: Vec<f32>,
-    pub right: Vec<f32>,
 }
 
 fn clamp(v: f32) -> f32 {
@@ -157,10 +150,28 @@ pub fn convolve(v1: &[f32], v2: &[f32]) -> f32 {
     sum_8.extract(3) + sum_end
 }
 
+pub fn get_sample_timestamp(start: Time, sample_rate: usize, sample: i64) -> Time {
+    start +
+    (TimeDelta::seconds(1) * sample + TimeDelta::nanoseconds(sample_rate as i64 / 2)) /
+    sample_rate as i64
+}
+
+pub fn get_sample_from_timestamp(start: Time, sample_rate: usize, time: Time) -> i64 {
+    ((time - start) * sample_rate as i64 + (TimeDelta::seconds(1) / 2)) / TimeDelta::seconds(1)
+}
+
+pub struct Frame {
+    pub sample_rate: usize,
+    pub timestamp: Time,
+    pub left: Vec<f32>,
+    pub right: Vec<f32>,
+}
+
 impl Frame {
-    pub fn new(sample_rate: usize, samples: usize) -> Frame {
+    pub fn new(sample_rate: usize, timestamp: Time, samples: usize) -> Frame {
         Frame {
             sample_rate: sample_rate,
+            timestamp: timestamp,
             left: vec ![0f32; samples],
             right: vec ![0f32; samples],
         }
@@ -169,6 +180,18 @@ impl Frame {
     pub fn len(&self) -> usize {
         assert!(self.left.len() == self.right.len());
         self.left.len()
+    }
+
+    pub fn get_sample_timestamp(&self, sample: usize) -> Time {
+        get_sample_timestamp(self.timestamp, self.sample_rate, sample as i64)
+    }
+
+    pub fn position_at(&self, time: Time) -> usize {
+        get_sample_from_timestamp(self.timestamp, self.sample_rate, time) as usize
+    }
+
+    pub fn end_timestamp(&self) -> Time {
+        self.get_sample_timestamp(self.len())
     }
 
     pub fn to_buffer(&self, format: SampleFormat) -> Vec<u8> {
@@ -203,9 +226,13 @@ impl Frame {
         buf
     }
 
-    pub fn from_buffer(format: SampleFormat, sample_rate: usize, buffer: &[u8]) -> Frame {
+    pub fn from_buffer(format: SampleFormat,
+                       sample_rate: usize,
+                       buffer: &[u8],
+                       timestamp: Time)
+                       -> Frame {
         let samples = buffer.len() / format.bytes_per_sample() / CHANNELS;
-        let mut frame = Frame::new(sample_rate, samples);
+        let mut frame = Frame::new(sample_rate, timestamp, samples);
 
         match format {
             SampleFormat::S16LE => {
@@ -273,7 +300,7 @@ impl From<alsa::Error> for Error {
 }
 
 
-impl std::convert::From<io::Error> for Error {
+impl From<io::Error> for Error {
     fn from(e: io::Error) -> Error {
         Error::new(error::Error::description(&e))
     }

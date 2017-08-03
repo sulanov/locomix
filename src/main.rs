@@ -17,14 +17,16 @@ mod output;
 mod pipe_input;
 mod resampler;
 mod state_script;
+mod time;
 mod ui;
 mod web_ui;
 
 use base::*;
+use async_input::AsyncInput;
 use input::Input;
 use getopts::Options;
 use std::env;
-use std::time::{Instant, Duration};
+use time::{Time, TimeDelta};
 use filters::*;
 
 impl From<getopts::Fail> for Error {
@@ -34,20 +36,24 @@ impl From<getopts::Fail> for Error {
 }
 
 struct InputMixer {
-    input: Box<Input>,
+    input: AsyncInput,
     current_frame: Option<Frame>,
-    current_frame_pos: usize,
     volume: ui::Gain,
     gain: ui::Gain,
     multiplier: f32,
 }
 
+enum MixResult {
+    Again { new_pos: usize },
+    FrameInFuture,
+    Done,
+}
+
 impl InputMixer {
-    fn new(input: Box<Input>) -> InputMixer {
+    fn new(input: AsyncInput) -> InputMixer {
         let mut r = InputMixer {
             input: input,
             current_frame: None,
-            current_frame_pos: 0,
             volume: ui::Gain { db: -20.0 },
             gain: ui::Gain { db: 0.0 },
             multiplier: 1.0,
@@ -70,31 +76,60 @@ impl InputMixer {
         self.multiplier = 10f32.powf((self.volume.db + self.gain.db) / 20.0);
     }
 
-    fn mix_into(&mut self, mixed_frame: &mut Frame) -> Result<bool> {
-        for i in 0..mixed_frame.len() {
-            if self.current_frame.is_none() {
-                self.current_frame = try!(self.input.read());
-                self.current_frame_pos = 0;
-            }
-
-            let reset: bool;
-            match self.current_frame {
-                None => return Ok(i > 0),
-                Some(ref frame) => {
-                    mixed_frame.left[i] += self.multiplier * frame.left[self.current_frame_pos];
-                    mixed_frame.right[i] += self.multiplier * frame.right[self.current_frame_pos];
-                    self.current_frame_pos += 1;
-                    reset = self.current_frame_pos >= frame.len();
-                }
-            }
-            if reset {
-                self.current_frame = None;
-            }
+    fn mix(&self, mixed_frame: &mut Frame, frame: &Frame) -> MixResult {
+        if frame.timestamp >= mixed_frame.end_timestamp() {
+            // Current frame is in the future.
+            return MixResult::FrameInFuture;
         }
 
-        if self.input.is_synchronized() {
-            while try!(self.input.samples_buffered()) > MAX_QUEUED_FRAMES * mixed_frame.len() {
-                try!(self.input.read());
+        if mixed_frame.timestamp >= frame.end_timestamp() {
+            // Current frame is in the past.
+            return MixResult::Again { new_pos: 0 };
+        }
+
+        let start_time = std::cmp::max(frame.timestamp, mixed_frame.timestamp);
+        let end_time = std::cmp::min(frame.end_timestamp(), mixed_frame.end_timestamp());
+        assert!(start_time < end_time);
+
+        let mut pos = frame.position_at(start_time);
+        let end = mixed_frame.position_at(end_time);
+
+        for i in mixed_frame.position_at(start_time)..end {
+            mixed_frame.left[i] += self.multiplier * frame.left[pos];
+            mixed_frame.right[i] += self.multiplier * frame.right[pos];
+            pos += 1;
+        }
+
+        if end == mixed_frame.len() {
+            MixResult::Done
+        } else {
+            MixResult::Again { new_pos: end }
+        }
+    }
+
+    fn mix_into(&mut self, mixed_frame: &mut Frame, deadline: Time) -> Result<bool> {
+        let mut pos = 0;
+        while pos < mixed_frame.len() {
+            if self.current_frame.is_none() {
+                self.current_frame = try!(self.input.read(deadline - Time::now()));
+            }
+
+            let mix_result = match self.current_frame {
+                None => return Ok(pos > 0),
+                Some(ref frame) => self.mix(mixed_frame, frame),
+            };
+
+            match mix_result {
+                MixResult::Again { new_pos } => {
+                    pos = new_pos;
+                    self.current_frame = None;
+                }
+                MixResult::FrameInFuture => {
+                    return Ok(pos > 0);
+                }
+                MixResult::Done => {
+                    return Ok(true);
+                }
             }
         }
 
@@ -102,10 +137,13 @@ impl InputMixer {
     }
 }
 
-const OUTPUT_SHUTDOWN_SECONDS: u64 = 5;
-const STANDBY_SECONDS: u64 = 3600;
+const MIX_DEADLINE_MS: i64 = 20;
+const TARGET_OUTPUT_DELAY_MS: i64 = 80;
 
-fn run_loop(mut inputs: Vec<Box<Input>>,
+const OUTPUT_SHUTDOWN_SECONDS: i64 = 5;
+const STANDBY_SECONDS: i64 = 3600;
+
+fn run_loop(mut inputs: Vec<AsyncInput>,
             mut outputs: Vec<Box<output::Output>>,
             sample_rate: usize,
             shared_state: ui::SharedState,
@@ -118,9 +156,12 @@ fn run_loop(mut inputs: Vec<Box<Input>>,
         .map(|i| Box::new(InputMixer::new(i)))
         .collect();
 
+    let mut last_data_time = Time::now();
     let mut state = ui::StreamState::Active;
-    let mut last_data_time = Instant::now();
     let mut selected_output = 0;
+
+    let mut stream_start_time = Time::now();
+    let mut stream_pos: i64 = 0;
 
     let mut loudness_filter =
         StereoFilter::<LoudnessFilter>::new(SimpleFilterParams::new(sample_rate, 10.0));
@@ -131,23 +172,34 @@ fn run_loop(mut inputs: Vec<Box<Input>>,
     let mut enable_drc = true;
 
     loop {
-        let mut frame = Frame::new(sample_rate, outputs[selected_output].period_size());
+        let frame_timestamp =
+            base::get_sample_timestamp(stream_start_time, sample_rate, stream_pos);
+        let mut frame = Frame::new(sample_rate,
+                                   frame_timestamp,
+                                   outputs[selected_output].period_size());
+        stream_pos += frame.len() as i64;
 
         let mut have_data = false;
+        let mix_deadline = frame.end_timestamp() + TimeDelta::milliseconds(MIX_DEADLINE_MS);
+
+        let now = Time::now();
+        if now > mix_deadline {
+            println!("ERROR: Mixer missed deadline. Resetting stream. {:?}",
+                     now - mix_deadline);
+            stream_start_time = now;
+            stream_pos = 0;
+            continue;
+        }
+
         for m in mixers.iter_mut() {
-            have_data |= try!(m.mix_into(&mut frame));
+            have_data |= try!(m.mix_into(&mut frame, mix_deadline));
             if have_data && exclusive_mux_mode {
                 break;
             }
         }
 
-        let now = Instant::now();
-        if have_data {
-            last_data_time = now;
-        }
-
-        let new_state = match (have_data, (now - last_data_time).as_secs()) {
-            (true, _) => ui::StreamState::Active,
+        let new_state = match (have_data, (Time::now() - last_data_time).in_seconds()) {
+            (true, _) => {last_data_time = now; ui::StreamState::Active},
             (false, t) if t < OUTPUT_SHUTDOWN_SECONDS => ui::StreamState::Active,
             (false, t) if t < STANDBY_SECONDS => ui::StreamState::Inactive,
             (false, _) => ui::StreamState::Standby,
@@ -181,9 +233,13 @@ fn run_loop(mut inputs: Vec<Box<Input>>,
                 _ => (),
             }
 
+            frame.timestamp += TimeDelta::milliseconds(TARGET_OUTPUT_DELAY_MS);
+
             try!(outputs[selected_output].write(frame));
         } else {
-            std::thread::sleep(Duration::from_millis(500));
+            std::thread::sleep(TimeDelta::milliseconds(500).as_duration());
+            stream_start_time = Time::now();
+            stream_pos = 0;
         }
 
         for msg in ui_channel.try_iter() {
@@ -234,28 +290,38 @@ fn print_usage(program: &str, opts: Options) {
     print!("{}", opts.usage(&brief));
 }
 
-fn get_impulse_response(output: &mut Box<output::Output>, input: &mut Input) -> Result<Vec<f32>> {
+fn get_impulse_response(output: &mut Box<output::Output>,
+                        input: &mut AsyncInput)
+                        -> Result<Vec<f32>> {
+    let frame_duration = TimeDelta::milliseconds(10);
+    let frame_size = output.sample_rate() / 100;
+    let mut pos = Time::now();
+
     // Silence for 100 ms.
     for _ in 0..10 {
-        let zero = Frame::new(output.sample_rate(), output.sample_rate() / 100);
+        let zero = Frame::new(output.sample_rate(), pos, frame_size);
+        pos += frame_duration;
         try!(output.write(zero));
     }
 
     // Impulse at -6db.
-    let mut impulse = Frame::new(output.sample_rate(), 1);
+    let mut impulse = Frame::new(output.sample_rate(), pos, frame_size);
+    pos += frame_duration;
     impulse.left[0] = 0.5;
     impulse.right[0] = 0.5;
     try!(output.write(impulse));
 
     // Silence for 500 ms.
     for _ in 0..50 {
-        let zero = Frame::new(output.sample_rate(), output.sample_rate() / 100);
+        let frame_size = output.sample_rate() / 100;
+        let zero = Frame::new(output.sample_rate(), pos, frame_size);
+        pos += frame_duration;
         try!(output.write(zero));
     }
 
     let mut result = Vec::<f32>::new();
     loop {
-        match try!(input.read()) {
+        match try!(input.read(TimeDelta::zero())) {
             None => return Ok(result),
             Some(s) => result.extend_from_slice(&s.left),
         };
@@ -414,9 +480,8 @@ fn run() -> Result<()> {
     let wrapped_inputs = inputs
         .drain(..)
         .map(|input| {
-                 Box::<async_input::AsyncInput>::new(async_input::AsyncInput::new(
-                Box::new(input::InputResampler::new(input, sample_rate))))
-              as Box<Input>
+                 async_input::AsyncInput::new(Box::new(input::InputResampler::new(input,
+                                                                                  sample_rate)))
              })
         .collect();
 
