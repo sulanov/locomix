@@ -209,7 +209,6 @@ impl ResamplerTable {
 }
 
 pub struct FastResampler {
-    input_rate: usize,
     table: Arc<ResamplerTable>,
     queue: Vec<f32>,
 
@@ -220,9 +219,8 @@ pub struct FastResampler {
 }
 
 impl FastResampler {
-    fn new(input_rate: usize, table: Arc<ResamplerTable>) -> FastResampler {
+    fn new(table: Arc<ResamplerTable>) -> FastResampler {
         FastResampler {
-            input_rate: input_rate,
             table: table,
             queue: Vec::new(),
             i_pos: 0,
@@ -333,7 +331,7 @@ impl ResamplerFactory {
             .or_insert_with(|| Arc::new(ResamplerTable::new(config)))
             .clone();
 
-        FastResampler::new(i_freq, table)
+        FastResampler::new(table)
     }
 }
 
