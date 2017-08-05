@@ -405,7 +405,7 @@ fn run() -> Result<()> {
     let mut output_states = Vec::<ui::OutputState>::new();
 
     for o in matches.opt_strs("o") {
-        outputs.push(Box::new(output::ResamplingOutput::open(&o, sample_rate)));
+        outputs.push(output::AsyncOutput::open(&o));
         output_states.push(ui::OutputState::new(&o));
     }
 

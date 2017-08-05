@@ -77,7 +77,7 @@ const INPUT_FRAME_SIZE: usize = 256;
 // Deactivate input after 30 seconds of silence.
 const SILENCE_PERIOD_SECONDS: usize = 30;
 
-const MAX_TIME_DEVIATION_MS: i64 = FRAME_SIZE_MS as i64;
+const MAX_TIME_DEVIATION_MS: i64 = 2 * FRAME_SIZE_MS as i64;
 
 impl AlsaInput {
     pub fn open(name: &str,
@@ -218,7 +218,7 @@ impl Input for AlsaInput {
 
         let now = Time::now();
         if (now - timestamp).abs() > TimeDelta::milliseconds(MAX_TIME_DEVIATION_MS) {
-            println!("INFO: Resetting input reference time.");
+            println!("INFO: Resetting input reference time. {} ", (now - timestamp).abs().in_milliseconds());
             self.reference_time = now;
             timestamp = now;
             self.pos = 0;

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use base;
 use base::convolve;
-use time::{Time, TimeDelta};
+use time::Time;
 
 pub const RESAMPLE_WINDOW_SIZE: usize = 200;
 
