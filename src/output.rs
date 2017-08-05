@@ -114,7 +114,7 @@ impl Output for AlsaOutput {
         let now = Time::now();
 
         // Sleep if the frame is too far into the future.
-        if frame.timestamp - now > TimeDelta::milliseconds(FRAME_SIZE_MS as i64) * 4 {
+        if frame.timestamp - now > TimeDelta::milliseconds(FRAME_SIZE_MS as i64) * 5 {
             std::thread::sleep((frame.timestamp - now -
                 TimeDelta::milliseconds(FRAME_SIZE_MS as i64) * 1).as_duration());
         }
@@ -133,7 +133,6 @@ impl Output for AlsaOutput {
             Err(e) => {
                 println!("Recovering output {}", e);
                 try!(self.pcm.recover(e.code(), true));
-                self.pcm.io().writei(&buf[..]);
                 self.write(frame)
             }
         }
@@ -264,7 +263,6 @@ impl Output for ResamplingOutput {
         if self.resampler.get_output_sample_rate() != out_sample_rate {
             self.resampler.set_output_sample_rate(out_sample_rate);
         }
-
         match self.resampler.resample(&frame) {
             None => Ok(()),
             Some(frame) => self.output.write(frame)
@@ -280,7 +278,8 @@ impl Output for ResamplingOutput {
     }
 
     fn period_size(&self) -> usize {
-        self.output.period_size()
+        // FIXME
+        256
     }
 }
 

@@ -138,7 +138,7 @@ impl InputMixer {
 }
 
 const MIX_DEADLINE_MS: i64 = 20;
-const TARGET_OUTPUT_DELAY_MS: i64 = 80;
+const TARGET_OUTPUT_DELAY_MS: i64 = 60;
 
 const OUTPUT_SHUTDOWN_SECONDS: i64 = 5;
 const STANDBY_SECONDS: i64 = 3600;
@@ -171,12 +171,12 @@ fn run_loop(mut inputs: Vec<AsyncInput>,
     let mut exclusive_mux_mode = true;
     let mut enable_drc = true;
 
+    let period_size = FRAME_SIZE_MS * sample_rate / 1000;
+
     loop {
         let frame_timestamp =
             base::get_sample_timestamp(stream_start_time, sample_rate, stream_pos);
-        let mut frame = Frame::new(sample_rate,
-                                   frame_timestamp,
-                                   outputs[selected_output].period_size());
+        let mut frame = Frame::new(sample_rate, frame_timestamp, period_size);
         stream_pos += frame.len() as i64;
 
         let mut have_data = false;
