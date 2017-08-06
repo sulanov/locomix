@@ -120,32 +120,25 @@ impl Output for AlsaOutput {
         }
 
         let buf = frame.to_buffer(self.format);
-        let r = self.pcm.io().writei(&buf[..]);
-        match r {
-            Ok(l) => {
-                if l != frame.len() {
-                    Err(Error::new(&format!("Partial write: {}/{}", l, frame.len())))
-                } else {
-                    Ok(())
+        let mut pos: usize = 0;
+
+        while pos < frame.len() {
+            let start = pos * self.format.bytes_per_sample() * CHANNELS;
+            let r = self.pcm.io().writei(&buf[start..]);
+            match r {
+                Ok(l) => { pos += l }
+                Err(e) => {
+                    println!("Recovering output {}", e);
+                    try!(self.pcm.recover(e.code(), true));
                 }
             }
-            Err(e) => {
-                println!("Recovering output {}", e);
-                try!(self.pcm.recover(e.code(), true));
-                self.write(frame)
-            }
         }
+        Ok(())
     }
 
     fn deactivate(&mut self) {}
-
-    fn sample_rate(&self) -> usize {
-        self.sample_rate
-    }
-
-    fn period_size(&self) -> usize {
-        self.period_size
-    }
+    fn sample_rate(&self) -> usize { self.sample_rate }
+    fn period_size(&self) -> usize { self.period_size }
 }
 
 const RETRY_PERIOD_SECS: i64 = 3;
@@ -155,18 +148,22 @@ pub struct ResilientAlsaOutput {
     output: Option<AlsaOutput>,
     target_sample_rate: usize,
     last_open_attempt: Time,
+    sample_rate: usize,
     period_size: usize,
 }
 
 impl ResilientAlsaOutput {
     pub fn new(name: &str, target_sample_rate: usize) -> Box<Output> {
         let mut period_size = target_sample_rate * FRAME_SIZE_MS / 1000;
+        let sample_rate;
         let device = match AlsaOutput::open(name, target_sample_rate) {
             Ok(device) => {
+                sample_rate = device.sample_rate();
                 period_size = device.period_size();
                 Some(device)
             }
             Err(e) => {
+                sample_rate = 48000;
                 println!("WARNING: failed to open {}: {}", name, e);
                 None
             }
@@ -176,6 +173,7 @@ impl ResilientAlsaOutput {
                      output: device,
                      target_sample_rate: target_sample_rate,
                      last_open_attempt: Time::now(),
+                     sample_rate: sample_rate,
                      period_size: period_size,
                  })
     }
@@ -186,6 +184,7 @@ impl ResilientAlsaOutput {
             self.last_open_attempt = now;
             match AlsaOutput::open(&self.device_name, self.target_sample_rate) {
                 Ok(output) => {
+                    self.sample_rate = output.sample_rate();
                     self.period_size = output.period_size();
                     self.output = Some(output);
                 }
@@ -218,20 +217,9 @@ impl Output for ResilientAlsaOutput {
         Ok(())
     }
 
-    fn deactivate(&mut self) {
-        self.output = None;
-    }
-
-    fn sample_rate(&self) -> usize {
-        match self.output.as_ref() {
-            Some(o) => o.sample_rate(),
-            None => 0,
-        }
-    }
-
-    fn period_size(&self) -> usize {
-        self.period_size
-    }
+    fn deactivate(&mut self) { self.output = None; }
+    fn sample_rate(&self) -> usize { self.sample_rate }
+    fn period_size(&self) -> usize { self.period_size }
 }
 
 pub struct ResamplingOutput {
@@ -241,7 +229,7 @@ pub struct ResamplingOutput {
 
 impl ResamplingOutput {
     pub fn new(output: Box<Output>) -> Box<Output> {
-        let mut resampler = resampler::StreamResampler::new(output.sample_rate());
+        let resampler = resampler::StreamResampler::new(output.sample_rate());
         Box::new(ResamplingOutput {
                      output: output,
                      resampler: resampler,
@@ -279,7 +267,6 @@ impl Output for ResamplingOutput {
         256
     }
 }
-
 
 enum PipeMessage {
     Frame(Frame),

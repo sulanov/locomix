@@ -4,12 +4,15 @@ use base::*;
 use self::byteorder::{NativeEndian, ReadBytesExt};
 use std::f32::consts::PI;
 use std::fs::File;
+use std::mem;
 use std::sync::Arc;
+use std::sync::mpsc;
+use std::thread;
 
 type FCoef = f32;
 
 pub trait AudioFilter<T> {
-    type Params: Clone;
+    type Params: Clone + Send;
     fn new(params: Self::Params) -> T;
     fn set_params(&mut self, params: Self::Params);
     fn apply_one(&mut self, sample: FCoef) -> FCoef;
@@ -245,13 +248,6 @@ impl<T: AudioFilter<T>> StereoFilter<T> {
         }
     }
 
-    pub fn new_pair(left: T::Params, right: T::Params) -> StereoFilter<T> {
-        StereoFilter {
-            left: T::new(left),
-            right: T::new(right),
-        }
-    }
-
     pub fn set_params(&mut self, params: T::Params) {
         self.left.set_params(params.clone());
         self.right.set_params(params);
@@ -263,6 +259,48 @@ impl<T: AudioFilter<T>> StereoFilter<T> {
     }
 }
 
+struct FilterJob {
+    data: Vec<f32>,
+    response_channel: mpsc::Sender<Vec<f32>>,
+}
+
+pub struct ParallelFirFilter {
+    left: FirFilter,
+    right_thread: mpsc::Sender<FilterJob>,
+}
+
+impl ParallelFirFilter {
+    pub fn new_pair(left: FirFilterParams, right: FirFilterParams) -> ParallelFirFilter {
+        let (right_thread, job_receiver) = mpsc::channel::<FilterJob>();
+        thread::spawn(move || {
+            let mut filter = FirFilter::new(right);
+            for mut job in job_receiver.iter() {
+                let mut v = vec![0f32; 0];
+                mem::swap(&mut v, &mut job.data);
+                filter.apply_multi(&mut v[..]);
+                job.response_channel.send(v).expect("Failed to send");
+            }
+        });
+
+        ParallelFirFilter {
+            left: FirFilter::new(left),
+            right_thread: right_thread
+        }
+    }
+
+    pub fn apply(&mut self, frame: &mut Frame) {
+        let (s, r) = mpsc::channel::<Vec<f32>>();
+        let mut v = vec![0f32; 0];
+        mem::swap(&mut v, &mut frame.right);
+        self.right_thread.send(FilterJob {data: v, response_channel: s})
+            .expect("Failed to send");
+
+        self.left.apply_multi(&mut frame.left[..]);
+
+        let mut v = r.recv().expect("Failed to apply filter");
+        mem::swap(&mut v, &mut frame.right);
+    }
+}
 
 #[derive(Clone)]
 pub struct FirFilterParams {

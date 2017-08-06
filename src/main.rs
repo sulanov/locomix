@@ -137,17 +137,65 @@ impl InputMixer {
     }
 }
 
+pub struct FilteredOutput {
+    output: Box<output::Output>,
+    filter: ParallelFirFilter,
+    enabled: bool,
+    ui_msg_receiver: ui::UiMessageReceiver,
+}
+
+impl FilteredOutput {
+    pub fn new(output: Box<output::Output>,
+               filter: ParallelFirFilter,
+               shared_state: &ui::SharedState) -> Box<output::Output> {
+        Box::new(FilteredOutput {
+                     output: output,
+                     filter: filter,
+                     enabled: true,
+                     ui_msg_receiver: shared_state.lock().add_observer(),
+                 })
+    }
+}
+
+impl output::Output for FilteredOutput {
+    fn write(&mut self, mut frame: Frame) -> Result<()> {
+        for msg in self.ui_msg_receiver.try_iter() {
+            match msg {
+                ui::UiMessage::SetEnableDrc { enable } => self.enabled = enable,
+                _ => ()
+            }
+        }
+        if self.enabled {
+            self.filter.apply(&mut frame);
+        }
+        self.output.write(frame)
+    }
+
+    fn deactivate(&mut self) {
+        self.output.deactivate();
+    }
+
+    fn sample_rate(&self) -> usize {
+        self.output.sample_rate()
+    }
+
+    fn period_size(&self) -> usize {
+        self.output.sample_rate()
+    }
+}
+
+
 const MIX_DEADLINE_MS: i64 = 25;
 const TARGET_OUTPUT_DELAY_MS: i64 = 60;
 
 const OUTPUT_SHUTDOWN_SECONDS: i64 = 5;
 const STANDBY_SECONDS: i64 = 3600;
 
+
 fn run_loop(mut inputs: Vec<AsyncInput>,
             mut outputs: Vec<Box<output::Output>>,
             sample_rate: usize,
-            shared_state: ui::SharedState,
-            mut drc_filter: Option<StereoFilter<FirFilter>>)
+            shared_state: ui::SharedState)
             -> Result<()> {
     let ui_channel = shared_state.lock().add_observer();
 
@@ -169,7 +217,6 @@ fn run_loop(mut inputs: Vec<AsyncInput>,
     let mut crossfeed_filter = CrossfeedFilter::new();
 
     let mut exclusive_mux_mode = true;
-    let mut enable_drc = true;
 
     let period_size = FRAME_SIZE_MS * sample_rate / 1000;
 
@@ -229,13 +276,6 @@ fn run_loop(mut inputs: Vec<AsyncInput>,
             }
             frame = crossfeed_filter.apply(frame);
 
-            match (enable_drc, drc_filter.as_mut()) {
-                (true, Some(ref mut f)) => {
-                    f.apply(&mut frame);
-                }
-                _ => (),
-            }
-
             frame.timestamp += TimeDelta::milliseconds(TARGET_OUTPUT_DELAY_MS);
 
             try!(outputs[selected_output].write(frame));
@@ -260,7 +300,7 @@ fn run_loop(mut inputs: Vec<AsyncInput>,
                 ui::UiMessage::SetInputGain { device, gain } => {
                     mixers[device as usize].set_input_gain(gain);
                 }
-                ui::UiMessage::SetEnableDrc { enable } => enable_drc = enable,
+                ui::UiMessage::SetEnableDrc { enable: _ } => (),
                 ui::UiMessage::SetVoiceBoost { boost } => {
                     if boost.db > 0.0 {
                         let p = SimpleFilterParams::new(sample_rate, boost.db);
@@ -430,17 +470,6 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
-    let drc_filter = if fir_filters.len() == 0 {
-        None
-    } else if fir_filters.len() == 2 {
-        let (left, right) = reduce_fir_pair(fir_filters[0].clone(),
-                                            fir_filters[1].clone(),
-                                            filter_length);
-        Some(StereoFilter::<FirFilter>::new_pair(left, right))
-    } else {
-        return Err(Error::new("Expected 0 or 2 FIR filters"));
-    };
-
     for f in matches.opt_strs("f") {
         inputs.push(Box::new(try!(file_input::FileInput::open(&f))));
         input_states.push(ui::InputState::new(&f));
@@ -480,6 +509,19 @@ fn run() -> Result<()> {
         state_script::start_state_script_contoller(&s, shared_state.clone());
     }
 
+    if fir_filters.len() == 2 {
+        let (left, right) = reduce_fir_pair(fir_filters[0].clone(),
+                                            fir_filters[1].clone(),
+                                            filter_length);
+        let filtered_output = output::AsyncOutput::new(FilteredOutput::new(
+                outputs.remove(0),
+                ParallelFirFilter::new_pair(left, right),
+                &shared_state));
+        outputs.insert(0, filtered_output);
+    } else {
+        return Err(Error::new("Expected 0 or 2 FIR filters"));
+    }
+
     let wrapped_inputs = inputs
         .drain(..)
         .map(|input| {
@@ -488,11 +530,7 @@ fn run() -> Result<()> {
              })
         .collect();
 
-    run_loop(wrapped_inputs,
-             outputs,
-             sample_rate,
-             shared_state,
-             drc_filter)
+    run_loop(wrapped_inputs, outputs, sample_rate, shared_state)
 }
 
 fn main() {
