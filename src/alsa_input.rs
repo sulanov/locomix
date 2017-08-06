@@ -212,13 +212,13 @@ impl Input for AlsaInput {
             _ => (),
         }
 
-        let mut timestamp =
-            get_sample_timestamp(self.reference_time, self.sample_rate, self.pos);
+        let mut timestamp = get_sample_timestamp(self.reference_time, self.sample_rate, self.pos);
         self.pos += samples as i64;
 
         let now = Time::now();
         if (now - timestamp).abs() > TimeDelta::milliseconds(MAX_TIME_DEVIATION_MS) {
-            println!("INFO: Resetting input reference time. {} ", (now - timestamp).abs().in_milliseconds());
+            println!("INFO: Resetting input reference time. {} ",
+                     (now - timestamp).abs().in_milliseconds());
             self.reference_time = now;
             timestamp = now;
             self.pos = 0;

@@ -7,7 +7,7 @@ use base;
 use base::convolve;
 use time::Time;
 
-pub const RESAMPLE_WINDOW_SIZE: usize = 200;
+pub const RESAMPLE_WINDOW_SIZE: usize = 100;
 
 struct QuadFunction {
     a: f32,
@@ -370,9 +370,8 @@ impl StreamResampler {
 
     pub fn resample(&mut self, frame: &base::Frame) -> Option<base::Frame> {
         if self.input_sample_rate != frame.sample_rate ||
-            base::get_sample_timestamp(self.reference_time,
-                                       frame.sample_rate,
-                                       self.input_pos) != frame.timestamp {
+           base::get_sample_timestamp(self.reference_time, frame.sample_rate, self.input_pos) !=
+           frame.timestamp {
             self.resamplers = None;
             self.input_sample_rate = frame.sample_rate;
             self.reference_time = frame.timestamp;

@@ -137,7 +137,7 @@ impl InputMixer {
     }
 }
 
-const MIX_DEADLINE_MS: i64 = 20;
+const MIX_DEADLINE_MS: i64 = 25;
 const TARGET_OUTPUT_DELAY_MS: i64 = 60;
 
 const OUTPUT_SHUTDOWN_SECONDS: i64 = 5;
@@ -183,7 +183,7 @@ fn run_loop(mut inputs: Vec<AsyncInput>,
         let mix_deadline = frame.end_timestamp() + TimeDelta::milliseconds(MIX_DEADLINE_MS);
 
         let now = Time::now();
-        if now > mix_deadline {
+        if now > mix_deadline + TimeDelta::milliseconds(FRAME_SIZE_MS as i64) {
             println!("ERROR: Mixer missed deadline. Resetting stream. {:?}",
                      now - mix_deadline);
             stream_start_time = now;
@@ -199,7 +199,10 @@ fn run_loop(mut inputs: Vec<AsyncInput>,
         }
 
         let new_state = match (have_data, (Time::now() - last_data_time).in_seconds()) {
-            (true, _) => {last_data_time = now; ui::StreamState::Active},
+            (true, _) => {
+                last_data_time = now;
+                ui::StreamState::Active
+            }
             (false, t) if t < OUTPUT_SHUTDOWN_SECONDS => ui::StreamState::Active,
             (false, t) if t < STANDBY_SECONDS => ui::StreamState::Inactive,
             (false, _) => ui::StreamState::Standby,

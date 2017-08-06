@@ -92,8 +92,7 @@ impl Input for PipeInput {
         let mut buffer = vec![0u8; size];
         let bytes_read = match self.file.as_mut().map(|f| f.read(&mut buffer)) {
             None | Some(Ok(0)) => {
-                std::thread::sleep(TimeDelta::milliseconds(FRAME_SIZE_MS as i64)
-                                       .as_duration());
+                std::thread::sleep(TimeDelta::milliseconds(FRAME_SIZE_MS as i64).as_duration());
                 return Ok(None);
             }
             Some(Ok(result)) => result,
@@ -104,8 +103,7 @@ impl Input for PipeInput {
             }
         };
 
-        let mut timestamp =
-            get_sample_timestamp(self.reference_time, SAMPLE_RATE, self.pos);
+        let mut timestamp = get_sample_timestamp(self.reference_time, SAMPLE_RATE, self.pos);
         self.pos += (bytes_read / BYTES_PER_SAMPLE) as i64;
 
         let now = Time::now();

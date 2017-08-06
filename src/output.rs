@@ -105,20 +105,19 @@ impl AlsaOutput {
 impl Output for AlsaOutput {
     fn write(&mut self, frame: Frame) -> Result<()> {
         if self.sample_rate != frame.sample_rate {
-            println!(
-                "WARNING: different sample rate, expected {}, received {}",
-                self.sample_rate, frame.sample_rate);
+            println!("WARNING: different sample rate, expected {}, received {}",
+                     self.sample_rate,
+                     frame.sample_rate);
             return Ok(());
         }
 
-        let now = Time::now();
-
         // Sleep if the frame is too far into the future.
+        let now = Time::now();
         if frame.timestamp - now > TimeDelta::milliseconds(FRAME_SIZE_MS as i64) * 5 {
             std::thread::sleep((frame.timestamp - now -
-                TimeDelta::milliseconds(FRAME_SIZE_MS as i64) * 1).as_duration());
+                                TimeDelta::milliseconds(FRAME_SIZE_MS as i64) * 1)
+                                       .as_duration());
         }
-
 
         let buf = frame.to_buffer(self.format);
         let r = self.pcm.io().writei(&buf[..]);
@@ -173,12 +172,12 @@ impl ResilientAlsaOutput {
             }
         };
         Box::new(ResilientAlsaOutput {
-                    device_name: String::from(name),
-                    output: device,
-                    target_sample_rate: target_sample_rate,
-                    last_open_attempt: Time::now(),
-                    period_size: period_size,
-                })
+                     device_name: String::from(name),
+                     output: device,
+                     target_sample_rate: target_sample_rate,
+                     last_open_attempt: Time::now(),
+                     period_size: period_size,
+                 })
     }
 
     fn try_reopen(&mut self) {
@@ -214,9 +213,6 @@ impl Output for ResilientAlsaOutput {
             if reset {
                 self.output = None;
             }
-        } else {
-            std::thread::sleep((frame.timestamp - Time::now() -
-                                TimeDelta::milliseconds(FRAME_SIZE_MS as i64)).as_duration());
         }
 
         Ok(())
@@ -240,16 +236,16 @@ impl Output for ResilientAlsaOutput {
 
 pub struct ResamplingOutput {
     output: Box<Output>,
-    resampler: resampler::StreamResampler
+    resampler: resampler::StreamResampler,
 }
 
 impl ResamplingOutput {
     pub fn new(output: Box<Output>) -> Box<Output> {
         let mut resampler = resampler::StreamResampler::new(output.sample_rate());
         Box::new(ResamplingOutput {
-                    output: output,
-                    resampler: resampler,
-                })
+                     output: output,
+                     resampler: resampler,
+                 })
     }
 }
 
@@ -263,9 +259,10 @@ impl Output for ResamplingOutput {
         if self.resampler.get_output_sample_rate() != out_sample_rate {
             self.resampler.set_output_sample_rate(out_sample_rate);
         }
+
         match self.resampler.resample(&frame) {
             None => Ok(()),
-            Some(frame) => self.output.write(frame)
+            Some(frame) => self.output.write(frame),
         }
     }
 
@@ -290,7 +287,10 @@ enum PipeMessage {
 }
 
 enum FeedbackMessage {
-    NewConfig { sample_rate: usize, period_size: usize }
+    NewConfig {
+        sample_rate: usize,
+        period_size: usize,
+    },
 }
 
 pub struct AsyncOutput {
@@ -302,8 +302,7 @@ pub struct AsyncOutput {
 
 impl AsyncOutput {
     pub fn open(name: &str) -> Box<Output> {
-        AsyncOutput::new(ResamplingOutput::new(
-            AsyncOutput::new(ResilientAlsaOutput::new(name, 0))))
+        AsyncOutput::new(ResamplingOutput::new(AsyncOutput::new(ResilientAlsaOutput::new(name, 0))))
     }
 
     pub fn new(mut output: Box<Output>) -> Box<Output> {
@@ -321,13 +320,15 @@ impl AsyncOutput {
             let mut sample_rate = 0;
             let mut period_size = 0;
             loop {
-                if sample_rate != output.sample_rate() ||
-                   period_size != output.period_size() {
+                if sample_rate != output.sample_rate() || period_size != output.period_size() {
                     sample_rate = output.sample_rate();
                     period_size = output.period_size();
-                    feedback_sender.send(
-                        FeedbackMessage::NewConfig { sample_rate, period_size })
-                    .expect("Failed to send feedback message.");
+                    feedback_sender
+                        .send(FeedbackMessage::NewConfig {
+                                  sample_rate,
+                                  period_size,
+                              })
+                        .expect("Failed to send feedback message.");
                 }
 
                 let frame = match receiver.recv() {
@@ -345,13 +346,11 @@ impl AsyncOutput {
                 let now = Time::now();
                 if frame.timestamp < now {
                     println!("ERROR: Dropping frame: Missed target output time. {:?}",
-                        now - frame.timestamp);
+                             now - frame.timestamp);
                     continue;
                 }
 
-                output
-                    .write(frame)
-                    .expect("Failed to write samples");
+                output.write(frame).expect("Failed to write samples");
             }
         });
 
@@ -363,7 +362,10 @@ impl Output for AsyncOutput {
     fn write(&mut self, frame: Frame) -> Result<()> {
         for msg in self.feedback_receiver.try_iter() {
             match msg {
-                FeedbackMessage::NewConfig { sample_rate, period_size } => {
+                FeedbackMessage::NewConfig {
+                    sample_rate,
+                    period_size,
+                } => {
                     self.sample_rate = sample_rate;
                     self.period_size = period_size;
                 }
