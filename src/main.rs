@@ -180,15 +180,15 @@ fn run_loop(mut inputs: Vec<AsyncInput>,
         stream_pos += frame.len() as i64;
 
         let mut have_data = false;
-        let mix_deadline = frame.end_timestamp() + TimeDelta::milliseconds(MIX_DEADLINE_MS);
+        let mut mix_deadline = frame.end_timestamp() + TimeDelta::milliseconds(MIX_DEADLINE_MS);
 
         let now = Time::now();
         if now > mix_deadline + TimeDelta::milliseconds(FRAME_SIZE_MS as i64) {
             println!("ERROR: Mixer missed deadline. Resetting stream. {:?}",
                      now - mix_deadline);
-            stream_start_time = now;
-            stream_pos = 0;
-            continue;
+            frame.timestamp = frame.end_timestamp();
+            stream_pos += frame.len() as i64;
+            mix_deadline = frame.end_timestamp() + TimeDelta::milliseconds(MIX_DEADLINE_MS);
         }
 
         for m in mixers.iter_mut() {
