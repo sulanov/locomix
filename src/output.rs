@@ -7,6 +7,7 @@ use std::sync::mpsc;
 use std::thread;
 use time::{Time, TimeDelta};
 use resampler;
+use scheduler;
 
 pub trait Output: Send {
     fn write(&mut self, frame: Frame) -> Result<()>;
@@ -288,11 +289,11 @@ pub struct AsyncOutput {
 }
 
 impl AsyncOutput {
-    pub fn open(name: &str) -> Box<Output> {
-        AsyncOutput::new(ResamplingOutput::new(AsyncOutput::new(ResilientAlsaOutput::new(name, 0))))
+    pub fn open(name: &str, affinity: Option<scheduler::CpuSet>) -> Box<Output> {
+        AsyncOutput::new(ResilientAlsaOutput::new(name, 0), affinity)
     }
 
-    pub fn new(mut output: Box<Output>) -> Box<Output> {
+    pub fn new(mut output: Box<Output>, affinity: Option<scheduler::CpuSet>) -> Box<Output> {
         let (sender, receiver) = mpsc::channel();
         let (feedback_sender, feedback_receiver) = mpsc::channel();
 
@@ -304,6 +305,13 @@ impl AsyncOutput {
         };
 
         thread::spawn(move || {
+            match affinity {
+                Some(cpu_set) => {
+                    scheduler::set_self_affinity(cpu_set).expect("Failed to set affinity");
+                }
+                None => ()
+            }
+
             let mut sample_rate = 0;
             let mut period_size = 0;
             loop {
