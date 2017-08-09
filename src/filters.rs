@@ -44,11 +44,12 @@ impl BiquadParams {
         }
     }
 
-    pub fn low_shelf_filter(sample_rate: FCoef,
-                            f0: FCoef,
-                            slope: FCoef,
-                            gain_db: FCoef)
-                            -> BiquadParams {
+    pub fn low_shelf_filter(
+        sample_rate: FCoef,
+        f0: FCoef,
+        slope: FCoef,
+        gain_db: FCoef,
+    ) -> BiquadParams {
         let w0 = 2.0 * PI * f0 / sample_rate;
         let w0_cos = w0.cos();
         let a = (10.0 as FCoef).powf(gain_db / 40.0);
@@ -56,19 +57,22 @@ impl BiquadParams {
         let alpha = w0.sin() / 2.0 * ((a + 1.0 / a) * (1.0 / slope - 1.0) + 2.0).sqrt();
         let alpha_a = 2.0 * a_sqrt * alpha;
 
-        BiquadParams::new(a * ((a + 1.0) - (a - 1.0) * w0_cos + alpha_a),
-                          2.0 * a * ((a - 1.0) - (a + 1.0) * w0_cos),
-                          a * ((a + 1.0) - (a - 1.0) * w0_cos - alpha_a),
-                          (a + 1.0) + (a - 1.0) * w0_cos + alpha_a,
-                          -2.0 * ((a - 1.0) + (a + 1.0) * w0_cos),
-                          (a + 1.0) + (a - 1.0) * w0_cos - alpha_a)
+        BiquadParams::new(
+            a * ((a + 1.0) - (a - 1.0) * w0_cos + alpha_a),
+            2.0 * a * ((a - 1.0) - (a + 1.0) * w0_cos),
+            a * ((a + 1.0) - (a - 1.0) * w0_cos - alpha_a),
+            (a + 1.0) + (a - 1.0) * w0_cos + alpha_a,
+            -2.0 * ((a - 1.0) + (a + 1.0) * w0_cos),
+            (a + 1.0) + (a - 1.0) * w0_cos - alpha_a,
+        )
     }
 
-    pub fn high_shelf_filter(sample_rate: FCoef,
-                             f0: FCoef,
-                             slope: FCoef,
-                             gain_db: FCoef)
-                             -> BiquadParams {
+    pub fn high_shelf_filter(
+        sample_rate: FCoef,
+        f0: FCoef,
+        slope: FCoef,
+        gain_db: FCoef,
+    ) -> BiquadParams {
         let w0 = 2.0 * PI * f0 / sample_rate;
         let w0_cos = w0.cos();
         let a = (10.0 as FCoef).powf(gain_db / 40.0);
@@ -76,12 +80,14 @@ impl BiquadParams {
         let alpha = w0.sin() / 2.0 * ((a + 1.0 / a) * (1.0 / slope - 1.0) + 2.0).sqrt();
         let alpha_a = 2.0 * a_sqrt * alpha;
 
-        BiquadParams::new(a * ((a + 1.0) + (a - 1.0) * w0_cos + alpha_a),
-                          -2.0 * a * ((a - 1.0) + (a + 1.0) * w0_cos),
-                          a * ((a + 1.0) + (a - 1.0) * w0_cos - alpha_a),
-                          (a + 1.0) - (a - 1.0) * w0_cos + alpha_a,
-                          2.0 * ((a - 1.0) - (a + 1.0) * w0_cos),
-                          (a + 1.0) - (a - 1.0) * w0_cos - alpha_a)
+        BiquadParams::new(
+            a * ((a + 1.0) + (a - 1.0) * w0_cos + alpha_a),
+            -2.0 * a * ((a - 1.0) + (a + 1.0) * w0_cos),
+            a * ((a + 1.0) + (a - 1.0) * w0_cos - alpha_a),
+            (a + 1.0) - (a - 1.0) * w0_cos + alpha_a,
+            2.0 * ((a - 1.0) - (a + 1.0) * w0_cos),
+            (a + 1.0) - (a - 1.0) * w0_cos - alpha_a,
+        )
     }
 }
 
@@ -113,7 +119,7 @@ impl AudioFilter<BiquadFilter> for BiquadFilter {
 
     fn apply_one(&mut self, x0: FCoef) -> FCoef {
         let z0 = self.p.b0 * x0 + self.p.b1 * self.x1 + self.p.b2 * self.x2 -
-                 self.p.a1 * self.z1 - self.p.a2 * self.z2;
+            self.p.a1 * self.z1 - self.p.a2 * self.z2;
         self.z2 = self.z1;
         self.z1 = z0;
         self.x2 = self.x1;
@@ -190,18 +196,22 @@ impl FilterPairConfig for LoudnessFilterPairConfig {
     fn get_filter1_params(&self) -> BiquadParams {
         const LOUDNESS_BASS_F0: FCoef = 100.0;
         const LOUDNESS_BASS_Q: FCoef = 0.25;
-        BiquadParams::low_shelf_filter(self.0.sample_rate,
-                                       LOUDNESS_BASS_F0,
-                                       LOUDNESS_BASS_Q,
-                                       self.0.gain_db)
+        BiquadParams::low_shelf_filter(
+            self.0.sample_rate,
+            LOUDNESS_BASS_F0,
+            LOUDNESS_BASS_Q,
+            self.0.gain_db,
+        )
     }
     fn get_filter2_params(&self) -> BiquadParams {
         const LOUDNESS_TREBLE_F0: FCoef = 14000.0;
         const LOUDNESS_TREBLE_Q: FCoef = 1.0;
-        BiquadParams::high_shelf_filter(self.0.sample_rate,
-                                        LOUDNESS_TREBLE_F0,
-                                        LOUDNESS_TREBLE_Q,
-                                        self.0.gain_db / 2.0)
+        BiquadParams::high_shelf_filter(
+            self.0.sample_rate,
+            LOUDNESS_TREBLE_F0,
+            LOUDNESS_TREBLE_Q,
+            self.0.gain_db / 2.0,
+        )
     }
 }
 pub type LoudnessFilter = FilterPair<LoudnessFilterPairConfig>;
@@ -220,18 +230,22 @@ impl FilterPairConfig for VoiceBoostFilterPairConfig {
     fn get_filter1_params(&self) -> BiquadParams {
         const VOICE_BOOST_BASS_F0: FCoef = 270.0;
         const VOICE_BOOST_BASS_Q: FCoef = 2.0;
-        BiquadParams::low_shelf_filter(self.0.sample_rate,
-                                       VOICE_BOOST_BASS_F0,
-                                       VOICE_BOOST_BASS_Q,
-                                       -self.0.gain_db)
+        BiquadParams::low_shelf_filter(
+            self.0.sample_rate,
+            VOICE_BOOST_BASS_F0,
+            VOICE_BOOST_BASS_Q,
+            -self.0.gain_db,
+        )
     }
     fn get_filter2_params(&self) -> BiquadParams {
         const VOICE_BOOST_TREBLE_F0: FCoef = 3300.0;
         const VOICE_BOOST_TREBLE_Q: FCoef = 2.0;
-        BiquadParams::high_shelf_filter(self.0.sample_rate,
-                                        VOICE_BOOST_TREBLE_F0,
-                                        VOICE_BOOST_TREBLE_Q,
-                                        -self.0.gain_db)
+        BiquadParams::high_shelf_filter(
+            self.0.sample_rate,
+            VOICE_BOOST_TREBLE_F0,
+            VOICE_BOOST_TREBLE_Q,
+            -self.0.gain_db,
+        )
     }
 }
 pub type VoiceBoostFilter = FilterPair<VoiceBoostFilterPairConfig>;
@@ -271,10 +285,11 @@ pub struct ParallelFirFilter {
 }
 
 impl ParallelFirFilter {
-    pub fn new_pair(left: FirFilterParams,
-                    right: FirFilterParams,
-                    second_thread_affinity: scheduler::CpuSet)
-                    -> ParallelFirFilter {
+    pub fn new_pair(
+        left: FirFilterParams,
+        right: FirFilterParams,
+        second_thread_affinity: scheduler::CpuSet,
+    ) -> ParallelFirFilter {
         let (right_thread, job_receiver) = mpsc::channel::<FilterJob>();
         thread::spawn(move || {
             scheduler::set_self_affinity(second_thread_affinity);
@@ -299,9 +314,9 @@ impl ParallelFirFilter {
         mem::swap(&mut v, &mut frame.right);
         self.right_thread
             .send(FilterJob {
-                      data: v,
-                      response_channel: s,
-                  })
+                data: v,
+                response_channel: s,
+            })
             .expect("Failed to send");
 
         self.left.apply_multi(&mut frame.left[..]);
@@ -326,7 +341,9 @@ impl FirFilterParams {
                 Err(_) => break,
             }
         }
-        Ok(FirFilterParams { coefficients: Arc::new(result) })
+        Ok(FirFilterParams {
+            coefficients: Arc::new(result),
+        })
     }
 }
 
@@ -347,13 +364,16 @@ pub fn reduce_fir(fir: FirFilterParams, size: usize) -> FirFilterParams {
             start = if i >= size { i - size + 1 } else { 0 }
         }
     }
-    FirFilterParams { coefficients: Arc::new(fir.coefficients[start..(start + size)].to_vec()) }
+    FirFilterParams {
+        coefficients: Arc::new(fir.coefficients[start..(start + size)].to_vec()),
+    }
 }
 
-pub fn reduce_fir_pair(left: FirFilterParams,
-                       right: FirFilterParams,
-                       size: usize)
-                       -> (FirFilterParams, FirFilterParams) {
+pub fn reduce_fir_pair(
+    left: FirFilterParams,
+    right: FirFilterParams,
+    size: usize,
+) -> (FirFilterParams, FirFilterParams) {
     assert!(left.coefficients.len() == right.coefficients.len());
     let mut start: usize = 0;
     let mut max_sum: f64 = 0.0;
@@ -373,8 +393,14 @@ pub fn reduce_fir_pair(left: FirFilterParams,
             start = if i >= size { i - size + 1 } else { 0 }
         }
     }
-    (FirFilterParams { coefficients: Arc::new(left.coefficients[start..(start + size)].to_vec()) },
-     FirFilterParams { coefficients: Arc::new(right.coefficients[start..(start + size)].to_vec()) })
+    (
+        FirFilterParams {
+            coefficients: Arc::new(left.coefficients[start..(start + size)].to_vec()),
+        },
+        FirFilterParams {
+            coefficients: Arc::new(right.coefficients[start..(start + size)].to_vec()),
+        },
+    )
 }
 
 pub struct FirFilter {
@@ -409,10 +435,14 @@ impl AudioFilter<FirFilter> for FirFilter {
         self.buffer_pos = (self.buffer_pos + self.buffer.len() - 1) % self.buffer.len();
         self.buffer[self.buffer_pos] = x0;
 
-        convolve(&self.buffer[self.buffer_pos..],
-                 &self.params.coefficients[0..(self.buffer.len() - self.buffer_pos)]) +
-        convolve(&self.buffer[0..self.buffer_pos],
-                 &self.params.coefficients[(self.buffer.len() - self.buffer_pos)..])
+        convolve(
+            &self.buffer[self.buffer_pos..],
+            &self.params.coefficients[0..(self.buffer.len() - self.buffer_pos)],
+        ) +
+            convolve(
+                &self.buffer[0..self.buffer_pos],
+                &self.params.coefficients[(self.buffer.len() - self.buffer_pos)..],
+            )
     }
 }
 
@@ -455,12 +485,10 @@ impl CrossfeedFilter {
                     out.right[i] = frame.right[i] * a + p.left[s + i] * b;
                 }
             }
-            None => {
-                for i in 0..delay {
-                    out.left[i] = frame.left[i] * a;
-                    out.right[i] = frame.right[i] * a;
-                }
-            }
+            None => for i in 0..delay {
+                out.left[i] = frame.left[i] * a;
+                out.right[i] = frame.right[i] * a;
+            },
         }
 
         for i in delay..out.len() {

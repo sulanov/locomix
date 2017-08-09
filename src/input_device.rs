@@ -64,10 +64,7 @@ pub struct InputDevice {
 
 impl InputDevice {
     pub fn new(device_path: &str) -> Result<InputDevice> {
-        let f = try!(OpenOptions::new()
-                         .read(true)
-                         .write(true)
-                         .open(device_path));
+        let f = try!(OpenOptions::new().read(true).write(true).open(device_path));
 
         Ok(InputDevice { dev: f })
     }
@@ -80,7 +77,9 @@ impl InputDevice {
             };
             let r = libc::ioctl(self.dev.as_raw_fd(), EVIOCSREP, &r);
             if r != 0 {
-                return Err(Error::new(&format!("ioclt(EVIOCSREP) failed, result={}", r)));
+                return Err(Error::new(
+                    &format!("ioclt(EVIOCSREP) failed, result={}", r),
+                ));
             }
         }
         Ok(())
@@ -90,8 +89,8 @@ impl InputDevice {
         let mut event = InputEvent::zero();
         let event_size = mem::size_of::<InputEvent>();
         unsafe {
-            let event_slice = slice::from_raw_parts_mut(&mut event as *mut _ as *mut u8,
-                                                        event_size);
+            let event_slice =
+                slice::from_raw_parts_mut(&mut event as *mut _ as *mut u8, event_size);
             try!(self.dev.read_exact(event_slice));
         }
         Ok(event)
@@ -100,8 +99,8 @@ impl InputDevice {
     pub fn write(&mut self, mut event: InputEvent) -> Result<()> {
         let event_size = mem::size_of::<InputEvent>();
         unsafe {
-            let event_slice = slice::from_raw_parts_mut(&mut event as *mut _ as *mut u8,
-                                                        event_size);
+            let event_slice =
+                slice::from_raw_parts_mut(&mut event as *mut _ as *mut u8, event_size);
             try!(self.dev.write_all(event_slice));
         }
         Ok(())

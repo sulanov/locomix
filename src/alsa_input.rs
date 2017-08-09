@@ -23,9 +23,9 @@ struct RateDetector {
 impl RateDetector {
     fn new() -> RateDetector {
         return RateDetector {
-                   history: VecDeque::new(),
-                   sum: 0,
-               };
+            history: VecDeque::new(),
+            sum: 0,
+        };
     }
 
     fn update(&mut self, samples: usize) -> Option<usize> {
@@ -33,7 +33,8 @@ impl RateDetector {
         self.sum += samples;
         self.history.push_back((now, samples));
         while self.history.len() > 0 &&
-              (now - self.history[0].0).in_seconds() >= RATE_DETECTION_PERIOD_MS as i64 {
+            (now - self.history[0].0).in_seconds() >= RATE_DETECTION_PERIOD_MS as i64
+        {
             self.sum -= self.history.pop_front().unwrap().1;
         }
 
@@ -42,8 +43,8 @@ impl RateDetector {
             return None;
         }
 
-        let current_rate = (self.sum - self.history[0].1) as i64 * 1000_000_000 /
-                           period.in_nanoseconds();
+        let current_rate =
+            (self.sum - self.history[0].1) as i64 * 1000_000_000 / period.in_nanoseconds();
 
         for rate in ACCEPTED_RATES.iter() {
             // Check if the current rate is within 5% of a known value
@@ -80,13 +81,16 @@ const SILENCE_PERIOD_SECONDS: usize = 30;
 const MAX_TIME_DEVIATION_MS: i64 = 2 * FRAME_SIZE_MS as i64;
 
 impl AlsaInput {
-    pub fn open(name: &str,
-                target_sample_rate: usize,
-                auto_sample_rate: bool)
-                -> Result<AlsaInput> {
-        let pcm = try!(alsa::PCM::open(&*CString::new(name).unwrap(),
-                                       alsa::Direction::Capture,
-                                       false));
+    pub fn open(
+        name: &str,
+        target_sample_rate: usize,
+        auto_sample_rate: bool,
+    ) -> Result<AlsaInput> {
+        let pcm = try!(alsa::PCM::open(
+            &*CString::new(name).unwrap(),
+            alsa::Direction::Capture,
+            false
+        ));
 
         let sample_rate;
         let period_size;
@@ -95,22 +99,29 @@ impl AlsaInput {
             let hwp = try!(alsa::pcm::HwParams::any(&pcm));
             try!(hwp.set_channels(2));
 
-            for fmt in [alsa::pcm::Format::S32LE,
-                        alsa::pcm::Format::S243LE,
-                        alsa::pcm::Format::S24LE,
-                        alsa::pcm::Format::S16LE]
-                        .iter() {
+            for fmt in [
+                alsa::pcm::Format::S32LE,
+                alsa::pcm::Format::S243LE,
+                alsa::pcm::Format::S24LE,
+                alsa::pcm::Format::S16LE,
+            ].iter()
+            {
                 match hwp.set_format(*fmt) {
                     Ok(_) => break,
                     Err(_) => (),
                 }
             }
 
-            try!(hwp.set_period_size_near(INPUT_FRAME_SIZE as alsa::pcm::Frames,
-                                          alsa::ValueOr::Nearest));
+            try!(hwp.set_period_size_near(
+                INPUT_FRAME_SIZE as alsa::pcm::Frames,
+                alsa::ValueOr::Nearest
+            ));
             try!(hwp.set_periods(10, alsa::ValueOr::Nearest));
             try!(hwp.set_rate_resample(false));
-            try!(hwp.set_rate(target_sample_rate as u32, alsa::ValueOr::Nearest));
+            try!(hwp.set_rate(
+                target_sample_rate as u32,
+                alsa::ValueOr::Nearest
+            ));
             try!(hwp.set_access(alsa::pcm::Access::RWInterleaved));
             try!(pcm.hw_params(&hwp));
 
@@ -125,28 +136,30 @@ impl AlsaInput {
                 fmt => return Err(Error::new(&format!("Unknown format: {:?}", fmt))),
             };
 
-            println!("INFO: Reading {}. Buffer size: {}x{}. {} {}",
-                     name,
-                     period_size,
-                     try!(hwp.get_periods()),
-                     sample_rate,
-                     format);
+            println!(
+                "INFO: Reading {}. Buffer size: {}x{}. {} {}",
+                name,
+                period_size,
+                try!(hwp.get_periods()),
+                sample_rate,
+                format
+            );
         }
 
         Ok(AlsaInput {
-               pcm: pcm,
-               sample_rate: sample_rate,
-               format: format,
-               period_size: period_size,
-               rate_detector: if auto_sample_rate {
-                   Some(RateDetector::new())
-               } else {
-                   None
-               },
-               state: State::Inactive,
-               reference_time: Time::now(),
-               pos: 0,
-           })
+            pcm: pcm,
+            sample_rate: sample_rate,
+            format: format,
+            period_size: period_size,
+            rate_detector: if auto_sample_rate {
+                Some(RateDetector::new())
+            } else {
+                None
+            },
+            state: State::Inactive,
+            reference_time: Time::now(),
+            pos: 0,
+        })
     }
 }
 
@@ -173,12 +186,10 @@ impl Input for AlsaInput {
 
         if self.rate_detector.is_some() {
             match self.rate_detector.as_mut().unwrap().update(samples) {
-                Some(rate) => {
-                    if rate != self.sample_rate {
-                        println!("INFO: rate changed {}", rate);
-                        self.sample_rate = rate;
-                    }
-                }
+                Some(rate) => if rate != self.sample_rate {
+                    println!("INFO: rate changed {}", rate);
+                    self.sample_rate = rate;
+                },
                 None => {
                     // Drop all data if we don't know sample rate.
                     return Ok(None);
@@ -201,7 +212,9 @@ impl Input for AlsaInput {
                 if silence > SILENCE_PERIOD_SECONDS * self.sample_rate {
                     State::Inactive
                 } else {
-                    State::Active { silent_samples: silence }
+                    State::Active {
+                        silent_samples: silence,
+                    }
                 }
             }
             (&State::Inactive, true) => State::Inactive,
@@ -217,15 +230,22 @@ impl Input for AlsaInput {
 
         let now = Time::now();
         if (now - timestamp).abs() > TimeDelta::milliseconds(MAX_TIME_DEVIATION_MS) {
-            println!("INFO: Resetting input reference time. {} ",
-                     (now - timestamp).abs().in_milliseconds());
+            println!(
+                "INFO: Resetting input reference time. {} ",
+                (now - timestamp).abs().in_milliseconds()
+            );
             self.reference_time = now;
             timestamp = now;
             self.pos = 0;
         }
 
         let bytes = samples * CHANNELS * self.format.bytes_per_sample();
-        Ok(Some(Frame::from_buffer(self.format, self.sample_rate, &buf[0..bytes], timestamp)))
+        Ok(Some(Frame::from_buffer(
+            self.format,
+            self.sample_rate,
+            &buf[0..bytes],
+            timestamp,
+        )))
     }
 }
 
@@ -272,19 +292,19 @@ impl Input for ResilientAlsaInput {
         }
         let mut reset = false;
         let result = match self.input.as_mut() {
-            Some(input) => {
-                match input.read() {
-                    Ok(Some(frame)) => Some(frame),
-                    Ok(None) => None,
-                    Err(e) => {
-                        println!("warning: input read from {} failed: {}",
-                                 self.device_name,
-                                 e);
-                        reset = true;
-                        None
-                    }
+            Some(input) => match input.read() {
+                Ok(Some(frame)) => Some(frame),
+                Ok(None) => None,
+                Err(e) => {
+                    println!(
+                        "warning: input read from {} failed: {}",
+                        self.device_name,
+                        e
+                    );
+                    reset = true;
+                    None
                 }
-            }
+            },
             None => None,
         };
         if reset {

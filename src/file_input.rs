@@ -18,10 +18,10 @@ pub struct FileInput {
 impl FileInput {
     pub fn open(filename: &str) -> Result<FileInput> {
         Ok(FileInput {
-               file: try!(File::open(filename)),
-               start_time: Time::now(),
-               pos: 0,
-           })
+            file: try!(File::open(filename)),
+            start_time: Time::now(),
+            pos: 0,
+        })
     }
 }
 
@@ -36,6 +36,11 @@ impl Input for FileInput {
 
         let timestamp = get_sample_timestamp(self.start_time, SAMPLE_RATE, self.pos);
         self.pos += (bytes_read / BYTES_PER_SAMPLE) as i64;
-        Ok(Some(Frame::from_buffer(FORMAT, SAMPLE_RATE, &buffer[0..bytes_read], timestamp)))
+        Ok(Some(Frame::from_buffer(
+            FORMAT,
+            SAMPLE_RATE,
+            &buffer[0..bytes_read],
+            timestamp,
+        )))
     }
 }

@@ -27,7 +27,8 @@ impl LightController {
 
     fn try_open(&mut self, log_error: bool) {
         if self.dev.is_some() ||
-           Time::now() - self.last_open_attempt < TimeDelta::seconds(REOPEN_PERIOD_SECONDS) {
+            Time::now() - self.last_open_attempt < TimeDelta::seconds(REOPEN_PERIOD_SECONDS)
+        {
             return;
         }
         match InputDevice::new(&self.device_path) {
@@ -35,11 +36,9 @@ impl LightController {
                 println!("INFO: Controlling light via {}", self.device_path);
                 self.dev = Some(d)
             }
-            Err(e) => {
-                if log_error {
-                    println!("ERROR: Failed to open {}: {}", self.device_path, e);
-                }
-            }
+            Err(e) => if log_error {
+                println!("ERROR: Failed to open {}: {}", self.device_path, e);
+            },
         }
     }
 
@@ -56,9 +55,11 @@ impl LightController {
                 match dev.write(e) {
                     Ok(_) => (),
                     Err(e) => {
-                        println!("WARNING: failed to write input event to {}: {}",
-                                 self.device_path,
-                                 e);
+                        println!(
+                            "WARNING: failed to write input event to {}: {}",
+                            self.device_path,
+                            e
+                        );
                         reset = true;
                     }
                 }

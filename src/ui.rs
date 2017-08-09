@@ -44,7 +44,9 @@ impl OutputState {
     pub fn new(name: &str) -> OutputState {
         OutputState {
             name: String::from(name),
-            gain: Gain { db: (VOLUME_MIN + VOLUME_MAX) / 2.0 },
+            gain: Gain {
+                db: (VOLUME_MIN + VOLUME_MAX) / 2.0,
+            },
         }
     }
 }
@@ -68,10 +70,14 @@ impl LoudnessConfig {
     pub fn get_level(&self, volume: Gain) -> Gain {
         match (self.enabled, self.auto) {
             (false, _) => Gain { db: 0.0 },
-            (true, false) => Gain { db: 20.0 * self.level },
+            (true, false) => Gain {
+                db: 20.0 * self.level,
+            },
 
             // No loudness compensation when volume = -5dB.
-            (true, true) => Gain { db: (-5.0 - volume.db) * self.level },
+            (true, true) => Gain {
+                db: (-5.0 - volume.db) * self.level,
+            },
         }
     }
 }
@@ -93,7 +99,11 @@ impl CrossfeedConfig {
     }
 
     pub fn get_level(&self) -> f32 {
-        if self.enabled { self.level } else { 0.0 }
+        if self.enabled {
+            self.level
+        } else {
+            0.0
+        }
     }
 }
 
@@ -112,7 +122,11 @@ impl FeatureConfig {
     }
 
     pub fn get_level(&self) -> f32 {
-        if self.enabled { self.level } else { 0.0 }
+        if self.enabled {
+            self.level
+        } else {
+            0.0
+        }
     }
 }
 
@@ -243,13 +257,17 @@ impl StateController {
     }
 
     pub fn move_volume(&mut self, volume_change: Gain) {
-        let new_volume = Gain { db: self.volume().db + volume_change.db };
+        let new_volume = Gain {
+            db: self.volume().db + volume_change.db,
+        };
         self.set_volume(new_volume);
     }
 
     pub fn select_output(&mut self, output: usize) {
         self.state.output = output;
-        let message = UiMessage::SelectOutput { output: self.state.output };
+        let message = UiMessage::SelectOutput {
+            output: self.state.output,
+        };
         self.broadcast(message);
         self.on_volume_updated();
     }
@@ -277,15 +295,17 @@ impl StateController {
     pub fn set_input_gain(&mut self, input_id: usize, gain: Gain) {
         self.state.inputs[input_id].gain = gain;
         self.broadcast(UiMessage::SetInputGain {
-                           device: input_id,
-                           gain: gain,
-                       });
+            device: input_id,
+            gain: gain,
+        });
     }
 
     pub fn set_voice_boost(&mut self, voice_boost: FeatureConfig) {
         self.state.voice_boost = voice_boost;
         let msg = UiMessage::SetVoiceBoost {
-            boost: Gain { db: self.state.voice_boost.get_level() * 20.0 },
+            boost: Gain {
+                db: self.state.voice_boost.get_level() * 20.0,
+            },
         };
         self.broadcast(msg);
     }
@@ -323,7 +343,9 @@ fn limit(min: f32, max: f32, v: f32) -> f32 {
 
 impl SharedState {
     pub fn new(inputs: Vec<InputState>, outputs: Vec<OutputState>) -> SharedState {
-        SharedState { state: Arc::new(Mutex::new(StateController::new(inputs, outputs))) }
+        SharedState {
+            state: Arc::new(Mutex::new(StateController::new(inputs, outputs))),
+        }
     }
 
     pub fn lock(&self) -> MutexGuard<StateController> {

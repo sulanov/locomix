@@ -146,16 +146,17 @@ pub struct FilteredOutput {
 }
 
 impl FilteredOutput {
-    pub fn new(output: Box<output::Output>,
-               filter: ParallelFirFilter,
-               shared_state: &ui::SharedState)
-               -> Box<output::Output> {
+    pub fn new(
+        output: Box<output::Output>,
+        filter: ParallelFirFilter,
+        shared_state: &ui::SharedState,
+    ) -> Box<output::Output> {
         Box::new(FilteredOutput {
-                     output: output,
-                     filter: filter,
-                     enabled: true,
-                     ui_msg_receiver: shared_state.lock().add_observer(),
-                 })
+            output: output,
+            filter: filter,
+            enabled: true,
+            ui_msg_receiver: shared_state.lock().add_observer(),
+        })
     }
 }
 
@@ -194,11 +195,12 @@ const OUTPUT_SHUTDOWN_SECONDS: i64 = 5;
 const STANDBY_SECONDS: i64 = 3600;
 
 
-fn run_loop(mut inputs: Vec<AsyncInput>,
-            mut outputs: Vec<Box<output::Output>>,
-            sample_rate: usize,
-            shared_state: ui::SharedState)
-            -> Result<()> {
+fn run_loop(
+    mut inputs: Vec<AsyncInput>,
+    mut outputs: Vec<Box<output::Output>>,
+    sample_rate: usize,
+    shared_state: ui::SharedState,
+) -> Result<()> {
     let ui_channel = shared_state.lock().add_observer();
 
     let mut mixers: Vec<Box<InputMixer>> = inputs
@@ -233,8 +235,10 @@ fn run_loop(mut inputs: Vec<AsyncInput>,
 
         let now = Time::now();
         if now > mix_deadline + TimeDelta::milliseconds(FRAME_SIZE_MS as i64) {
-            println!("ERROR: Mixer missed deadline. Resetting stream. {:?}",
-                     now - mix_deadline);
+            println!(
+                "ERROR: Mixer missed deadline. Resetting stream. {:?}",
+                now - mix_deadline
+            );
             frame.timestamp = frame.end_timestamp();
             stream_pos += frame.len() as i64;
             mix_deadline = frame.end_timestamp() + TimeDelta::milliseconds(MIX_DEADLINE_MS);
@@ -303,26 +307,29 @@ fn run_loop(mut inputs: Vec<AsyncInput>,
                     mixers[device as usize].set_input_gain(gain);
                 }
                 ui::UiMessage::SetEnableDrc { enable: _ } => (),
-                ui::UiMessage::SetVoiceBoost { boost } => {
-                    if boost.db > 0.0 {
-                        let p = SimpleFilterParams::new(sample_rate, boost.db);
-                        if voice_boost_filter.is_some() {
-                            voice_boost_filter.as_mut().unwrap().set_params(p);
-                        } else {
-                            voice_boost_filter = Some(StereoFilter::<VoiceBoostFilter>::new(
-                            SimpleFilterParams::new(sample_rate, boost.db)))
-                        }
+                ui::UiMessage::SetVoiceBoost { boost } => if boost.db > 0.0 {
+                    let p = SimpleFilterParams::new(sample_rate, boost.db);
+                    if voice_boost_filter.is_some() {
+                        voice_boost_filter.as_mut().unwrap().set_params(p);
                     } else {
-                        voice_boost_filter = None
+                        voice_boost_filter = Some(StereoFilter::<VoiceBoostFilter>::new(
+                            SimpleFilterParams::new(sample_rate, boost.db),
+                        ))
                     }
-                }
+                } else {
+                    voice_boost_filter = None
+                },
                 ui::UiMessage::SetCrossfeed { level, delay_ms } => {
                     crossfeed_filter.set_params(level, delay_ms);
                 }
-                ui::UiMessage::SetMuxMode { mux_mode: ui::MuxMode::Exclusive } => {
+                ui::UiMessage::SetMuxMode {
+                    mux_mode: ui::MuxMode::Exclusive,
+                } => {
                     exclusive_mux_mode = true;
                 }
-                ui::UiMessage::SetMuxMode { mux_mode: ui::MuxMode::Mixer } => {
+                ui::UiMessage::SetMuxMode {
+                    mux_mode: ui::MuxMode::Mixer,
+                } => {
                     exclusive_mux_mode = false;
                 }
             }
@@ -335,9 +342,10 @@ fn print_usage(program: &str, opts: Options) {
     print!("{}", opts.usage(&brief));
 }
 
-fn get_impulse_response(output: &mut Box<output::Output>,
-                        input: &mut AsyncInput)
-                        -> Result<Vec<f32>> {
+fn get_impulse_response(
+    output: &mut Box<output::Output>,
+    input: &mut AsyncInput,
+) -> Result<Vec<f32>> {
     let frame_duration = TimeDelta::milliseconds(10);
     let frame_size = output.sample_rate() / 100;
     let mut pos = Time::now();
@@ -384,17 +392,21 @@ fn run() -> Result<()> {
     opts.optmulti("o", "output", "Output device name", "OUTPUT");
     opts.optopt("r", "sample-rate", "Output sample rate", "RATE");
     opts.optopt("w", "web-address", "Address:port for web UI", "ADDRESS");
-    opts.optopt("s",
-                "state-script",
-                "Script to run on state change",
-                "SCRIPT");
+    opts.optopt(
+        "s",
+        "state-script",
+        "Script to run on state change",
+        "SCRIPT",
+    );
     opts.optmulti("c", "control-device", "Control input device", "INPUT_DEV");
     opts.optmulti("l", "light-device", "Light device", "LIGHT_DEV");
     opts.optmulti("F", "filter", "FIR filter file", "FIR_FILTER");
-    opts.optopt("L",
-                "filter-length",
-                "Length for FIR filter (1000 by default)",
-                "FILTER_LENGTH");
+    opts.optopt(
+        "L",
+        "filter-length",
+        "Length for FIR filter (1000 by default)",
+        "FILTER_LENGTH",
+    );
     opts.optflag("g", "loudness-graph", "Print out loudness graph");
     opts.optflag("m", "impulse-response", "Measure impulse response");
     opts.optflag("h", "help", "Print this help menu");
@@ -429,18 +441,23 @@ fn run() -> Result<()> {
 
     if matches.opt_present("g") {
         print!("Loudness filter");
-        filters::draw_filter_graph::<LoudnessFilter>(sample_rate,
-                                                     SimpleFilterParams::new(sample_rate, 10.0));
+        filters::draw_filter_graph::<LoudnessFilter>(
+            sample_rate,
+            SimpleFilterParams::new(sample_rate, 10.0),
+        );
 
         print!("Voice Boost filter");
-        filters::draw_filter_graph::<VoiceBoostFilter>(sample_rate,
-                                                       SimpleFilterParams::new(sample_rate, 10.0));
+        filters::draw_filter_graph::<VoiceBoostFilter>(
+            sample_rate,
+            SimpleFilterParams::new(sample_rate, 10.0),
+        );
 
         for i in 0..fir_filters.len() {
             print!("FIR filter {}", i);
-            filters::draw_filter_graph::<FirFilter>(sample_rate,
-                                                    filters::reduce_fir(fir_filters[i].clone(),
-                                                                        filter_length));
+            filters::draw_filter_graph::<FirFilter>(
+                sample_rate,
+                filters::reduce_fir(fir_filters[i].clone(), filter_length),
+            );
         }
 
         return Ok(());
@@ -451,15 +468,23 @@ fn run() -> Result<()> {
 
     for o in matches.opt_strs("o") {
         let out = output::AsyncOutput::open(&o, Some(scheduler::CpuSet::single(1)));
-        let resampled = output::AsyncOutput::new(output::ResamplingOutput::new(out),
-                                                 Some(scheduler::CpuSet::single(1)));
+        let resampled = output::AsyncOutput::new(
+            output::ResamplingOutput::new(out),
+            Some(scheduler::CpuSet::single(1)),
+        );
         outputs.push(resampled);
         output_states.push(ui::OutputState::new(&o));
     }
 
     if matches.opt_present("m") {
-        let mut input = async_input::AsyncInput::new(Box::new(
-            try!(alsa_input::AlsaInput::open(&matches.opt_strs("i")[0], 192000, false))), None);
+        let mut input = async_input::AsyncInput::new(
+            Box::new(try!(alsa_input::AlsaInput::open(
+                &matches.opt_strs("i")[0],
+                192000,
+                false
+            ))),
+            None,
+        );
         let r = try!(get_impulse_response(&mut outputs[0], &mut input));
         let mut s = 0;
         for i in 100..r.len() {
@@ -515,18 +540,21 @@ fn run() -> Result<()> {
     }
 
     if fir_filters.len() == 2 {
-        let (left, right) = reduce_fir_pair(fir_filters[0].clone(),
-                                            fir_filters[1].clone(),
-                                            filter_length);
+        let (left, right) = reduce_fir_pair(
+            fir_filters[0].clone(),
+            fir_filters[1].clone(),
+            filter_length,
+        );
         let fir_cpu_1 = scheduler::CpuSet::single(2);
         let fir_cpu_2 = scheduler::CpuSet::single(3);
-        let filtered_output =
-            output::AsyncOutput::new(FilteredOutput::new(outputs.remove(0),
-                                                         ParallelFirFilter::new_pair(left,
-                                                                                     right,
-                                                                                     fir_cpu_2),
-                                                         &shared_state),
-                                     Some(fir_cpu_1));
+        let filtered_output = output::AsyncOutput::new(
+            FilteredOutput::new(
+                outputs.remove(0),
+                ParallelFirFilter::new_pair(left, right, fir_cpu_2),
+                &shared_state,
+            ),
+            Some(fir_cpu_1),
+        );
         outputs.insert(0, filtered_output);
     } else {
         return Err(Error::new("Expected 0 or 2 FIR filters"));
@@ -535,10 +563,11 @@ fn run() -> Result<()> {
     let wrapped_inputs = inputs
         .drain(..)
         .map(|input| {
-                 async_input::AsyncInput::new(Box::new(input::InputResampler::new(input,
-                                                                                  sample_rate)),
-                                              Some(scheduler::CpuSet::single(0)))
-             })
+            async_input::AsyncInput::new(
+                Box::new(input::InputResampler::new(input, sample_rate)),
+                Some(scheduler::CpuSet::single(0)),
+            )
+        })
         .collect();
 
     scheduler::set_self_affinity(scheduler::CpuSet::single(0)).expect("Failed to set affinity");

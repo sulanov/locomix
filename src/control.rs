@@ -7,11 +7,11 @@ fn try_open(device_path: &str, log_error: bool) -> Option<InputDevice> {
         Ok(d) => {
             println!("INFO: Opened {}", device_path);
             match d.set_repeat_rate(200, 100) {
-                Err(e) => {
-                    println!("WARNING: Failed to set repeat rate for {}: {}",
-                             device_path,
-                             e)
-                }
+                Err(e) => println!(
+                    "WARNING: Failed to set repeat rate for {}: {}",
+                    device_path,
+                    e
+                ),
                 Ok(_) => (),
             }
             Some(d)
@@ -84,9 +84,9 @@ fn process_event(shared_state: &mut SharedState, event: InputEvent) {
             code: REL_DIAL,
             value: change,
         } => {
-            shared_state
-                .lock()
-                .move_volume(Gain { db: (change as i32) as f32 / 2.0 });
+            shared_state.lock().move_volume(Gain {
+                db: (change as i32) as f32 / 2.0,
+            });
         }
 
         InputEvent {
@@ -107,17 +107,17 @@ fn handle_input_device(device_path: &str, mut shared_state: SharedState) {
     loop {
         let mut reopen = false;
         match dev.as_mut() {
-            Some(ref mut dev) => {
-                match dev.read() {
-                    Ok(event) => process_event(&mut shared_state, event),
-                    Err(e) => {
-                        println!("WARNING: failed to read input event from {}: {}",
-                                 device_path,
-                                 e);
-                        reopen = true;
-                    }
+            Some(ref mut dev) => match dev.read() {
+                Ok(event) => process_event(&mut shared_state, event),
+                Err(e) => {
+                    println!(
+                        "WARNING: failed to read input event from {}: {}",
+                        device_path,
+                        e
+                    );
+                    reopen = true;
                 }
-            }
+            },
             None => {
                 reopen = true;
             }
@@ -134,5 +134,7 @@ fn handle_input_device(device_path: &str, mut shared_state: SharedState) {
 
 pub fn start_input_handler(device_path: &str, shared_state: SharedState) {
     let device_path_copy = String::from(device_path);
-    std::thread::spawn(move || { handle_input_device(&device_path_copy, shared_state); });
+    std::thread::spawn(move || {
+        handle_input_device(&device_path_copy, shared_state);
+    });
 }

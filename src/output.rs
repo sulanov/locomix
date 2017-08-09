@@ -25,9 +25,11 @@ pub struct AlsaOutput {
 
 impl AlsaOutput {
     pub fn open(name: &str, target_sample_rate: usize) -> Result<AlsaOutput> {
-        let pcm = try!(alsa::PCM::open(&*CString::new(name).unwrap(),
-                                       alsa::Direction::Playback,
-                                       false));
+        let pcm = try!(alsa::PCM::open(
+            &*CString::new(name).unwrap(),
+            alsa::Direction::Playback,
+            false
+        ));
 
         let sample_rate;
         let period_size;
@@ -39,11 +41,13 @@ impl AlsaOutput {
             try!(hwp.set_access(alsa::pcm::Access::RWInterleaved));
             try!(hwp.set_rate_resample(false));
 
-            for fmt in [alsa::pcm::Format::S32LE,
-                        alsa::pcm::Format::S243LE,
-                        alsa::pcm::Format::S24LE,
-                        alsa::pcm::Format::S16LE]
-                        .iter() {
+            for fmt in [
+                alsa::pcm::Format::S32LE,
+                alsa::pcm::Format::S243LE,
+                alsa::pcm::Format::S24LE,
+                alsa::pcm::Format::S16LE,
+            ].iter()
+            {
                 match hwp.set_format(*fmt) {
                     Ok(_) => break,
                     Err(_) => (),
@@ -51,7 +55,10 @@ impl AlsaOutput {
             }
 
             if target_sample_rate > 0 {
-                try!(hwp.set_rate(target_sample_rate as u32, alsa::ValueOr::Nearest));
+                try!(hwp.set_rate(
+                    target_sample_rate as u32,
+                    alsa::ValueOr::Nearest
+                ));
                 sample_rate = target_sample_rate;
             } else {
                 let mut selected: usize = 0;
@@ -65,15 +72,17 @@ impl AlsaOutput {
                     }
                 }
                 if selected == 0 {
-                    return Err(Error::new(&format!("Can't find appropriate sample rate for {}",
-                                                   name)));
+                    return Err(Error::new(
+                        &format!("Can't find appropriate sample rate for {}", name),
+                    ));
                 }
                 sample_rate = selected;
             }
 
-            try!(hwp.set_period_size_near((sample_rate * FRAME_SIZE_MS / 1000) as
-                                          alsa::pcm::Frames,
-                                          alsa::ValueOr::Nearest));
+            try!(hwp.set_period_size_near(
+                (sample_rate * FRAME_SIZE_MS / 1000) as alsa::pcm::Frames,
+                alsa::ValueOr::Nearest
+            ));
             try!(hwp.set_periods(3, alsa::ValueOr::Nearest));
             try!(pcm.hw_params(&hwp));
 
@@ -86,38 +95,43 @@ impl AlsaOutput {
                 fmt => return Err(Error::new(&format!("Unknown format: {:?}", fmt))),
             };
 
-            println!("INFO: Opened {}. Buffer size: {}x{}. {} {}.",
-                     name,
-                     period_size,
-                     try!(hwp.get_periods()),
-                     sample_rate,
-                     format);
+            println!(
+                "INFO: Opened {}. Buffer size: {}x{}. {} {}.",
+                name,
+                period_size,
+                try!(hwp.get_periods()),
+                sample_rate,
+                format
+            );
         }
 
         Ok(AlsaOutput {
-               pcm: pcm,
-               sample_rate: sample_rate,
-               format: format,
-               period_size: period_size,
-           })
+            pcm: pcm,
+            sample_rate: sample_rate,
+            format: format,
+            period_size: period_size,
+        })
     }
 }
 
 impl Output for AlsaOutput {
     fn write(&mut self, frame: Frame) -> Result<()> {
         if self.sample_rate != frame.sample_rate {
-            println!("WARNING: different sample rate, expected {}, received {}",
-                     self.sample_rate,
-                     frame.sample_rate);
+            println!(
+                "WARNING: different sample rate, expected {}, received {}",
+                self.sample_rate,
+                frame.sample_rate
+            );
             return Ok(());
         }
 
         // Sleep if the frame is too far into the future.
         let now = Time::now();
         if frame.timestamp - now > TimeDelta::milliseconds(FRAME_SIZE_MS as i64) * 5 {
-            std::thread::sleep((frame.timestamp - now -
-                                TimeDelta::milliseconds(FRAME_SIZE_MS as i64) * 1)
-                                       .as_duration());
+            std::thread::sleep(
+                (frame.timestamp - now - TimeDelta::milliseconds(FRAME_SIZE_MS as i64) * 1)
+                    .as_duration(),
+            );
         }
 
         let buf = frame.to_buffer(self.format);
@@ -174,13 +188,13 @@ impl ResilientAlsaOutput {
             }
         };
         Box::new(ResilientAlsaOutput {
-                     device_name: String::from(name),
-                     output: device,
-                     target_sample_rate: target_sample_rate,
-                     last_open_attempt: Time::now(),
-                     sample_rate: sample_rate,
-                     period_size: period_size,
-                 })
+            device_name: String::from(name),
+            output: device,
+            target_sample_rate: target_sample_rate,
+            last_open_attempt: Time::now(),
+            sample_rate: sample_rate,
+            period_size: period_size,
+        })
     }
 
     fn try_reopen(&mut self) {
@@ -242,9 +256,9 @@ impl ResamplingOutput {
     pub fn new(output: Box<Output>) -> Box<Output> {
         let resampler = resampler::StreamResampler::new(output.sample_rate());
         Box::new(ResamplingOutput {
-                     output: output,
-                     resampler: resampler,
-                 })
+            output: output,
+            resampler: resampler,
+        })
     }
 }
 
@@ -330,9 +344,9 @@ impl AsyncOutput {
                     period_size = output.period_size();
                     feedback_sender
                         .send(FeedbackMessage::NewConfig {
-                                  sample_rate,
-                                  period_size,
-                              })
+                            sample_rate,
+                            period_size,
+                        })
                         .expect("Failed to send feedback message.");
                 }
 
@@ -350,8 +364,10 @@ impl AsyncOutput {
 
                 let now = Time::now();
                 if frame.timestamp < now {
-                    println!("ERROR: Dropping frame: Missed target output time. {:?}",
-                             now - frame.timestamp);
+                    println!(
+                        "ERROR: Dropping frame: Missed target output time. {:?}",
+                        now - frame.timestamp
+                    );
                     continue;
                 }
 

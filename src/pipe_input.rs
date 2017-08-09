@@ -115,6 +115,11 @@ impl Input for PipeInput {
 
         std::thread::sleep((timestamp - now).as_duration());
 
-        Ok(Some(Frame::from_buffer(FORMAT, SAMPLE_RATE, &buffer[0..bytes_read], timestamp)))
+        Ok(Some(Frame::from_buffer(
+            FORMAT,
+            SAMPLE_RATE,
+            &buffer[0..bytes_read],
+            timestamp,
+        )))
     }
 }

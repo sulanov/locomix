@@ -87,23 +87,23 @@ fn write_sample_s32le(val: f32, buf: &mut Vec<u8>) {
 
 fn read_sample_s16le(buf: &[u8], pos: usize) -> f32 {
     (((((buf[pos + 0] as u32) << 16) | ((buf[pos + 1] as u32) << 24)) as i32 as f64 +
-      32767.5) / 2147483648f64) as f32
+        32767.5) / 2147483648f64) as f32
 }
 
 fn read_sample_s24le3(buf: &[u8], pos: usize) -> f32 {
     (((((buf[pos + 0] as u32) << 8) | ((buf[pos + 1] as u32) << 16) |
-       ((buf[pos + 2] as u32) << 24)) as i32 as f64 + 127.5) / 2147483648f64) as f32
+        ((buf[pos + 2] as u32) << 24)) as i32 as f64 + 127.5) / 2147483648f64) as f32
 }
 
 fn read_sample_s24le4(buf: &[u8], pos: usize) -> f32 {
     (((((buf[pos + 0] as u32) << 8) | ((buf[pos + 1] as u32) << 16) |
-       ((buf[pos + 2] as u32) << 24)) as i32 as f64 + 127.5) / 2147483648f64) as f32
+        ((buf[pos + 2] as u32) << 24)) as i32 as f64 + 127.5) / 2147483648f64) as f32
 }
 
 fn read_sample_s32le(buf: &[u8], pos: usize) -> f32 {
     (((((buf[pos + 0] as u32) << 0) | ((buf[pos + 1] as u32) << 8) |
-       ((buf[pos + 2] as u32) << 16) | ((buf[pos + 3] as u32) << 24)) as i32 as
-      f64 + 0.5) / 2147483648f64) as f32
+        ((buf[pos + 2] as u32) << 16) | ((buf[pos + 3] as u32) << 24)) as i32 as
+        f64 + 0.5) / 2147483648f64) as f32
 }
 
 // Fast SIMD-optimized convolution. Optimized for NEON on Raspberry PI 3.
@@ -145,15 +145,15 @@ pub fn convolve(v1: &[f32], v2: &[f32]) -> f32 {
     }
 
     sum_0.extract(0) + sum_0.extract(1) + sum_0.extract(2) + sum_0.extract(3) +
-    sum_4.extract(0) + sum_4.extract(1) + sum_4.extract(2) + sum_4.extract(3) +
-    sum_8.extract(0) + sum_8.extract(1) + sum_8.extract(2) +
-    sum_8.extract(3) + sum_end
+        sum_4.extract(0) + sum_4.extract(1) + sum_4.extract(2) + sum_4.extract(3) +
+        sum_8.extract(0) + sum_8.extract(1) +
+        sum_8.extract(2) + sum_8.extract(3) + sum_end
 }
 
 pub fn get_sample_timestamp(start: Time, sample_rate: usize, sample: i64) -> Time {
     start +
-    (TimeDelta::seconds(1) * sample + TimeDelta::nanoseconds(sample_rate as i64 / 2)) /
-    sample_rate as i64
+        (TimeDelta::seconds(1) * sample + TimeDelta::nanoseconds(sample_rate as i64 / 2)) /
+            sample_rate as i64
 }
 
 pub fn get_sample_from_timestamp(start: Time, sample_rate: usize, time: Time) -> i64 {
@@ -172,8 +172,8 @@ impl Frame {
         Frame {
             sample_rate: sample_rate,
             timestamp: timestamp,
-            left: vec ![0f32; samples],
-            right: vec ![0f32; samples],
+            left: vec![0f32; samples],
+            right: vec![0f32; samples],
         }
     }
 
@@ -197,68 +197,53 @@ impl Frame {
     pub fn to_buffer(&self, format: SampleFormat) -> Vec<u8> {
         let mut buf = Vec::with_capacity(format.bytes_per_sample() * CHANNELS * self.len());
         match format {
-            SampleFormat::S16LE => {
-                for i in 0..self.len() {
-                    write_sample_s16le(self.left[i], &mut buf);
-                    write_sample_s16le(self.right[i], &mut buf);
-                }
-            }
-            SampleFormat::S24LE3 => {
-                for i in 0..self.len() {
-                    write_sample_s24le3(self.left[i], &mut buf);
-                    write_sample_s24le3(self.right[i], &mut buf);
-                }
-            }
-            SampleFormat::S24LE4 => {
-                for i in 0..self.len() {
-                    write_sample_s24le4(self.left[i], &mut buf);
-                    write_sample_s24le4(self.right[i], &mut buf);
-                }
-            }
-            SampleFormat::S32LE => {
-                for i in 0..self.len() {
-                    write_sample_s32le(self.left[i], &mut buf);
-                    write_sample_s32le(self.right[i], &mut buf);
-                }
-            }
+            SampleFormat::S16LE => for i in 0..self.len() {
+                write_sample_s16le(self.left[i], &mut buf);
+                write_sample_s16le(self.right[i], &mut buf);
+            },
+            SampleFormat::S24LE3 => for i in 0..self.len() {
+                write_sample_s24le3(self.left[i], &mut buf);
+                write_sample_s24le3(self.right[i], &mut buf);
+            },
+            SampleFormat::S24LE4 => for i in 0..self.len() {
+                write_sample_s24le4(self.left[i], &mut buf);
+                write_sample_s24le4(self.right[i], &mut buf);
+            },
+            SampleFormat::S32LE => for i in 0..self.len() {
+                write_sample_s32le(self.left[i], &mut buf);
+                write_sample_s32le(self.right[i], &mut buf);
+            },
         }
 
         buf
     }
 
-    pub fn from_buffer(format: SampleFormat,
-                       sample_rate: usize,
-                       buffer: &[u8],
-                       timestamp: Time)
-                       -> Frame {
+    pub fn from_buffer(
+        format: SampleFormat,
+        sample_rate: usize,
+        buffer: &[u8],
+        timestamp: Time,
+    ) -> Frame {
         let samples = buffer.len() / format.bytes_per_sample() / CHANNELS;
         let mut frame = Frame::new(sample_rate, timestamp, samples);
 
         match format {
-            SampleFormat::S16LE => {
-                for i in 0..samples {
-                    frame.left[i] = read_sample_s16le(&buffer, i * 4);
-                    frame.right[i] = read_sample_s16le(&buffer, i * 4 + 2);
-                }
-            }
-            SampleFormat::S24LE3 => {
-                for i in 0..samples {
-                    frame.left[i] = read_sample_s24le3(&buffer, i * 6);
-                    frame.right[i] = read_sample_s24le3(&buffer, i * 6 + 3);
-                }
-            }
-            SampleFormat::S24LE4 => {
-                for i in 0..samples {
-                    frame.left[i] = read_sample_s24le4(&buffer, i * 8);
-                    frame.right[i] = read_sample_s24le4(&buffer, i * 8 + 4);
-                }
-            }
-            SampleFormat::S32LE => {
-                for i in 0..samples {
-                    frame.left[i] = read_sample_s32le(&buffer, i * 8);
-                    frame.right[i] = read_sample_s32le(&buffer, i * 8 + 4);
-                }
-            }
+            SampleFormat::S16LE => for i in 0..samples {
+                frame.left[i] = read_sample_s16le(&buffer, i * 4);
+                frame.right[i] = read_sample_s16le(&buffer, i * 4 + 2);
+            },
+            SampleFormat::S24LE3 => for i in 0..samples {
+                frame.left[i] = read_sample_s24le3(&buffer, i * 6);
+                frame.right[i] = read_sample_s24le3(&buffer, i * 6 + 3);
+            },
+            SampleFormat::S24LE4 => for i in 0..samples {
+                frame.left[i] = read_sample_s24le4(&buffer, i * 8);
+                frame.right[i] = read_sample_s24le4(&buffer, i * 8 + 4);
+            },
+            SampleFormat::S32LE => for i in 0..samples {
+                frame.left[i] = read_sample_s32le(&buffer, i * 8);
+                frame.right[i] = read_sample_s32le(&buffer, i * 8 + 4);
+            },
         }
 
         frame
@@ -274,7 +259,9 @@ pub type Result<T> = result::Result<T, Error>;
 
 impl Error {
     pub fn new(msg: &str) -> Error {
-        Error { msg: String::from(msg) }
+        Error {
+            msg: String::from(msg),
+        }
     }
     pub fn from_string(msg: String) -> Error {
         Error { msg: msg }

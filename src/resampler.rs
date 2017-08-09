@@ -68,13 +68,15 @@ impl Resampler {
             win: (-(size as i32 + 1)..(size as i32) + 1)
                 .map(|x| {
                     let sign = (if x >= 0 {
-                                    1 - 2 * (x % 2)
-                                } else {
-                                    1 + 2 * (x % 2)
-                                }) as f32;
-                    QuadFunction::new(sign * sinc(x as f32 * PI / size as f32) / PI,
-                                      sign * sinc((x as f32 + 0.5) * PI / size as f32) / PI,
-                                      sign * sinc((x as f32 + 1.0) * PI / size as f32) / PI)
+                        1 - 2 * (x % 2)
+                    } else {
+                        1 + 2 * (x % 2)
+                    }) as f32;
+                    QuadFunction::new(
+                        sign * sinc(x as f32 * PI / size as f32) / PI,
+                        sign * sinc((x as f32 + 0.5) * PI / size as f32) / PI,
+                        sign * sinc((x as f32 + 1.0) * PI / size as f32) / PI,
+                    )
                 })
                 .collect(),
             i_pos: 0,
@@ -196,7 +198,9 @@ impl ResamplerTable {
             let mut row = Vec::with_capacity(config.size + 1);
             for i in 0..(config.size * 2) {
                 let x = config.size as f64 - i as f64 + n as f64 / config.freq_denom as f64;
-                row.push((sinc64(PI64 * x) * sinc64(PI64 * x / config.size as f64)) as f32);
+                row.push(
+                    (sinc64(PI64 * x) * sinc64(PI64 * x / config.size as f64)) as f32,
+                );
             }
             kernel.push(row);
         }
@@ -230,9 +234,9 @@ impl FastResampler {
 
     pub fn resample(&mut self, input: &[f32]) -> Vec<f32> {
         let table = &self.table;
-        let mut output = Vec::with_capacity((input.len() * table.config.freq_denom /
-                                             table.config.freq_num) as
-                                            usize + 1);
+        let mut output = Vec::with_capacity(
+            (input.len() * table.config.freq_denom / table.config.freq_num) as usize + 1,
+        );
 
         loop {
             if self.i_pos + table.config.size >= self.queue.len() + input.len() {
@@ -259,16 +263,19 @@ impl FastResampler {
                 let mut k_pos = start + table.config.size - self.i_pos;
 
                 if start < queue_len {
-                    result += convolve(&self.queue[start..queue_len],
-                                       &kernel[k_pos..(k_pos + queue_len - start)]);
+                    result += convolve(
+                        &self.queue[start..queue_len],
+                        &kernel[k_pos..(k_pos + queue_len - start)],
+                    );
                     k_pos += queue_len - start;
                     start = queue_len;
                 }
 
                 let len = self.i_pos + table.config.size - start;
-                result += convolve(&input[(start - queue_len)..
-                                    (self.i_pos + table.config.size - queue_len)],
-                                   &kernel[k_pos..(k_pos + len)]);
+                result += convolve(
+                    &input[(start - queue_len)..(self.i_pos + table.config.size - queue_len)],
+                    &kernel[k_pos..(k_pos + len)],
+                );
             };
 
 
@@ -312,7 +319,9 @@ fn get_greatest_common_divisor(mut a: usize, mut b: usize) -> usize {
 
 impl ResamplerFactory {
     pub fn new() -> ResamplerFactory {
-        ResamplerFactory { table_cache: HashMap::new() }
+        ResamplerFactory {
+            table_cache: HashMap::new(),
+        }
     }
 
     pub fn create_resampler(&mut self, i_freq: usize, o_freq: usize) -> FastResampler {
@@ -370,8 +379,9 @@ impl StreamResampler {
 
     pub fn resample(&mut self, frame: &base::Frame) -> Option<base::Frame> {
         if self.input_sample_rate != frame.sample_rate ||
-           base::get_sample_timestamp(self.reference_time, frame.sample_rate, self.input_pos) !=
-           frame.timestamp {
+            base::get_sample_timestamp(self.reference_time, frame.sample_rate, self.input_pos) !=
+                frame.timestamp
+        {
             self.resamplers = None;
             self.input_sample_rate = frame.sample_rate;
             self.reference_time = frame.timestamp;
@@ -380,19 +390,22 @@ impl StreamResampler {
         }
 
         if self.resamplers.is_none() {
-            self.resamplers =
-                Some([self.resampler_factory
-                          .create_resampler(frame.sample_rate, self.output_sample_rate),
-                      self.resampler_factory
-                          .create_resampler(frame.sample_rate, self.output_sample_rate)]);
+            self.resamplers = Some([
+                self.resampler_factory
+                    .create_resampler(frame.sample_rate, self.output_sample_rate),
+                self.resampler_factory
+                    .create_resampler(frame.sample_rate, self.output_sample_rate),
+            ]);
         }
 
 
         let result = base::Frame {
             sample_rate: self.output_sample_rate,
-            timestamp: base::get_sample_timestamp(self.reference_time,
-                                                  self.output_sample_rate,
-                                                  self.output_pos),
+            timestamp: base::get_sample_timestamp(
+                self.reference_time,
+                self.output_sample_rate,
+                self.output_pos,
+            ),
             left: self.resamplers.as_mut().unwrap()[0].resample(&frame.left),
             right: self.resamplers.as_mut().unwrap()[1].resample(&frame.right),
         };
@@ -400,7 +413,11 @@ impl StreamResampler {
         self.input_pos += frame.len() as i64;
         self.output_pos += result.len() as i64;
 
-        if result.len() > 0 { Some(result) } else { None }
+        if result.len() > 0 {
+            Some(result)
+        } else {
+            None
+        }
     }
 }
 
@@ -452,17 +469,14 @@ mod tests {
         let out64: Vec<f64> = out.iter().map(|x| -> f64 { *x as f64 }).collect();
 
         for i in 100..200 {
-            println!("{} {} {}", i, out[i], {
-                out64[i] - val(i, orate, f)
-            });
+            println!("{} {} {}", i, out[i], { out64[i] - val(i, orate, f) });
         }
         for i in 1..(out.len() / RANGE) {
             let s = i * RANGE;
             let e = (i + 1) * RANGE;
             let signal = get_power(&out64[s..e]);
-            let noise_signal: Vec<f64> = ((s + 1)..e)
-                .map(|i| out64[i] - val(i, orate, f))
-                .collect();
+            let noise_signal: Vec<f64> =
+                ((s + 1)..e).map(|i| out64[i] - val(i, orate, f)).collect();
             let noise = get_power(&noise_signal);
             let nsr = noise / signal;
             let nsr_db = 10.0 * nsr.log(10.0);

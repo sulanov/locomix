@@ -2,7 +2,7 @@ extern crate libc;
 
 use std;
 use std::fmt;
-use std::ops::{Add, Sub, Mul, Div, AddAssign, SubAssign, MulAssign, DivAssign};
+use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 use std::cmp::{Ord, Ordering};
 use std::iter::Sum;
 
@@ -34,8 +34,10 @@ impl TimeDelta {
         if self.0 <= 0 {
             return std::time::Duration::new(0, 0);
         }
-        std::time::Duration::new((self.0 / NANOS_PER_SEC) as u64,
-                                 (self.0 % NANOS_PER_SEC) as u32)
+        std::time::Duration::new(
+            (self.0 / NANOS_PER_SEC) as u64,
+            (self.0 % NANOS_PER_SEC) as u32,
+        )
     }
 
     pub fn in_nanoseconds(&self) -> i64 {
