@@ -23,7 +23,7 @@ impl AsyncInput {
                 Some(cpu_set) => {
                     scheduler::set_self_affinity(cpu_set).expect("Failed to set affinity");
                 }
-                None => ()
+                None => (),
             }
 
             loop {

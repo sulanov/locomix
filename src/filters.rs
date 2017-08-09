@@ -271,8 +271,10 @@ pub struct ParallelFirFilter {
 }
 
 impl ParallelFirFilter {
-    pub fn new_pair(left: FirFilterParams, right: FirFilterParams,
-                    second_thread_affinity: scheduler::CpuSet) -> ParallelFirFilter {
+    pub fn new_pair(left: FirFilterParams,
+                    right: FirFilterParams,
+                    second_thread_affinity: scheduler::CpuSet)
+                    -> ParallelFirFilter {
         let (right_thread, job_receiver) = mpsc::channel::<FilterJob>();
         thread::spawn(move || {
             scheduler::set_self_affinity(second_thread_affinity);
@@ -287,7 +289,7 @@ impl ParallelFirFilter {
 
         ParallelFirFilter {
             left: FirFilter::new(left),
-            right_thread: right_thread
+            right_thread: right_thread,
         }
     }
 
@@ -295,7 +297,11 @@ impl ParallelFirFilter {
         let (s, r) = mpsc::channel::<Vec<f32>>();
         let mut v = vec![0f32; 0];
         mem::swap(&mut v, &mut frame.right);
-        self.right_thread.send(FilterJob {data: v, response_channel: s})
+        self.right_thread
+            .send(FilterJob {
+                      data: v,
+                      response_channel: s,
+                  })
             .expect("Failed to send");
 
         self.left.apply_multi(&mut frame.left[..]);

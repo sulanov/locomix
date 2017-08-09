@@ -127,7 +127,7 @@ impl Output for AlsaOutput {
             let start = pos * self.format.bytes_per_sample() * CHANNELS;
             let r = self.pcm.io().writei(&buf[start..]);
             match r {
-                Ok(l) => { pos += l }
+                Ok(l) => pos += l,
                 Err(e) => {
                     println!("Recovering output {}", e);
                     try!(self.pcm.recover(e.code(), true));
@@ -138,8 +138,12 @@ impl Output for AlsaOutput {
     }
 
     fn deactivate(&mut self) {}
-    fn sample_rate(&self) -> usize { self.sample_rate }
-    fn period_size(&self) -> usize { self.period_size }
+    fn sample_rate(&self) -> usize {
+        self.sample_rate
+    }
+    fn period_size(&self) -> usize {
+        self.period_size
+    }
 }
 
 const RETRY_PERIOD_SECS: i64 = 3;
@@ -218,9 +222,15 @@ impl Output for ResilientAlsaOutput {
         Ok(())
     }
 
-    fn deactivate(&mut self) { self.output = None; }
-    fn sample_rate(&self) -> usize { self.sample_rate }
-    fn period_size(&self) -> usize { self.period_size }
+    fn deactivate(&mut self) {
+        self.output = None;
+    }
+    fn sample_rate(&self) -> usize {
+        self.sample_rate
+    }
+    fn period_size(&self) -> usize {
+        self.period_size
+    }
 }
 
 pub struct ResamplingOutput {
@@ -309,7 +319,7 @@ impl AsyncOutput {
                 Some(cpu_set) => {
                     scheduler::set_self_affinity(cpu_set).expect("Failed to set affinity");
                 }
-                None => ()
+                None => (),
             }
 
             let mut sample_rate = 0;

@@ -148,7 +148,8 @@ pub struct FilteredOutput {
 impl FilteredOutput {
     pub fn new(output: Box<output::Output>,
                filter: ParallelFirFilter,
-               shared_state: &ui::SharedState) -> Box<output::Output> {
+               shared_state: &ui::SharedState)
+               -> Box<output::Output> {
         Box::new(FilteredOutput {
                      output: output,
                      filter: filter,
@@ -163,7 +164,7 @@ impl output::Output for FilteredOutput {
         for msg in self.ui_msg_receiver.try_iter() {
             match msg {
                 ui::UiMessage::SetEnableDrc { enable } => self.enabled = enable,
-                _ => ()
+                _ => (),
             }
         }
         if self.enabled {
@@ -451,7 +452,7 @@ fn run() -> Result<()> {
     for o in matches.opt_strs("o") {
         let out = output::AsyncOutput::open(&o, Some(scheduler::CpuSet::single(1)));
         let resampled = output::AsyncOutput::new(output::ResamplingOutput::new(out),
-            Some(scheduler::CpuSet::single(1)));
+                                                 Some(scheduler::CpuSet::single(1)));
         outputs.push(resampled);
         output_states.push(ui::OutputState::new(&o));
     }
@@ -519,10 +520,13 @@ fn run() -> Result<()> {
                                             filter_length);
         let fir_cpu_1 = scheduler::CpuSet::single(2);
         let fir_cpu_2 = scheduler::CpuSet::single(3);
-        let filtered_output = output::AsyncOutput::new(FilteredOutput::new(
-                outputs.remove(0),
-                ParallelFirFilter::new_pair(left, right, fir_cpu_2),
-                &shared_state), Some(fir_cpu_1));
+        let filtered_output =
+            output::AsyncOutput::new(FilteredOutput::new(outputs.remove(0),
+                                                         ParallelFirFilter::new_pair(left,
+                                                                                     right,
+                                                                                     fir_cpu_2),
+                                                         &shared_state),
+                                     Some(fir_cpu_1));
         outputs.insert(0, filtered_output);
     } else {
         return Err(Error::new("Expected 0 or 2 FIR filters"));
@@ -533,7 +537,7 @@ fn run() -> Result<()> {
         .map(|input| {
                  async_input::AsyncInput::new(Box::new(input::InputResampler::new(input,
                                                                                   sample_rate)),
-                 Some(scheduler::CpuSet::single(0)))
+                                              Some(scheduler::CpuSet::single(0)))
              })
         .collect();
 
