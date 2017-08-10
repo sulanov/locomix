@@ -8,7 +8,6 @@ use std::mem;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
-use scheduler;
 
 type FCoef = f32;
 
@@ -285,14 +284,9 @@ pub struct ParallelFirFilter {
 }
 
 impl ParallelFirFilter {
-    pub fn new_pair(
-        left: FirFilterParams,
-        right: FirFilterParams,
-        second_thread_affinity: scheduler::CpuSet,
-    ) -> ParallelFirFilter {
+    pub fn new_pair(left: FirFilterParams, right: FirFilterParams) -> ParallelFirFilter {
         let (right_thread, job_receiver) = mpsc::channel::<FilterJob>();
         thread::spawn(move || {
-            scheduler::set_self_affinity(second_thread_affinity);
             let mut filter = FirFilter::new(right);
             for mut job in job_receiver.iter() {
                 let mut v = vec![0f32; 0];

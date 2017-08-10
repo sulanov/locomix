@@ -3,7 +3,6 @@ use time::TimeDelta;
 use std::sync::mpsc;
 use input;
 use base;
-use scheduler;
 
 enum PipeMessage {
     Frame(base::Frame),
@@ -15,28 +14,19 @@ pub struct AsyncInput {
 }
 
 impl AsyncInput {
-    pub fn new(mut input: Box<input::Input>, affinity: Option<scheduler::CpuSet>) -> AsyncInput {
+    pub fn new(mut input: Box<input::Input>) -> AsyncInput {
         let (sender, receiver) = mpsc::channel();
 
-        thread::spawn(move || {
-            match affinity {
-                Some(cpu_set) => {
-                    scheduler::set_self_affinity(cpu_set).expect("Failed to set affinity");
+        thread::spawn(move || loop {
+            match input.read() {
+                Err(e) => {
+                    sender.send(PipeMessage::Error(e)).unwrap();
+                    break;
                 }
-                None => (),
-            }
+                Ok(None) => (),
+                Ok(Some(frame)) => {
+                    sender.send(PipeMessage::Frame(frame)).unwrap();
 
-            loop {
-                match input.read() {
-                    Err(e) => {
-                        sender.send(PipeMessage::Error(e)).unwrap();
-                        break;
-                    }
-                    Ok(None) => (),
-                    Ok(Some(frame)) => {
-                        sender.send(PipeMessage::Frame(frame)).unwrap();
-
-                    }
                 }
             }
         });

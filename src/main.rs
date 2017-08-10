@@ -1,6 +1,5 @@
 extern crate getopts;
 extern crate rustc_serialize;
-extern crate scheduler;
 
 #[macro_use]
 extern crate rouille;
@@ -467,24 +466,18 @@ fn run() -> Result<()> {
     let mut output_states = Vec::<ui::OutputState>::new();
 
     for o in matches.opt_strs("o") {
-        let out = output::AsyncOutput::open(&o, Some(scheduler::CpuSet::single(1)));
-        let resampled = output::AsyncOutput::new(
-            output::ResamplingOutput::new(out),
-            Some(scheduler::CpuSet::single(1)),
-        );
+        let out = output::AsyncOutput::open(&o);
+        let resampled = output::AsyncOutput::new(output::ResamplingOutput::new(out));
         outputs.push(resampled);
         output_states.push(ui::OutputState::new(&o));
     }
 
     if matches.opt_present("m") {
-        let mut input = async_input::AsyncInput::new(
-            Box::new(try!(alsa_input::AlsaInput::open(
-                &matches.opt_strs("i")[0],
-                192000,
-                false
-            ))),
-            None,
-        );
+        let mut input = async_input::AsyncInput::new(Box::new(try!(alsa_input::AlsaInput::open(
+            &matches.opt_strs("i")[0],
+            192000,
+            false
+        ))));
         let r = try!(get_impulse_response(&mut outputs[0], &mut input));
         let mut s = 0;
         for i in 100..r.len() {
@@ -545,16 +538,11 @@ fn run() -> Result<()> {
             fir_filters[1].clone(),
             filter_length,
         );
-        let fir_cpu_1 = scheduler::CpuSet::single(2);
-        let fir_cpu_2 = scheduler::CpuSet::single(3);
-        let filtered_output = output::AsyncOutput::new(
-            FilteredOutput::new(
-                outputs.remove(0),
-                ParallelFirFilter::new_pair(left, right, fir_cpu_2),
-                &shared_state,
-            ),
-            Some(fir_cpu_1),
-        );
+        let filtered_output = output::AsyncOutput::new(FilteredOutput::new(
+            outputs.remove(0),
+            ParallelFirFilter::new_pair(left, right),
+            &shared_state,
+        ));
         outputs.insert(0, filtered_output);
     } else {
         return Err(Error::new("Expected 0 or 2 FIR filters"));
@@ -563,14 +551,9 @@ fn run() -> Result<()> {
     let wrapped_inputs = inputs
         .drain(..)
         .map(|input| {
-            async_input::AsyncInput::new(
-                Box::new(input::InputResampler::new(input, sample_rate)),
-                Some(scheduler::CpuSet::single(0)),
-            )
+            async_input::AsyncInput::new(Box::new(input::InputResampler::new(input, sample_rate)))
         })
         .collect();
-
-    scheduler::set_self_affinity(scheduler::CpuSet::single(0)).expect("Failed to set affinity");
 
     run_loop(wrapped_inputs, outputs, sample_rate, shared_state)
 }
