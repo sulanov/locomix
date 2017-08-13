@@ -8,7 +8,6 @@ mod alsa_input;
 mod async_input;
 mod base;
 mod control;
-mod file_input;
 mod filters;
 mod input_device;
 mod input;
@@ -190,18 +189,14 @@ impl output::Output for FilteredOutput {
     }
 }
 
-
-const MIX_DEADLINE_MS: i64 = 30;
-const TARGET_OUTPUT_DELAY_MS: i64 = 60;
-
 const OUTPUT_SHUTDOWN_SECONDS: i64 = 5;
 const STANDBY_SECONDS: i64 = 3600;
-
 
 fn run_loop(
     mut inputs: Vec<AsyncInput>,
     mut outputs: Vec<Box<output::Output>>,
     sample_rate: usize,
+    period_duration: TimeDelta,
     shared_state: ui::SharedState,
 ) -> Result<()> {
     let ui_channel = shared_state.lock().add_observer();
@@ -225,7 +220,9 @@ fn run_loop(
 
     let mut exclusive_mux_mode = true;
 
-    let period_size = FRAME_SIZE_MS * sample_rate / 1000;
+    let period_size = (period_duration * sample_rate as i64 / TimeDelta::seconds(1)) as usize;
+    let mix_delay = period_duration * 4;
+    let target_output_delay = mix_delay + period_duration * 8;
 
     loop {
         let frame_timestamp =
@@ -234,17 +231,17 @@ fn run_loop(
         stream_pos += frame.len() as i64;
 
         let mut have_data = false;
-        let mut mix_deadline = frame.end_timestamp() + TimeDelta::milliseconds(MIX_DEADLINE_MS);
+        let mut mix_deadline = frame.end_timestamp() + mix_delay;
 
         let now = Time::now();
-        if now > mix_deadline + TimeDelta::milliseconds(FRAME_SIZE_MS as i64) {
+        if now > mix_deadline + period_duration {
             println!(
                 "ERROR: Mixer missed deadline. Resetting stream. {:?}",
                 now - mix_deadline
             );
             frame.timestamp = frame.end_timestamp();
             stream_pos += frame.len() as i64;
-            mix_deadline = frame.end_timestamp() + TimeDelta::milliseconds(MIX_DEADLINE_MS);
+            mix_deadline = frame.end_timestamp() + mix_delay;
         }
 
         for m in mixers.iter_mut() {
@@ -285,7 +282,7 @@ fn run_loop(
             }
             frame = crossfeed_filter.apply(frame);
 
-            frame.timestamp += TimeDelta::milliseconds(TARGET_OUTPUT_DELAY_MS);
+            frame.timestamp += target_output_delay;
 
             try!(outputs[selected_output].write(frame));
         } else {
@@ -394,6 +391,7 @@ fn run() -> Result<()> {
     opts.optmulti("p", "input-pipe", "Input pipe name", "PIPE");
     opts.optmulti("o", "output", "Output device name", "OUTPUT");
     opts.optopt("r", "sample-rate", "Output sample rate", "RATE");
+    opts.optopt("P", "period-duration", "Output sample rate", "RATE");
     opts.optopt("w", "web-address", "Address:port for web UI", "ADDRESS");
     opts.optopt(
         "s",
@@ -430,6 +428,12 @@ fn run() -> Result<()> {
         None => 48000,
         Some(Ok(rate)) => rate,
         Some(Err(_)) => return Err(Error::new("Cannot parse sample-rate parameter.")),
+    };
+
+    let period_duration = match matches.opt_str("P").map(|x| x.parse::<usize>()) {
+        None => TimeDelta::milliseconds(5),
+        Some(Ok(d)) if d > 0 && d < 100 => TimeDelta::milliseconds(d as i64),
+        _ => return Err(Error::new("Cannot parse period-duration parameter.")),
     };
 
     let filter_length = match matches.opt_str("L").map(|x| x.parse::<usize>()) {
@@ -474,7 +478,7 @@ fn run() -> Result<()> {
     let dynamic_resampling = matches.opt_present("D");
 
     for o in matches.opt_strs("o") {
-        let out = output::AsyncOutput::open(&o);
+        let out = output::AsyncOutput::open(&o, period_duration);
         let resampled_out = if dynamic_resampling {
             output::FineResamplingOutput::new(out)
         } else {
@@ -485,11 +489,12 @@ fn run() -> Result<()> {
     }
 
     if matches.opt_present("m") {
-        let mut input = async_input::AsyncInput::new(Box::new(try!(alsa_input::AlsaInput::open(
+        let mut input = async_input::AsyncInput::new(try!(alsa_input::AlsaInput::open(
             &matches.opt_strs("i")[0],
             192000,
+            period_duration,
             false
-        ))));
+        )));
         let r = try!(get_impulse_response(&mut outputs[0], &mut input));
         let mut s = 0;
         for i in 100..r.len() {
@@ -505,18 +510,13 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
-    for f in matches.opt_strs("f") {
-        inputs.push(Box::new(try!(file_input::FileInput::open(&f))));
-        input_states.push(ui::InputState::new(&f));
-    }
-
     for p in matches.opt_strs("p") {
-        inputs.push(Box::new(pipe_input::PipeInput::open(&p)));
+        inputs.push(pipe_input::PipeInput::open(&p, period_duration));
         input_states.push(ui::InputState::new(&p));
     }
 
     for i in matches.opt_strs("i") {
-        inputs.push(Box::new(alsa_input::ResilientAlsaInput::new(&i)));
+        inputs.push(alsa_input::ResilientAlsaInput::new(&i, period_duration));
         input_states.push(ui::InputState::new(&i));
     }
 
@@ -567,7 +567,7 @@ fn run() -> Result<()> {
         })
         .collect();
 
-    run_loop(wrapped_inputs, outputs, sample_rate, shared_state)
+    run_loop(wrapped_inputs, outputs, sample_rate, period_duration, shared_state)
 }
 
 fn main() {

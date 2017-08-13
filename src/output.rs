@@ -75,14 +75,15 @@ impl RateDetector {
 pub struct AlsaOutput {
     pcm: alsa::PCM,
     sample_rate: usize,
-    format: SampleFormat,
+    period_duration: TimeDelta,
     period_size: usize,
+    format: SampleFormat,
     rate_detector: RateDetector,
     measured_sample_rate: f64,
 }
 
 impl AlsaOutput {
-    pub fn open(name: &str, target_sample_rate: usize) -> Result<AlsaOutput> {
+    pub fn open(name: &str, target_sample_rate: usize, period_duration: TimeDelta) -> Result<AlsaOutput> {
         let pcm = try!(alsa::PCM::open(
             &*CString::new(name).unwrap(),
             alsa::Direction::Playback,
@@ -137,8 +138,9 @@ impl AlsaOutput {
                 sample_rate = selected;
             }
 
+            let target_period_size = period_duration * sample_rate as i64 / TimeDelta::seconds(1);
             try!(hwp.set_period_size_near(
-                (sample_rate * FRAME_SIZE_MS / 1000) as alsa::pcm::Frames,
+                target_period_size as alsa::pcm::Frames,
                 alsa::ValueOr::Nearest
             ));
             try!(hwp.set_periods(3, alsa::ValueOr::Nearest));
@@ -166,8 +168,9 @@ impl AlsaOutput {
         Ok(AlsaOutput {
            pcm: pcm,
            sample_rate: sample_rate,
-           format: format,
+           period_duration: period_duration,
            period_size: period_size,
+           format: format,
            rate_detector: RateDetector::new(sample_rate as f64),
            measured_sample_rate: sample_rate as f64,
        })
@@ -187,11 +190,8 @@ impl Output for AlsaOutput {
 
         // Sleep if the frame is too far into the future.
         let now = Time::now();
-        if frame.timestamp - now > TimeDelta::milliseconds(FRAME_SIZE_MS as i64) * 5 {
-            std::thread::sleep(
-                (frame.timestamp - now - TimeDelta::milliseconds(FRAME_SIZE_MS as i64) * 1)
-                    .as_duration(),
-            );
+        if frame.timestamp - now > self.period_duration * 5 {
+            std::thread::sleep((frame.timestamp - now - self.period_duration * 1).as_duration());
         }
 
         let buf = frame.to_buffer(self.format);
@@ -234,16 +234,17 @@ pub struct ResilientAlsaOutput {
     device_name: String,
     output: Option<AlsaOutput>,
     target_sample_rate: usize,
+    period_duration: TimeDelta,
     last_open_attempt: Time,
     sample_rate: usize,
     period_size: usize,
 }
 
 impl ResilientAlsaOutput {
-    pub fn new(name: &str, target_sample_rate: usize) -> Box<Output> {
-        let mut period_size = target_sample_rate * FRAME_SIZE_MS / 1000;
+    pub fn new(name: &str, target_sample_rate: usize, period_duration: TimeDelta) -> Box<Output> {
         let sample_rate;
-        let device = match AlsaOutput::open(name, target_sample_rate) {
+        let period_size;
+        let device = match AlsaOutput::open(name, target_sample_rate, period_duration) {
             Ok(device) => {
                 sample_rate = device.sample_rate();
                 period_size = device.period_size();
@@ -251,6 +252,7 @@ impl ResilientAlsaOutput {
             }
             Err(e) => {
                 sample_rate = 48000;
+                period_size = (period_duration * sample_rate as i64 / TimeDelta::seconds(1)) as usize;
                 println!("WARNING: failed to open {}: {}", name, e);
                 None
             }
@@ -259,6 +261,7 @@ impl ResilientAlsaOutput {
             device_name: String::from(name),
             output: device,
             target_sample_rate: target_sample_rate,
+            period_duration: period_duration,
             last_open_attempt: Time::now(),
             sample_rate: sample_rate,
             period_size: period_size,
@@ -269,7 +272,7 @@ impl ResilientAlsaOutput {
         let now = Time::now();
         if now - self.last_open_attempt >= TimeDelta::seconds(RETRY_PERIOD_SECS) {
             self.last_open_attempt = now;
-            match AlsaOutput::open(&self.device_name, self.target_sample_rate) {
+            match AlsaOutput::open(&self.device_name, self.target_sample_rate, self.period_duration) {
                 Ok(output) => {
                     self.sample_rate = output.sample_rate();
                     self.period_size = output.period_size();
@@ -463,8 +466,8 @@ pub struct AsyncOutput {
 }
 
 impl AsyncOutput {
-    pub fn open(name: &str) -> Box<Output> {
-        AsyncOutput::new(ResilientAlsaOutput::new(name, 0))
+    pub fn open(name: &str, period_duration: TimeDelta) -> Box<Output> {
+        AsyncOutput::new(ResilientAlsaOutput::new(name, 0, period_duration))
     }
 
     pub fn new(mut output: Box<Output>) -> Box<Output> {
@@ -475,7 +478,7 @@ impl AsyncOutput {
             sender: sender,
             feedback_receiver: feedback_receiver,
             sample_rate: output.sample_rate(),
-            period_size: output.period_size() * FRAME_SIZE_MS / 1000,
+            period_size: output.period_size(),
             measured_sample_rate: output.measured_sample_rate(),
         };
 

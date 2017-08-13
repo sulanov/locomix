@@ -8,7 +8,6 @@ use std::iter::Sum;
 
 const NANOS_PER_SEC: i64 = 1_000_000_000;
 const NANOS_PER_MILLI: i64 = 1_000_000;
-const MILLIS_PER_SEC: i64 = 1_000;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct TimeDelta(i64);

@@ -23,20 +23,23 @@ pub struct PipeInput {
 
     last_open_time: Time,
 
+    period_duration: TimeDelta,
+
     reference_time: Time,
     pos: i64,
 }
 
 impl PipeInput {
-    pub fn open(filename: &str) -> PipeInput {
+    pub fn open(filename: &str, period_duration: TimeDelta) -> Box<PipeInput> {
         let now = Time::now();
-        PipeInput {
+        Box::new(PipeInput {
             filename: String::from(filename),
             file: None,
             last_open_time: now - TimeDelta::seconds(FILE_REOPEN_FREQUENCY_SECS),
+            period_duration: period_duration,
             reference_time: now,
             pos: 0,
-        }
+        })
     }
 
     fn try_reopen(&mut self) {
@@ -88,11 +91,12 @@ impl PipeInput {
 impl Input for PipeInput {
     fn read(&mut self) -> Result<Option<Frame>> {
         self.try_reopen();
-        let size = FRAME_SIZE_MS * SAMPLE_RATE / 1000 * BYTES_PER_SAMPLE;
+        let size = (self.period_duration * SAMPLE_RATE as i64 /
+            TimeDelta::seconds(1) * BYTES_PER_SAMPLE as i64) as usize;
         let mut buffer = vec![0u8; size];
         let bytes_read = match self.file.as_mut().map(|f| f.read(&mut buffer)) {
             None | Some(Ok(0)) => {
-                std::thread::sleep(TimeDelta::milliseconds(FRAME_SIZE_MS as i64).as_duration());
+                std::thread::sleep(self.period_duration.as_duration());
                 return Ok(None);
             }
             Some(Ok(result)) => result,
@@ -107,8 +111,8 @@ impl Input for PipeInput {
         self.pos += (bytes_read / BYTES_PER_SAMPLE) as i64;
 
         let now = Time::now();
-        if now - timestamp > TimeDelta::milliseconds(100) {
-            self.reference_time = now - TimeDelta::milliseconds(FRAME_SIZE_MS as i64);
+        if now - timestamp > self.period_duration {
+            self.reference_time = now - self.period_duration;
             self.pos = 0;
             timestamp = self.reference_time;
         }

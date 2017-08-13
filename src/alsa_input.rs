@@ -64,6 +64,7 @@ enum State {
 pub struct AlsaInput {
     pcm: alsa::PCM,
     sample_rate: usize,
+    period_duration: TimeDelta,
     format: SampleFormat,
     period_size: usize,
     rate_detector: Option<RateDetector>,
@@ -73,19 +74,17 @@ pub struct AlsaInput {
 }
 
 const TARGET_SAMPLE_RATE: usize = 48000;
-const INPUT_FRAME_SIZE: usize = 128;
 
 // Deactivate input after 30 seconds of silence.
 const SILENCE_PERIOD_SECONDS: usize = 30;
-
-const MAX_TIME_DEVIATION_MS: i64 = 2 * FRAME_SIZE_MS as i64;
 
 impl AlsaInput {
     pub fn open(
         name: &str,
         target_sample_rate: usize,
+        period_duration: TimeDelta,
         auto_sample_rate: bool,
-    ) -> Result<AlsaInput> {
+    ) -> Result<Box<AlsaInput>> {
         let pcm = try!(alsa::PCM::open(
             &*CString::new(name).unwrap(),
             alsa::Direction::Capture,
@@ -112,8 +111,9 @@ impl AlsaInput {
                 }
             }
 
+            let target_period_size = period_duration * target_sample_rate as i64 / TimeDelta::seconds(1);
             try!(hwp.set_period_size_near(
-                INPUT_FRAME_SIZE as alsa::pcm::Frames,
+                target_period_size as alsa::pcm::Frames,
                 alsa::ValueOr::Nearest
             ));
             try!(hwp.set_periods(10, alsa::ValueOr::Nearest));
@@ -146,9 +146,10 @@ impl AlsaInput {
             );
         }
 
-        Ok(AlsaInput {
+        Ok(Box::new(AlsaInput {
             pcm: pcm,
             sample_rate: sample_rate,
+            period_duration: period_duration,
             format: format,
             period_size: period_size,
             rate_detector: if auto_sample_rate {
@@ -159,7 +160,7 @@ impl AlsaInput {
             state: State::Inactive,
             reference_time: Time::now(),
             pos: 0,
-        })
+        }))
     }
 }
 
@@ -229,7 +230,7 @@ impl Input for AlsaInput {
         self.pos += samples as i64;
 
         let now = Time::now();
-        if (now - timestamp).abs() > TimeDelta::milliseconds(MAX_TIME_DEVIATION_MS) {
+        if (now - timestamp).abs() >= self.period_duration {
             println!(
                 "INFO: Resetting input reference time. {} ",
                 (now - timestamp).abs().in_milliseconds()
@@ -253,31 +254,33 @@ const RETRY_PERIOD_SECS: i64 = 3;
 
 pub struct ResilientAlsaInput {
     device_name: String,
-    input: Option<AlsaInput>,
+    period_duration: TimeDelta,
+    input: Option<Box<AlsaInput>>,
     last_open_attempt: Time,
 }
 
 impl ResilientAlsaInput {
-    pub fn new(name: &str) -> ResilientAlsaInput {
-        let device = match AlsaInput::open(name, TARGET_SAMPLE_RATE, true) {
+    pub fn new(name: &str, period_duration: TimeDelta) -> Box<ResilientAlsaInput> {
+        let device = match AlsaInput::open(name, TARGET_SAMPLE_RATE, period_duration, true) {
             Ok(device) => Some(device),
             Err(e) => {
                 println!("warning: failed to open {}: {}", name, e);
                 None
             }
         };
-        ResilientAlsaInput {
+        Box::new(ResilientAlsaInput {
             device_name: String::from(name),
+            period_duration: period_duration,
             input: device,
             last_open_attempt: Time::now(),
-        }
+        })
     }
 
     fn try_reopen(&mut self) {
         let now = Time::now();
         if (now - self.last_open_attempt).in_seconds() >= RETRY_PERIOD_SECS {
             self.last_open_attempt = now;
-            match AlsaInput::open(&self.device_name, TARGET_SAMPLE_RATE, true) {
+            match AlsaInput::open(&self.device_name, TARGET_SAMPLE_RATE, self.period_duration, true) {
                 Ok(input) => self.input = Some(input),
                 Err(e) => println!("info: Failed to reopen {}", e),
             }
@@ -311,7 +314,7 @@ impl Input for ResilientAlsaInput {
             self.input = None;
         }
         if self.input.is_none() {
-            std::thread::sleep(TimeDelta::milliseconds(FRAME_SIZE_MS as i64).as_duration());
+            std::thread::sleep(self.period_duration.as_duration());
         }
 
         Ok(result)

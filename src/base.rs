@@ -9,7 +9,6 @@ use std::result;
 use time::{Time, TimeDelta};
 
 pub const CHANNELS: usize = 2;
-pub const FRAME_SIZE_MS: usize = 5;
 
 #[derive(Clone, Copy)]
 pub enum SampleFormat {
