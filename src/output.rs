@@ -1,7 +1,6 @@
 extern crate alsa;
 
 use base::*;
-use std;
 use std::collections::VecDeque;
 use std::ffi::CString;
 use std::sync::mpsc;
@@ -80,7 +79,6 @@ impl RateDetector {
 pub struct AlsaOutput {
     pcm: alsa::PCM,
     sample_rate: usize,
-    period_duration: TimeDelta,
     period_size: usize,
     format: SampleFormat,
     rate_detector: RateDetector,
@@ -177,7 +175,6 @@ impl AlsaOutput {
         Ok(AlsaOutput {
             pcm: pcm,
             sample_rate: sample_rate,
-            period_duration: period_duration,
             period_size: period_size,
             format: format,
             rate_detector: RateDetector::new(sample_rate as f64),
@@ -195,14 +192,6 @@ impl Output for AlsaOutput {
                 frame.sample_rate
             );
             return Ok(());
-        }
-
-        // Sleep if the frame is too far into the future.
-        let now = Time::now();
-        if frame.timestamp - now > self.period_duration * 6 {
-            std::thread::sleep(
-                (frame.timestamp - now - self.period_duration * 2).as_duration(),
-            );
         }
 
         let buf = frame.to_buffer(self.format);
