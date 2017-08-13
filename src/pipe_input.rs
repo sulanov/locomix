@@ -107,23 +107,28 @@ impl Input for PipeInput {
             }
         };
 
-        let mut timestamp = get_sample_timestamp(self.reference_time, SAMPLE_RATE, self.pos);
-        self.pos += (bytes_read / BYTES_PER_SAMPLE) as i64;
-
-        let now = Time::now();
-        if now - timestamp > TimeDelta::milliseconds(100) {
-            self.reference_time = now - self.period_duration;
-            self.pos = 0;
-            timestamp = self.reference_time;
-        }
-
-        std::thread::sleep((timestamp - now).as_duration());
-
-        Ok(Some(Frame::from_buffer(
+        let mut frame = Frame::from_buffer(
             FORMAT,
             SAMPLE_RATE,
             &buffer[0..bytes_read],
-            timestamp,
-        )))
+            get_sample_timestamp(self.reference_time, SAMPLE_RATE, self.pos),
+        );
+
+        self.pos += frame.len() as i64;
+
+        let now = Time::now();
+        if now - frame.timestamp > self.period_duration * 5 {
+            println!(
+                "Resetting pipe input, {}",
+                (now - frame.timestamp).in_milliseconds()
+            );
+            self.reference_time = now - self.period_duration;
+            self.pos = frame.len() as i64;
+            frame.timestamp = self.reference_time;
+        }
+
+        std::thread::sleep((frame.timestamp - now).as_duration());
+
+        Ok(Some(frame))
     }
 }

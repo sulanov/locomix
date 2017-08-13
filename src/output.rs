@@ -199,9 +199,9 @@ impl Output for AlsaOutput {
 
         // Sleep if the frame is too far into the future.
         let now = Time::now();
-        if frame.timestamp - now > self.period_duration * 5 {
+        if frame.timestamp - now > self.period_duration * 6 {
             std::thread::sleep(
-                (frame.timestamp - now - self.period_duration * 1).as_duration(),
+                (frame.timestamp - now - self.period_duration * 2).as_duration(),
             );
         }
 
@@ -216,6 +216,13 @@ impl Output for AlsaOutput {
                 Err(e) => {
                     println!("Recovering output {}", e);
                     try!(self.pcm.recover(e.code(), true));
+
+                    let zero_buf =
+                        vec![0u8; self.period_size * CHANNELS * self.format.bytes_per_sample()];
+                    try!(self.pcm.io().writei(&zero_buf[..]));
+                    try!(self.pcm.io().writei(&zero_buf[..]));
+                    try!(self.pcm.io().writei(&zero_buf[..]));
+
                     self.rate_detector.reset();
                 }
             }
@@ -377,7 +384,7 @@ impl Output for ResamplingOutput {
 
         match self.resampler.resample(&frame) {
             None => Ok(()),
-            Some(frame) => self.output.write(frame),
+            Some(aframe) => self.output.write(aframe),
         }
     }
 

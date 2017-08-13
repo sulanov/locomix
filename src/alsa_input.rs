@@ -231,7 +231,7 @@ impl Input for AlsaInput {
         self.pos += samples as i64;
 
         let now = Time::now();
-        if (now - timestamp).abs() >= self.period_duration {
+        if (now - timestamp).abs() >= self.period_duration * 2 {
             println!(
                 "INFO: Resetting input reference time. {} ",
                 (now - timestamp).abs().in_milliseconds()

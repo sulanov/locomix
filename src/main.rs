@@ -435,7 +435,7 @@ fn run() -> Result<()> {
 
     let period_duration = match matches.opt_str("P").map(|x| x.parse::<usize>()) {
         None => TimeDelta::milliseconds(5),
-        Some(Ok(d)) if d > 0 && d < 100 => TimeDelta::milliseconds(d as i64),
+        Some(Ok(d)) if d > 0 && d <= 100 => TimeDelta::milliseconds(d as i64),
         _ => return Err(Error::new("Cannot parse period-duration parameter.")),
     };
 
@@ -481,7 +481,8 @@ fn run() -> Result<()> {
     let dynamic_resampling = matches.opt_present("D");
 
     for o in matches.opt_strs("o") {
-        let out = output::ResilientAlsaOutput::new(&o, 0, period_duration);
+        let out =
+            output::AsyncOutput::new(output::ResilientAlsaOutput::new(&o, 0, period_duration));
         let resampled_out = if dynamic_resampling {
             output::FineResamplingOutput::new(out)
         } else {
