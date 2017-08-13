@@ -93,7 +93,9 @@ impl Resampler {
     }
 
     pub fn resample(&mut self, input: &[f32]) -> Vec<f32> {
-        let mut output = Vec::with_capacity((input.len() as f64 * self.o_freq / self.i_freq) as usize + 1);
+        let mut output = Vec::with_capacity(
+            (input.len() as f64 * self.o_freq / self.i_freq) as usize + 1,
+        );
 
         let mut o_pos = self.o_pos;
         let freq_ratio = self.i_freq / self.o_freq;
@@ -446,8 +448,10 @@ impl FineStreamResampler {
             input_sample_rate: 48000,
             output_sample_rate: output_sample_rate,
             reported_output_sample_rate: reported_output_sample_rate,
-            resamplers: [Resampler::new(48000.0, output_sample_rate, 50),
-                         Resampler::new(48000.0, output_sample_rate, 50)],
+            resamplers: [
+                Resampler::new(48000.0, output_sample_rate, 50),
+                Resampler::new(48000.0, output_sample_rate, 50),
+            ],
             input_reference_time: Time::now(),
             input_pos: 0,
             output_reference_time: Time::now(),
@@ -459,33 +463,39 @@ impl FineStreamResampler {
         self.output_sample_rate
     }
 
-    pub fn set_output_sample_rate(&mut self, output_sample_rate: f64,
-                                  reported_output_sample_rate: usize) {
-        self.output_reference_time =
-            base::get_sample_timestamp_f(self.output_reference_time,
-                                         self.output_sample_rate,
-                                         self.output_pos);
+    pub fn set_output_sample_rate(
+        &mut self,
+        output_sample_rate: f64,
+        reported_output_sample_rate: usize,
+    ) {
+        self.output_reference_time = base::get_sample_timestamp_f(
+            self.output_reference_time,
+            self.output_sample_rate,
+            self.output_pos,
+        );
         self.output_pos = 0;
         self.output_sample_rate = output_sample_rate;
         self.reported_output_sample_rate = reported_output_sample_rate;
-        self.resamplers[0].set_frequencies(self.input_sample_rate as f64,
-                                           self.output_sample_rate);
-        self.resamplers[1].set_frequencies(self.input_sample_rate as f64,
-                                           self.output_sample_rate);
+        self.resamplers[0].set_frequencies(self.input_sample_rate as f64, self.output_sample_rate);
+        self.resamplers[1].set_frequencies(self.input_sample_rate as f64, self.output_sample_rate);
 
     }
 
 
     pub fn resample(&mut self, frame: &base::Frame) -> Option<base::Frame> {
-        let expected_input_timestamp =
-            base::get_sample_timestamp(self.input_reference_time,
-                                       frame.sample_rate, self.input_pos);
+        let expected_input_timestamp = base::get_sample_timestamp(
+            self.input_reference_time,
+            frame.sample_rate,
+            self.input_pos,
+        );
         if self.input_sample_rate != frame.sample_rate ||
-           frame.timestamp != expected_input_timestamp {
+            frame.timestamp != expected_input_timestamp
+        {
             self.input_sample_rate = frame.sample_rate;
-            self.resamplers =
-                [Resampler::new(frame.sample_rate as f64, self.output_sample_rate as f64, 20),
-                 Resampler::new(frame.sample_rate as f64, self.output_sample_rate as f64, 20)];
+            self.resamplers = [
+                Resampler::new(frame.sample_rate as f64, self.output_sample_rate as f64, 20),
+                Resampler::new(frame.sample_rate as f64, self.output_sample_rate as f64, 20),
+            ];
 
             self.input_reference_time = frame.timestamp;
             self.output_reference_time = frame.timestamp;
@@ -495,9 +505,11 @@ impl FineStreamResampler {
 
         let result = base::Frame {
             sample_rate: self.reported_output_sample_rate,
-            timestamp: base::get_sample_timestamp_f(self.output_reference_time,
-                                                    self.output_sample_rate,
-                                                    self.output_pos),
+            timestamp: base::get_sample_timestamp_f(
+                self.output_reference_time,
+                self.output_sample_rate,
+                self.output_pos,
+            ),
             left: self.resamplers[0].resample(&frame.left),
             right: self.resamplers[1].resample(&frame.right),
         };
@@ -505,7 +517,11 @@ impl FineStreamResampler {
         self.input_pos += frame.len() as i64;
         self.output_pos += result.len() as i64;
 
-        if result.len() > 0 { Some(result) } else { None }
+        if result.len() > 0 {
+            Some(result)
+        } else {
+            None
+        }
     }
 }
 

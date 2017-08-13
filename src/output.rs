@@ -35,10 +35,10 @@ struct RateDetector {
 impl RateDetector {
     fn new(expected_rate: f64) -> RateDetector {
         return RateDetector {
-                   history: VecDeque::new(),
-                   sum: 0,
-                   expected_rate: expected_rate
-               };
+            history: VecDeque::new(),
+            sum: 0,
+            expected_rate: expected_rate,
+        };
     }
 
     fn reset(&mut self) {
@@ -49,9 +49,14 @@ impl RateDetector {
     fn update(&mut self, samples: usize, avail: usize) -> Option<f64> {
         let now = Time::now();
         self.sum += samples;
-        self.history.push_back(HistoryItem{time: now, size: samples, avail: avail});
+        self.history.push_back(HistoryItem {
+            time: now,
+            size: samples,
+            avail: avail,
+        });
         while self.history.len() > 0 &&
-              (now - self.history[0].time).in_seconds() >= RATE_DETECTION_PERIOD_MS as i64 {
+            (now - self.history[0].time).in_seconds() >= RATE_DETECTION_PERIOD_MS as i64
+        {
             self.sum -= self.history.pop_front().unwrap().size;
         }
 
@@ -83,7 +88,11 @@ pub struct AlsaOutput {
 }
 
 impl AlsaOutput {
-    pub fn open(name: &str, target_sample_rate: usize, period_duration: TimeDelta) -> Result<AlsaOutput> {
+    pub fn open(
+        name: &str,
+        target_sample_rate: usize,
+        period_duration: TimeDelta,
+    ) -> Result<AlsaOutput> {
         let pcm = try!(alsa::PCM::open(
             &*CString::new(name).unwrap(),
             alsa::Direction::Playback,
@@ -166,14 +175,14 @@ impl AlsaOutput {
         }
 
         Ok(AlsaOutput {
-           pcm: pcm,
-           sample_rate: sample_rate,
-           period_duration: period_duration,
-           period_size: period_size,
-           format: format,
-           rate_detector: RateDetector::new(sample_rate as f64),
-           measured_sample_rate: sample_rate as f64,
-       })
+            pcm: pcm,
+            sample_rate: sample_rate,
+            period_duration: period_duration,
+            period_size: period_size,
+            format: format,
+            rate_detector: RateDetector::new(sample_rate as f64),
+            measured_sample_rate: sample_rate as f64,
+        })
     }
 }
 
@@ -191,7 +200,9 @@ impl Output for AlsaOutput {
         // Sleep if the frame is too far into the future.
         let now = Time::now();
         if frame.timestamp - now > self.period_duration * 5 {
-            std::thread::sleep((frame.timestamp - now - self.period_duration * 1).as_duration());
+            std::thread::sleep(
+                (frame.timestamp - now - self.period_duration * 1).as_duration(),
+            );
         }
 
         let buf = frame.to_buffer(self.format);
@@ -210,7 +221,9 @@ impl Output for AlsaOutput {
             }
         }
 
-        match self.rate_detector.update(frame.len(), try!(self.pcm.avail()) as usize) {
+        match self.rate_detector
+            .update(frame.len(), try!(self.pcm.avail()) as usize)
+        {
             None => (),
             Some(rate) => self.measured_sample_rate = rate,
         }
@@ -225,7 +238,9 @@ impl Output for AlsaOutput {
     fn period_size(&self) -> usize {
         self.period_size
     }
-    fn measured_sample_rate(&self) -> f64 { self.measured_sample_rate }
+    fn measured_sample_rate(&self) -> f64 {
+        self.measured_sample_rate
+    }
 }
 
 const RETRY_PERIOD_SECS: i64 = 3;
@@ -252,7 +267,8 @@ impl ResilientAlsaOutput {
             }
             Err(e) => {
                 sample_rate = 48000;
-                period_size = (period_duration * sample_rate as i64 / TimeDelta::seconds(1)) as usize;
+                period_size =
+                    (period_duration * sample_rate as i64 / TimeDelta::seconds(1)) as usize;
                 println!("WARNING: failed to open {}: {}", name, e);
                 None
             }
@@ -272,7 +288,11 @@ impl ResilientAlsaOutput {
         let now = Time::now();
         if now - self.last_open_attempt >= TimeDelta::seconds(RETRY_PERIOD_SECS) {
             self.last_open_attempt = now;
-            match AlsaOutput::open(&self.device_name, self.target_sample_rate, self.period_duration) {
+            match AlsaOutput::open(
+                &self.device_name,
+                self.target_sample_rate,
+                self.period_duration,
+            ) {
                 Ok(output) => {
                     self.sample_rate = output.sample_rate();
                     self.period_size = output.period_size();
@@ -298,7 +318,7 @@ impl Output for ResilientAlsaOutput {
                     if out_rate != self.sample_rate {
                         self.sample_rate = out_rate;
                     }
-                },
+                }
                 Err(e) => {
                     println!("warning: write to {} failed: {}", self.device_name, e);
                     reset = true;
@@ -392,12 +412,14 @@ pub struct FineResamplingOutput {
 impl FineResamplingOutput {
     pub fn new(output: Box<Output>) -> Box<Output> {
         let resampler = resampler::FineStreamResampler::new(
-            output.measured_sample_rate(), output.sample_rate());
+            output.measured_sample_rate(),
+            output.sample_rate(),
+        );
         Box::new(FineResamplingOutput {
-                     output: output,
-                     resampler: resampler,
-                     last_rate_update: Time::now()
-                 })
+            output: output,
+            resampler: resampler,
+            last_rate_update: Time::now(),
+        })
     }
 }
 
@@ -412,9 +434,11 @@ impl Output for FineResamplingOutput {
         let current_rate = self.resampler.get_output_sample_rate();
         let new_rate = self.output.measured_sample_rate();
         if (current_rate - new_rate).abs() / current_rate > 0.05 ||
-           now - self.last_rate_update >= TimeDelta::milliseconds(RATE_UPDATE_PERIOD_MS) {
+            now - self.last_rate_update >= TimeDelta::milliseconds(RATE_UPDATE_PERIOD_MS)
+        {
             println!("Output rate: {}", new_rate);
-            self.resampler.set_output_sample_rate(new_rate, self.output.sample_rate());
+            self.resampler
+                .set_output_sample_rate(new_rate, self.output.sample_rate());
             self.last_rate_update = now;
         }
 
@@ -454,7 +478,7 @@ enum FeedbackMessage {
         sample_rate: usize,
         period_size: usize,
     },
-    MeasuredSampleRate(f64)
+    MeasuredSampleRate(f64),
 }
 
 pub struct AsyncOutput {
@@ -545,7 +569,7 @@ impl Output for AsyncOutput {
                 } => {
                     self.sample_rate = sample_rate;
                     self.period_size = period_size;
-                },
+                }
                 FeedbackMessage::MeasuredSampleRate(value) => {
                     self.measured_sample_rate = value;
                 }

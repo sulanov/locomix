@@ -111,7 +111,8 @@ impl AlsaInput {
                 }
             }
 
-            let target_period_size = period_duration * target_sample_rate as i64 / TimeDelta::seconds(1);
+            let target_period_size =
+                period_duration * target_sample_rate as i64 / TimeDelta::seconds(1);
             try!(hwp.set_period_size_near(
                 target_period_size as alsa::pcm::Frames,
                 alsa::ValueOr::Nearest
@@ -280,7 +281,12 @@ impl ResilientAlsaInput {
         let now = Time::now();
         if (now - self.last_open_attempt).in_seconds() >= RETRY_PERIOD_SECS {
             self.last_open_attempt = now;
-            match AlsaInput::open(&self.device_name, TARGET_SAMPLE_RATE, self.period_duration, true) {
+            match AlsaInput::open(
+                &self.device_name,
+                TARGET_SAMPLE_RATE,
+                self.period_duration,
+                true,
+            ) {
                 Ok(input) => self.input = Some(input),
                 Err(e) => println!("info: Failed to reopen {}", e),
             }

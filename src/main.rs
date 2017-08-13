@@ -221,8 +221,8 @@ fn run_loop(
     let mut exclusive_mux_mode = true;
 
     let period_size = (period_duration * sample_rate as i64 / TimeDelta::seconds(1)) as usize;
-    let mix_delay = period_duration * 4;
-    let target_output_delay = mix_delay + period_duration * 8;
+    let mix_delay = period_duration * 5;
+    let target_output_delay = mix_delay + period_duration * 7;
 
     loop {
         let frame_timestamp =
@@ -408,8 +408,11 @@ fn run() -> Result<()> {
         "Length for FIR filter (1000 by default)",
         "FILTER_LENGTH",
     );
-    opts.optflag("D", "dynamic-resampling",
-                 "Enable dynamic stream resampling to match sample rate.");
+    opts.optflag(
+        "D",
+        "dynamic-resampling",
+        "Enable dynamic stream resampling to match sample rate.",
+    );
     opts.optflag("g", "loudness-graph", "Print out loudness graph");
     opts.optflag("m", "impulse-response", "Measure impulse response");
     opts.optflag("h", "help", "Print this help menu");
@@ -567,7 +570,13 @@ fn run() -> Result<()> {
         })
         .collect();
 
-    run_loop(wrapped_inputs, outputs, sample_rate, period_duration, shared_state)
+    run_loop(
+        wrapped_inputs,
+        outputs,
+        sample_rate,
+        period_duration,
+        shared_state,
+    )
 }
 
 fn main() {
