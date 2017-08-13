@@ -184,6 +184,10 @@ impl output::Output for FilteredOutput {
     fn period_size(&self) -> usize {
         self.output.sample_rate()
     }
+
+    fn measured_sample_rate(&self) -> f64 {
+        self.output.measured_sample_rate()
+    }
 }
 
 
@@ -406,6 +410,8 @@ fn run() -> Result<()> {
         "Length for FIR filter (1000 by default)",
         "FILTER_LENGTH",
     );
+    opts.optflag("D", "dynamic-resampling",
+                 "Enable dynamic stream resampling to match sample rate.");
     opts.optflag("g", "loudness-graph", "Print out loudness graph");
     opts.optflag("m", "impulse-response", "Measure impulse response");
     opts.optflag("h", "help", "Print this help menu");
@@ -465,10 +471,16 @@ fn run() -> Result<()> {
     let mut outputs = Vec::<Box<output::Output>>::new();
     let mut output_states = Vec::<ui::OutputState>::new();
 
+    let dynamic_resampling = matches.opt_present("D");
+
     for o in matches.opt_strs("o") {
         let out = output::AsyncOutput::open(&o);
-        let resampled = output::AsyncOutput::new(output::ResamplingOutput::new(out));
-        outputs.push(resampled);
+        let resampled_out = if dynamic_resampling {
+            output::FineResamplingOutput::new(out)
+        } else {
+            output::ResamplingOutput::new(out)
+        };
+        outputs.push(output::AsyncOutput::new(resampled_out));
         output_states.push(ui::OutputState::new(&o));
     }
 

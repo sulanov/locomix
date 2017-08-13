@@ -48,6 +48,10 @@ impl TimeDelta {
         self.0 / NANOS_PER_SEC
     }
 
+    pub fn in_seconds_f(&self) -> f64 {
+        self.0 as f64 / NANOS_PER_SEC as f64
+    }
+
     pub fn in_milliseconds(&self) -> i64 {
         self.0 / NANOS_PER_MILLI
     }

@@ -150,6 +150,11 @@ pub fn convolve(v1: &[f32], v2: &[f32]) -> f32 {
         sum_8.extract(2) + sum_8.extract(3) + sum_end
 }
 
+pub fn get_sample_timestamp_f(start: Time, sample_rate: f64, sample: i64) -> Time {
+    start +
+    TimeDelta::nanoseconds(((1000_000_000 * sample) as f64 / sample_rate) as i64)
+}
+
 pub fn get_sample_timestamp(start: Time, sample_rate: usize, sample: i64) -> Time {
     start +
         (TimeDelta::seconds(1) * sample + TimeDelta::nanoseconds(sample_rate as i64 / 2)) /

@@ -34,14 +34,14 @@ impl QuadFunction {
 }
 
 pub struct Resampler {
-    i_freq: usize,
-    o_freq: usize,
+    i_freq: f64,
+    o_freq: f64,
     size: usize,
     queue: Vec<f32>,
     win: Vec<QuadFunction>,
 
-    i_pos: usize,
-    o_pos: usize,
+    i_pos: f64,
+    o_pos: f64,
 }
 
 fn sinc(x: f32) -> f32 {
@@ -59,7 +59,7 @@ fn sinc64(x: f64) -> f64 {
 }
 
 impl Resampler {
-    pub fn new(i_freq: usize, o_freq: usize, size: usize) -> Resampler {
+    pub fn new(i_freq: f64, o_freq: f64, size: usize) -> Resampler {
         Resampler {
             i_freq: i_freq,
             o_freq: o_freq,
@@ -79,18 +79,26 @@ impl Resampler {
                     )
                 })
                 .collect(),
-            i_pos: 0,
-            o_pos: 0,
+            i_pos: 0.0,
+            o_pos: 0.0,
         }
     }
 
+    pub fn set_frequencies(&mut self, i_freq: f64, o_freq: f64) {
+        self.i_pos *= i_freq / self.i_freq;
+        self.i_freq = i_freq;
+
+        self.o_pos *= o_freq / self.o_freq;
+        self.o_freq = o_freq;
+    }
+
     pub fn resample(&mut self, input: &[f32]) -> Vec<f32> {
-        let mut output = Vec::with_capacity((input.len() * self.o_freq / self.i_freq) as usize + 1);
+        let mut output = Vec::with_capacity((input.len() as f64 * self.o_freq / self.i_freq) as usize + 1);
 
         let mut o_pos = self.o_pos;
-        let freq_ratio = self.i_freq as f64 / self.o_freq as f64;
+        let freq_ratio = self.i_freq / self.o_freq;
         loop {
-            let o_pos_i_freq = (o_pos as f64 * freq_ratio - self.i_pos as f64) as f32;
+            let o_pos_i_freq = (o_pos * freq_ratio - self.i_pos) as f32;
             let i_mid = o_pos_i_freq.floor() as usize;
             let i_shift = o_pos_i_freq.fract();
             let i_shift_2 = i_shift * i_shift;
@@ -154,7 +162,7 @@ impl Resampler {
             };
 
             output.push(result);
-            o_pos += 1;
+            o_pos += 1.0;
         }
 
         let samples_to_keep = cmp::min(self.size * 2 + 1, self.queue.len() + input.len());
@@ -168,7 +176,7 @@ impl Resampler {
             self.queue.extend_from_slice(input);
         }
 
-        self.i_pos = self.i_pos + samples_to_remove;
+        self.i_pos = self.i_pos + samples_to_remove as f64;
         self.o_pos = o_pos;
         while self.i_pos > self.i_freq && self.o_pos > self.o_freq {
             self.i_pos -= self.i_freq;
@@ -418,6 +426,86 @@ impl StreamResampler {
         } else {
             None
         }
+    }
+}
+
+pub struct FineStreamResampler {
+    input_sample_rate: usize,
+    output_sample_rate: f64,
+    reported_output_sample_rate: usize,
+    resamplers: [Resampler; 2],
+    input_reference_time: Time,
+    input_pos: i64,
+    output_reference_time: Time,
+    output_pos: i64,
+}
+
+impl FineStreamResampler {
+    pub fn new(output_sample_rate: f64, reported_output_sample_rate: usize) -> FineStreamResampler {
+        FineStreamResampler {
+            input_sample_rate: 48000,
+            output_sample_rate: output_sample_rate,
+            reported_output_sample_rate: reported_output_sample_rate,
+            resamplers: [Resampler::new(48000.0, output_sample_rate, 20),
+                         Resampler::new(48000.0, output_sample_rate, 20)],
+            input_reference_time: Time::now(),
+            input_pos: 0,
+            output_reference_time: Time::now(),
+            output_pos: 0,
+        }
+    }
+
+    pub fn get_output_sample_rate(&self) -> f64 {
+        self.output_sample_rate
+    }
+
+    pub fn set_output_sample_rate(&mut self, output_sample_rate: f64,
+                                  reported_output_sample_rate: usize) {
+        self.output_reference_time =
+            base::get_sample_timestamp_f(self.output_reference_time,
+                                         self.output_sample_rate,
+                                         self.output_pos);
+        self.output_pos = 0;
+        self.output_sample_rate = output_sample_rate;
+        self.reported_output_sample_rate = reported_output_sample_rate;
+        self.resamplers[0].set_frequencies(self.input_sample_rate as f64,
+                                           self.output_sample_rate);
+        self.resamplers[1].set_frequencies(self.input_sample_rate as f64,
+                                           self.output_sample_rate);
+
+    }
+
+
+    pub fn resample(&mut self, frame: &base::Frame) -> Option<base::Frame> {
+        let expected_input_timestamp =
+            base::get_sample_timestamp(self.input_reference_time,
+                                       frame.sample_rate, self.input_pos);
+        if self.input_sample_rate != frame.sample_rate ||
+           frame.timestamp != expected_input_timestamp {
+            self.input_sample_rate = frame.sample_rate;
+            self.resamplers =
+                [Resampler::new(frame.sample_rate as f64, self.output_sample_rate as f64, 20),
+                 Resampler::new(frame.sample_rate as f64, self.output_sample_rate as f64, 20)];
+
+            self.input_reference_time = frame.timestamp;
+            self.output_reference_time = frame.timestamp;
+            self.input_pos = 0;
+            self.output_pos = 0;
+        }
+
+        let result = base::Frame {
+            sample_rate: self.reported_output_sample_rate,
+            timestamp: base::get_sample_timestamp_f(self.output_reference_time,
+                                                    self.output_sample_rate,
+                                                    self.output_pos),
+            left: self.resamplers[0].resample(&frame.left),
+            right: self.resamplers[1].resample(&frame.right),
+        };
+
+        self.input_pos += frame.len() as i64;
+        self.output_pos += result.len() as i64;
+
+        if result.len() > 0 { Some(result) } else { None }
     }
 }
 
