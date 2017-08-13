@@ -191,7 +191,7 @@ impl output::Output for FilteredOutput {
 }
 
 
-const MIX_DEADLINE_MS: i64 = 25;
+const MIX_DEADLINE_MS: i64 = 30;
 const TARGET_OUTPUT_DELAY_MS: i64 = 60;
 
 const OUTPUT_SHUTDOWN_SECONDS: i64 = 5;
@@ -556,7 +556,7 @@ fn run() -> Result<()> {
             &shared_state,
         ));
         outputs.insert(0, filtered_output);
-    } else {
+    } else if fir_filters.len() != 0 {
         return Err(Error::new("Expected 0 or 2 FIR filters"));
     }
 
