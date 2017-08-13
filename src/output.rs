@@ -490,10 +490,6 @@ pub struct AsyncOutput {
 }
 
 impl AsyncOutput {
-    pub fn open(name: &str, period_duration: TimeDelta) -> Box<Output> {
-        AsyncOutput::new(ResilientAlsaOutput::new(name, 0, period_duration))
-    }
-
     pub fn new(mut output: Box<Output>) -> Box<Output> {
         let (sender, receiver) = mpsc::channel();
         let (feedback_sender, feedback_receiver) = mpsc::channel();

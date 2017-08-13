@@ -481,7 +481,7 @@ fn run() -> Result<()> {
     let dynamic_resampling = matches.opt_present("D");
 
     for o in matches.opt_strs("o") {
-        let out = output::AsyncOutput::open(&o, period_duration);
+        let out = output::ResilientAlsaOutput::new(&o, 0, period_duration);
         let resampled_out = if dynamic_resampling {
             output::FineResamplingOutput::new(out)
         } else {
