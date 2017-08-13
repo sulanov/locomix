@@ -7,8 +7,6 @@ use base;
 use base::convolve;
 use time::Time;
 
-pub const RESAMPLE_WINDOW_SIZE: usize = 100;
-
 struct QuadFunction {
     a: f32,
     b: f32,
@@ -315,6 +313,7 @@ impl FastResampler {
 
 pub struct ResamplerFactory {
     table_cache: HashMap<ResamplerConfig, Arc<ResamplerTable>>,
+    window_size: usize,
 }
 
 fn get_greatest_common_divisor(mut a: usize, mut b: usize) -> usize {
@@ -328,9 +327,10 @@ fn get_greatest_common_divisor(mut a: usize, mut b: usize) -> usize {
 }
 
 impl ResamplerFactory {
-    pub fn new() -> ResamplerFactory {
+    pub fn new(window_size: usize) -> ResamplerFactory {
         ResamplerFactory {
             table_cache: HashMap::new(),
+            window_size: window_size,
         }
     }
 
@@ -342,7 +342,7 @@ impl ResamplerFactory {
         let config = ResamplerConfig {
             freq_num: freq_num,
             freq_denom: freq_denom,
-            size: RESAMPLE_WINDOW_SIZE,
+            size: self.window_size,
         };
 
         let table = self.table_cache
@@ -365,11 +365,11 @@ pub struct StreamResampler {
 }
 
 impl StreamResampler {
-    pub fn new(output_sample_rate: usize) -> StreamResampler {
+    pub fn new(output_sample_rate: usize, window_size: usize) -> StreamResampler {
         StreamResampler {
             input_sample_rate: 0,
             output_sample_rate: output_sample_rate,
-            resampler_factory: ResamplerFactory::new(),
+            resampler_factory: ResamplerFactory::new(window_size),
             resamplers: None,
             reference_time: Time::now(),
             input_pos: 0,
@@ -391,7 +391,7 @@ impl StreamResampler {
         if self.input_sample_rate != frame.sample_rate ||
             base::get_sample_from_timestamp(
                 self.reference_time,
-                frame.sample_rate,
+                self.input_sample_rate,
                 frame.timestamp,
             ) != self.input_pos
         {
@@ -410,7 +410,6 @@ impl StreamResampler {
                     .create_resampler(frame.sample_rate, self.output_sample_rate),
             ]);
         }
-
 
         let result = base::Frame {
             sample_rate: self.output_sample_rate,
@@ -446,14 +445,14 @@ pub struct FineStreamResampler {
 }
 
 impl FineStreamResampler {
-    pub fn new(output_sample_rate: f64, reported_output_sample_rate: usize) -> FineStreamResampler {
+    pub fn new(output_sample_rate: f64, reported_output_sample_rate: usize, window_size: usize) -> FineStreamResampler {
         FineStreamResampler {
             input_sample_rate: 48000,
             output_sample_rate: output_sample_rate,
             reported_output_sample_rate: reported_output_sample_rate,
             resamplers: [
-                Resampler::new(48000.0, output_sample_rate, 50),
-                Resampler::new(48000.0, output_sample_rate, 50),
+                Resampler::new(48000.0, output_sample_rate, window_size),
+                Resampler::new(48000.0, output_sample_rate, window_size),
             ],
             input_reference_time: Time::now(),
             input_pos: 0,
@@ -492,7 +491,6 @@ impl FineStreamResampler {
                 frame.timestamp,
             ) != self.input_pos
         {
-
             self.input_sample_rate = frame.sample_rate;
             self.resamplers = [
                 Resampler::new(frame.sample_rate as f64, self.output_sample_rate as f64, 20),

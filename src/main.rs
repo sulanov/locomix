@@ -197,6 +197,7 @@ fn run_loop(
     mut outputs: Vec<Box<output::Output>>,
     sample_rate: usize,
     period_duration: TimeDelta,
+    resampler_window: usize,
     shared_state: ui::SharedState,
 ) -> Result<()> {
     let ui_channel = shared_state.lock().add_observer();
@@ -221,8 +222,9 @@ fn run_loop(
     let mut exclusive_mux_mode = true;
 
     let period_size = (period_duration * sample_rate as i64 / TimeDelta::seconds(1)) as usize;
-    let mix_delay = period_duration * 5;
-    let target_output_delay = mix_delay + period_duration * 7;
+    let resampler_delay = TimeDelta::seconds(1) * resampler_window as i64 / sample_rate as i64;
+    let mix_delay = period_duration * 3 + resampler_delay;
+    let target_output_delay = mix_delay + period_duration * 5 + resampler_delay;
 
     loop {
         let frame_timestamp =
@@ -391,6 +393,7 @@ fn run() -> Result<()> {
     opts.optmulti("p", "input-pipe", "Input pipe name", "PIPE");
     opts.optmulti("o", "output", "Output device name", "OUTPUT");
     opts.optopt("r", "sample-rate", "Output sample rate", "RATE");
+    opts.optopt("R", "resampler-window", "Resampler window size", "WINDOW_SIZE");
     opts.optopt("P", "period-duration", "Output sample rate", "RATE");
     opts.optopt("w", "web-address", "Address:port for web UI", "ADDRESS");
     opts.optopt(
@@ -431,6 +434,12 @@ fn run() -> Result<()> {
         None => 48000,
         Some(Ok(rate)) => rate,
         Some(Err(_)) => return Err(Error::new("Cannot parse sample-rate parameter.")),
+    };
+
+    let resampler_window = match matches.opt_str("R").map(|x| x.parse::<usize>()) {
+        None => 100,
+        Some(Ok(window)) if window > 0 && window <= 1000 => window,
+        _ => return Err(Error::new("Cannot parse resampler-window parameter.")),
     };
 
     let period_duration = match matches.opt_str("P").map(|x| x.parse::<usize>()) {
@@ -484,9 +493,9 @@ fn run() -> Result<()> {
         let out =
             output::AsyncOutput::new(output::ResilientAlsaOutput::new(&o, 0, period_duration));
         let resampled_out = if dynamic_resampling {
-            output::FineResamplingOutput::new(out)
+            output::FineResamplingOutput::new(out, resampler_window)
         } else {
-            output::ResamplingOutput::new(out)
+            output::ResamplingOutput::new(out, resampler_window)
         };
         outputs.push(output::AsyncOutput::new(resampled_out));
         output_states.push(ui::OutputState::new(&o));
@@ -567,7 +576,7 @@ fn run() -> Result<()> {
     let wrapped_inputs = inputs
         .drain(..)
         .map(|input| {
-            async_input::AsyncInput::new(Box::new(input::InputResampler::new(input, sample_rate)))
+            async_input::AsyncInput::new(Box::new(input::InputResampler::new(input, sample_rate, resampler_window)))
         })
         .collect();
 
@@ -576,6 +585,7 @@ fn run() -> Result<()> {
         outputs,
         sample_rate,
         period_duration,
+        resampler_window,
         shared_state,
     )
 }

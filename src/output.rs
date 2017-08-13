@@ -362,8 +362,8 @@ pub struct ResamplingOutput {
 }
 
 impl ResamplingOutput {
-    pub fn new(output: Box<Output>) -> Box<Output> {
-        let resampler = resampler::StreamResampler::new(output.sample_rate());
+    pub fn new(output: Box<Output>, window_size: usize) -> Box<Output> {
+        let resampler = resampler::StreamResampler::new(output.sample_rate(), window_size);
         Box::new(ResamplingOutput {
             output: output,
             resampler: resampler,
@@ -384,7 +384,7 @@ impl Output for ResamplingOutput {
 
         match self.resampler.resample(&frame) {
             None => Ok(()),
-            Some(aframe) => self.output.write(aframe),
+            Some(frame) => self.output.write(frame),
         }
     }
 
@@ -417,10 +417,11 @@ pub struct FineResamplingOutput {
 }
 
 impl FineResamplingOutput {
-    pub fn new(output: Box<Output>) -> Box<Output> {
+    pub fn new(output: Box<Output>, window_size: usize) -> Box<Output> {
         let resampler = resampler::FineStreamResampler::new(
             output.measured_sample_rate(),
             output.sample_rate(),
+            window_size,
         );
         Box::new(FineResamplingOutput {
             output: output,

@@ -172,11 +172,13 @@ pub struct Frame {
 
 impl Frame {
     pub fn new(sample_rate: usize, timestamp: Time, samples: usize) -> Frame {
+        // Avoid denormal zero.
+        let zero = 1e-10f32;
         Frame {
             sample_rate: sample_rate,
             timestamp: timestamp,
-            left: vec![0f32; samples],
-            right: vec![0f32; samples],
+            left: vec![zero; samples],
+            right: vec![zero; samples],
         }
     }
 

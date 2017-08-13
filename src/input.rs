@@ -11,10 +11,10 @@ pub struct InputResampler {
 }
 
 impl InputResampler {
-    pub fn new(input: Box<Input>, sample_rate: usize) -> InputResampler {
+    pub fn new(input: Box<Input>, sample_rate: usize, window_size: usize) -> InputResampler {
         InputResampler {
             input: input,
-            resampler: StreamResampler::new(sample_rate),
+            resampler: StreamResampler::new(sample_rate, window_size),
         }
     }
 }
