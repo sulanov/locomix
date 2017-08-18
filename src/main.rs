@@ -345,7 +345,7 @@ fn print_usage(program: &str, opts: Options) {
 }
 
 fn get_impulse_response(
-    output: &mut Box<output::Output>,
+    output: &mut output::Output,
     input: &mut AsyncInput,
 ) -> Result<Vec<f32>> {
     let frame_duration = TimeDelta::milliseconds(10);
@@ -483,6 +483,35 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
+    if matches.opt_present("m") {
+        let mut output = try!(output::AlsaOutput::open(
+            &matches.opt_strs("o")[0],
+            sample_rate,
+            period_duration
+        ));
+
+        let mut input = async_input::AsyncInput::new(try!(alsa_input::AlsaInput::open(
+            &matches.opt_strs("i")[0],
+            192000,
+            period_duration,
+            false
+        )));
+
+        let r = try!(get_impulse_response(&mut output, &mut input));
+        let mut s = 0;
+        for i in 100..r.len() {
+            if r[i].abs() > 0.02 {
+                s = i - 100;
+                break;
+            }
+        }
+
+        for i in s..r.len() {
+            println!("{} {}", i, r[i]);
+        }
+        return Ok(());
+    }
+
     let mut outputs = Vec::<Box<output::Output>>::new();
     let mut output_states = Vec::<ui::OutputState>::new();
 
@@ -498,28 +527,6 @@ fn run() -> Result<()> {
         };
         outputs.push(output::AsyncOutput::new(resampled_out));
         output_states.push(ui::OutputState::new(&o));
-    }
-
-    if matches.opt_present("m") {
-        let mut input = async_input::AsyncInput::new(try!(alsa_input::AlsaInput::open(
-            &matches.opt_strs("i")[0],
-            192000,
-            period_duration,
-            false
-        )));
-        let r = try!(get_impulse_response(&mut outputs[0], &mut input));
-        let mut s = 0;
-        for i in 100..r.len() {
-            if r[i].abs() > 0.02 {
-                s = i - 100;
-                break;
-            }
-        }
-
-        for i in s..r.len() {
-            println!("{} {}", i, r[i]);
-        }
-        return Ok(());
     }
 
     for p in matches.opt_strs("p") {

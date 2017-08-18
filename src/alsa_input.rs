@@ -98,6 +98,11 @@ impl AlsaInput {
             let hwp = try!(alsa::pcm::HwParams::any(&pcm));
             try!(hwp.set_channels(2));
 
+            try!(hwp.set_rate(
+                target_sample_rate as u32,
+                alsa::ValueOr::Nearest
+            ));
+
             for fmt in [
                 alsa::pcm::Format::S32LE,
                 alsa::pcm::Format::S243LE,
@@ -119,13 +124,8 @@ impl AlsaInput {
             ));
             try!(hwp.set_periods(10, alsa::ValueOr::Nearest));
             try!(hwp.set_rate_resample(false));
-            try!(hwp.set_rate(
-                target_sample_rate as u32,
-                alsa::ValueOr::Nearest
-            ));
             try!(hwp.set_access(alsa::pcm::Access::RWInterleaved));
             try!(pcm.hw_params(&hwp));
-
 
             sample_rate = try!(hwp.get_rate()) as usize;
             period_size = try!(hwp.get_period_size()) as usize;
