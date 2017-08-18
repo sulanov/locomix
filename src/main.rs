@@ -389,12 +389,11 @@ fn run() -> Result<()> {
 
     let mut opts = Options::new();
     opts.optmulti("i", "input", "Audio input device name", "INPUT");
-    opts.optmulti("f", "input-file", "Input file name", "FILE");
     opts.optmulti("p", "input-pipe", "Input pipe name", "PIPE");
     opts.optmulti("o", "output", "Output device name", "OUTPUT");
-    opts.optopt("r", "sample-rate", "Output sample rate", "RATE");
+    opts.optopt("r", "sample-rate", "Internal sample rate", "RATE");
     opts.optopt("R", "resampler-window", "Resampler window size", "WINDOW_SIZE");
-    opts.optopt("P", "period-duration", "Output sample rate", "RATE");
+    opts.optopt("P", "period-duration", "Period duration, ms", "RATE");
     opts.optopt("w", "web-address", "Address:port for web UI", "ADDRESS");
     opts.optopt(
         "s",
