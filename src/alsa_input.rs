@@ -62,6 +62,7 @@ enum State {
 }
 
 pub struct AlsaInput {
+    spec: DeviceSpec,
     pcm: alsa::PCM,
     sample_rate: usize,
     period_duration: TimeDelta,
@@ -78,28 +79,23 @@ const SILENCE_PERIOD_SECONDS: usize = 5;
 
 impl AlsaInput {
     pub fn open(
-        name: &str,
-        target_sample_rate: usize,
+        spec: DeviceSpec,
         period_duration: TimeDelta,
-        auto_sample_rate: bool,
+        detect_rate: bool,
     ) -> Result<Box<AlsaInput>> {
         let pcm = try!(alsa::PCM::open(
-            &*CString::new(name).unwrap(),
+            &*CString::new(&spec.id[..]).unwrap(),
             alsa::Direction::Capture,
             false
         ));
 
-        let sample_rate;
+        let mut sample_rate = spec.sample_rate.unwrap_or(48000);
         let period_size;
         let format;
         {
             let hwp = try!(alsa::pcm::HwParams::any(&pcm));
-            try!(hwp.set_channels(2));
-
-            try!(hwp.set_rate(
-                target_sample_rate as u32,
-                alsa::ValueOr::Nearest
-            ));
+            try!(hwp.set_channels(CHANNELS as u32));
+            try!(hwp.set_rate(sample_rate as u32, alsa::ValueOr::Nearest));
 
             for fmt in [
                 alsa::pcm::Format::S32LE,
@@ -114,8 +110,7 @@ impl AlsaInput {
                 }
             }
 
-            let target_period_size =
-                period_duration * target_sample_rate as i64 / TimeDelta::seconds(1);
+            let target_period_size = period_duration * sample_rate as i64 / TimeDelta::seconds(1);
             try!(hwp.set_period_size_near(
                 target_period_size as alsa::pcm::Frames,
                 alsa::ValueOr::Nearest
@@ -136,8 +131,9 @@ impl AlsaInput {
             };
 
             println!(
-                "INFO: Reading {}. Buffer size: {}x{}. {} {}",
-                name,
+                "INFO: Reading {} ({}). Buffer size: {}x{}. {} {}",
+                spec.id,
+                &spec.name,
                 period_size,
                 try!(hwp.get_periods()),
                 sample_rate,
@@ -146,12 +142,13 @@ impl AlsaInput {
         }
 
         Ok(Box::new(AlsaInput {
+            spec: spec,
             pcm: pcm,
             sample_rate: sample_rate,
             period_duration: period_duration,
             format: format,
             period_size: period_size,
-            rate_detector: if auto_sample_rate {
+            rate_detector: if detect_rate {
                 Some(RateDetector::new())
             } else {
                 None
@@ -174,7 +171,7 @@ impl Input for AlsaInput {
                 if e.code() == -libc::EWOULDBLOCK {
                     return Ok(None);
                 }
-                println!("Recovering AlsaInput {}", e.code());
+                println!("Recovering AlsaInput {}: {}", &self.spec.name, e.code());
                 match self.pcm.recover(e.code(), true) {
                     Ok(_) => return self.read(),
                     Err(_) => return Err(Error::new(error::Error::description(&e))),
@@ -187,7 +184,11 @@ impl Input for AlsaInput {
         if self.rate_detector.is_some() {
             match self.rate_detector.as_mut().unwrap().update(samples) {
                 Some(rate) => if rate != self.sample_rate {
-                    println!("INFO: rate changed {}", rate);
+                    println!(
+                        "INFO: rate changed for input device {}: {}",
+                        &self.spec.name,
+                        rate
+                    );
                     self.sample_rate = rate;
                 },
                 None => (),
@@ -230,7 +231,8 @@ impl Input for AlsaInput {
         let now = Time::now();
         if (now - timestamp).abs() >= self.period_duration * 2 {
             println!(
-                "INFO: Resetting input reference time. {} ",
+                "INFO: Resetting input reference time for {}, Time difference: {}ms ",
+                &self.spec.name,
                 (now - timestamp).abs().in_milliseconds()
             );
             self.reference_time = now;
@@ -253,7 +255,7 @@ const RETRY_PERIOD_MS: i64 = 3000;
 const PROBE_TIME_MS: i64 = 500;
 
 pub struct ResilientAlsaInput {
-    device_name: String,
+    spec: DeviceSpec,
     period_duration: TimeDelta,
     input: Option<Box<AlsaInput>>,
     last_open_attempt: Time,
@@ -262,9 +264,9 @@ pub struct ResilientAlsaInput {
 }
 
 impl ResilientAlsaInput {
-    pub fn new(name: &str, period_duration: TimeDelta) -> Box<ResilientAlsaInput> {
+    pub fn new(spec: DeviceSpec, period_duration: TimeDelta) -> Box<ResilientAlsaInput> {
         Box::new(ResilientAlsaInput {
-            device_name: String::from(name),
+            spec: spec,
             period_duration: period_duration,
             input: None,
             last_open_attempt: Time::now(),
@@ -277,20 +279,19 @@ impl ResilientAlsaInput {
         let now = Time::now();
         if now - self.last_open_attempt >= TimeDelta::milliseconds(RETRY_PERIOD_MS) {
             self.last_open_attempt = now;
-            match AlsaInput::open(
-                &self.device_name,
-                TARGET_SAMPLE_RATES[self.next_sample_rate_to_probe],
-                self.period_duration,
-                true,
-            ) {
+            let mut spec = self.spec.clone();
+            if spec.sample_rate.is_none() {
+                spec.sample_rate = Some(TARGET_SAMPLE_RATES[self.next_sample_rate_to_probe]);
+                self.next_sample_rate_to_probe =
+                    (self.next_sample_rate_to_probe + 1) % TARGET_SAMPLE_RATES.len();
+            }
+            match AlsaInput::open(spec, self.period_duration, true) {
                 Ok(input) => {
                     self.input = Some(input);
                     self.last_active = now;
                 }
                 Err(_) => (),
             };
-            self.next_sample_rate_to_probe =
-                (self.next_sample_rate_to_probe + 1) % TARGET_SAMPLE_RATES.len();
         }
     }
 }
@@ -314,11 +315,7 @@ impl Input for ResilientAlsaInput {
                     None
                 }
                 Err(e) => {
-                    println!(
-                        "warning: input read from {} failed: {}",
-                        self.device_name,
-                        e
-                    );
+                    println!("WARNING: input read from {} failed: {}", &self.spec.name, e);
                     reset = true;
                     None
                 }

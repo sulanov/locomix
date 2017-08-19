@@ -487,14 +487,12 @@ fn run() -> Result<()> {
 
     if matches.opt_present("m") {
         let mut output = try!(output::AlsaOutput::open(
-            &matches.opt_strs("o")[0],
-            sample_rate,
+            try!(DeviceSpec::parse(&matches.opt_strs("o")[0])),
             period_duration
         ));
 
         let mut input = async_input::AsyncInput::new(try!(alsa_input::AlsaInput::open(
-            &matches.opt_strs("i")[0],
-            192000,
+            try!(DeviceSpec::parse(&matches.opt_strs("i")[0])),
             period_duration,
             false
         )));
@@ -520,15 +518,16 @@ fn run() -> Result<()> {
     let dynamic_resampling = matches.opt_present("D");
 
     for o in matches.opt_strs("o") {
-        let out =
-            output::AsyncOutput::new(output::ResilientAlsaOutput::new(&o, 0, period_duration));
+        let spec = try!(DeviceSpec::parse(&o));
+        let state = ui::OutputState::new(&spec.name);
+        let out = output::AsyncOutput::new(output::ResilientAlsaOutput::new(spec, period_duration));
         let resampled_out = if dynamic_resampling {
             output::FineResamplingOutput::new(out, resampler_window)
         } else {
             output::ResamplingOutput::new(out, resampler_window)
         };
         outputs.push(output::AsyncOutput::new(resampled_out));
-        output_states.push(ui::OutputState::new(&o));
+        output_states.push(state);
     }
 
     for p in matches.opt_strs("p") {
@@ -537,8 +536,9 @@ fn run() -> Result<()> {
     }
 
     for i in matches.opt_strs("i") {
-        inputs.push(alsa_input::ResilientAlsaInput::new(&i, period_duration));
-        input_states.push(ui::InputState::new(&i));
+        let spec = try!(DeviceSpec::parse(&i));
+        input_states.push(ui::InputState::new(&spec.name));
+        inputs.push(alsa_input::ResilientAlsaInput::new(spec, period_duration));
     }
 
     if inputs.is_empty() {

@@ -298,6 +298,42 @@ impl From<io::Error> for Error {
     }
 }
 
+#[derive(Clone, Eq, PartialEq)]
+pub struct DeviceSpec {
+    pub name: String,
+    pub id: String,
+    pub sample_rate: Option<usize>,
+}
+
+impl DeviceSpec {
+    pub fn parse(spec_str: &str) -> Result<DeviceSpec> {
+        let (name_id, rate) = match spec_str.rfind("#") {
+            Some(p) => {
+                let rate = match spec_str[p + 1..].parse::<usize>() {
+                    Ok(r) if r > 0 && r < 200000 => r,
+                    _ => {
+                        return Err(Error::new(
+                            &format!("Failed to parse sample rate: {}", spec_str),
+                        ))
+                    }
+                };
+                (&spec_str[..p], Some(rate))
+            }
+            None => (&spec_str[..], None),
+        };
+
+        let (name, id) = match name_id.find("@") {
+            Some(p) => (&name_id[..p], &name_id[p + 1..]),
+            None => (&name_id[..], &name_id[..]),
+        };
+
+        Ok(DeviceSpec {
+            name: name.to_string(),
+            id: id.to_string(),
+            sample_rate: rate,
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {

@@ -86,13 +86,9 @@ pub struct AlsaOutput {
 }
 
 impl AlsaOutput {
-    pub fn open(
-        name: &str,
-        target_sample_rate: usize,
-        period_duration: TimeDelta,
-    ) -> Result<AlsaOutput> {
+    pub fn open(spec: DeviceSpec, period_duration: TimeDelta) -> Result<AlsaOutput> {
         let pcm = try!(alsa::PCM::open(
-            &*CString::new(name).unwrap(),
+            &*CString::new(&spec.id[..]).unwrap(),
             alsa::Direction::Playback,
             false
         ));
@@ -120,30 +116,32 @@ impl AlsaOutput {
                 }
             }
 
-            if target_sample_rate > 0 {
-                try!(hwp.set_rate(
-                    target_sample_rate as u32,
-                    alsa::ValueOr::Nearest
-                ));
-                sample_rate = target_sample_rate;
-            } else {
-                let mut selected: usize = 0;
-                for rate in [192000, 96000, 88200, 48000, 44100].iter() {
-                    match hwp.set_rate(*rate as u32, alsa::ValueOr::Nearest) {
-                        Ok(_) => {
-                            selected = *rate;
-                            break;
+            sample_rate = match spec.sample_rate {
+                Some(rate) => {
+                    try!(hwp.set_rate(rate as u32, alsa::ValueOr::Nearest));
+                    rate
+                }
+                None => {
+                    let mut selected: usize = 0;
+                    for rate in [192000, 96000, 88200, 48000, 44100].iter() {
+                        match hwp.set_rate(*rate as u32, alsa::ValueOr::Nearest) {
+                            Ok(_) => {
+                                selected = *rate;
+                                break;
+                            }
+                            Err(_) => (),
                         }
-                        Err(_) => (),
                     }
+                    if selected == 0 {
+                        return Err(Error::new(&format!(
+                            "Can't find appropriate sample rate for {} ({})",
+                            &spec.name,
+                            &spec.id
+                        )));
+                    }
+                    selected
                 }
-                if selected == 0 {
-                    return Err(Error::new(
-                        &format!("Can't find appropriate sample rate for {}", name),
-                    ));
-                }
-                sample_rate = selected;
-            }
+            };
 
             let target_period_size = period_duration * sample_rate as i64 / TimeDelta::seconds(1);
             try!(hwp.set_period_size_near(
@@ -163,8 +161,9 @@ impl AlsaOutput {
             };
 
             println!(
-                "INFO: Opened {}. Buffer size: {}x{}. {} {}.",
-                name,
+                "INFO: Opened {} ({}). Buffer size: {}x{}. {} {}.",
+                spec.name,
+                spec.id,
                 period_size,
                 try!(hwp.get_periods()),
                 sample_rate,
@@ -242,9 +241,8 @@ impl Output for AlsaOutput {
 const RETRY_PERIOD_SECS: i64 = 3;
 
 pub struct ResilientAlsaOutput {
-    device_name: String,
+    spec: DeviceSpec,
     output: Option<AlsaOutput>,
-    target_sample_rate: usize,
     period_duration: TimeDelta,
     last_open_attempt: Time,
     sample_rate: usize,
@@ -252,27 +250,26 @@ pub struct ResilientAlsaOutput {
 }
 
 impl ResilientAlsaOutput {
-    pub fn new(name: &str, target_sample_rate: usize, period_duration: TimeDelta) -> Box<Output> {
+    pub fn new(spec: DeviceSpec, period_duration: TimeDelta) -> Box<Output> {
         let sample_rate;
         let period_size;
-        let device = match AlsaOutput::open(name, target_sample_rate, period_duration) {
+        let device = match AlsaOutput::open(spec.clone(), period_duration) {
             Ok(device) => {
                 sample_rate = device.sample_rate();
                 period_size = device.period_size();
                 Some(device)
             }
             Err(e) => {
-                sample_rate = 48000;
+                sample_rate = spec.sample_rate.unwrap_or(48000);
                 period_size =
                     (period_duration * sample_rate as i64 / TimeDelta::seconds(1)) as usize;
-                println!("WARNING: failed to open {}: {}", name, e);
+                println!("WARNING: failed to open {} ({}): {}", spec.name, spec.id, e);
                 None
             }
         };
         Box::new(ResilientAlsaOutput {
-            device_name: String::from(name),
+            spec: spec,
             output: device,
-            target_sample_rate: target_sample_rate,
             period_duration: period_duration,
             last_open_attempt: Time::now(),
             sample_rate: sample_rate,
@@ -284,17 +281,17 @@ impl ResilientAlsaOutput {
         let now = Time::now();
         if now - self.last_open_attempt >= TimeDelta::seconds(RETRY_PERIOD_SECS) {
             self.last_open_attempt = now;
-            match AlsaOutput::open(
-                &self.device_name,
-                self.target_sample_rate,
-                self.period_duration,
-            ) {
+            match AlsaOutput::open(self.spec.clone(), self.period_duration) {
                 Ok(output) => {
                     self.sample_rate = output.sample_rate();
                     self.period_size = output.period_size();
                     self.output = Some(output);
                 }
-                Err(e) => println!("INFO: Failed to reopen {}", e),
+                Err(_) => println!(
+                    "INFO: Failed to reopen {} ({})",
+                    &self.spec.name,
+                    self.spec.id
+                ),
             }
         }
     }
@@ -315,8 +312,12 @@ impl Output for ResilientAlsaOutput {
                         self.sample_rate = out_rate;
                     }
                 }
-                Err(e) => {
-                    println!("warning: write to {} failed: {}", self.device_name, e);
+                Err(_) => {
+                    println!(
+                        "WARNING: Write to {} ({}) failed",
+                        &self.spec.name,
+                        &self.spec.id
+                    );
                     reset = true;
                 }
             }
