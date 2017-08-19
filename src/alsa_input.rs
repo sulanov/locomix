@@ -73,10 +73,8 @@ pub struct AlsaInput {
     pos: i64,
 }
 
-const TARGET_SAMPLE_RATE: usize = 48000;
-
-// Deactivate input after 30 seconds of silence.
-const SILENCE_PERIOD_SECONDS: usize = 30;
+// Deactivate input after 5 seconds of silence.
+const SILENCE_PERIOD_SECONDS: usize = 5;
 
 impl AlsaInput {
     pub fn open(
@@ -192,15 +190,14 @@ impl Input for AlsaInput {
                     println!("INFO: rate changed {}", rate);
                     self.sample_rate = rate;
                 },
-                None => {
-                    // Drop all data if we don't know sample rate.
-                    return Ok(None);
-                }
+                None => (),
             }
         }
 
+        let bytes = samples * CHANNELS * self.format.bytes_per_sample();
+
         let mut all_zeros = true;
-        for i in 0..(samples * 2) {
+        for i in 0..bytes {
             if buf[i] != 0 {
                 all_zeros = false;
                 break;
@@ -241,7 +238,6 @@ impl Input for AlsaInput {
             self.pos = 0;
         }
 
-        let bytes = samples * CHANNELS * self.format.bytes_per_sample();
         Ok(Some(Frame::from_buffer(
             self.format,
             self.sample_rate,
@@ -251,45 +247,50 @@ impl Input for AlsaInput {
     }
 }
 
-const RETRY_PERIOD_SECS: i64 = 3;
+const TARGET_SAMPLE_RATES: [usize; 2] = [44100, 48000];
+
+const RETRY_PERIOD_MS: i64 = 3000;
+const PROBE_TIME_MS: i64 = 500;
 
 pub struct ResilientAlsaInput {
     device_name: String,
     period_duration: TimeDelta,
     input: Option<Box<AlsaInput>>,
     last_open_attempt: Time,
+    last_active: Time,
+    next_sample_rate_to_probe: usize,
 }
 
 impl ResilientAlsaInput {
     pub fn new(name: &str, period_duration: TimeDelta) -> Box<ResilientAlsaInput> {
-        let device = match AlsaInput::open(name, TARGET_SAMPLE_RATE, period_duration, true) {
-            Ok(device) => Some(device),
-            Err(e) => {
-                println!("warning: failed to open {}: {}", name, e);
-                None
-            }
-        };
         Box::new(ResilientAlsaInput {
             device_name: String::from(name),
             period_duration: period_duration,
-            input: device,
+            input: None,
             last_open_attempt: Time::now(),
+            last_active: Time::now(),
+            next_sample_rate_to_probe: 0,
         })
     }
 
     fn try_reopen(&mut self) {
         let now = Time::now();
-        if (now - self.last_open_attempt).in_seconds() >= RETRY_PERIOD_SECS {
+        if now - self.last_open_attempt >= TimeDelta::milliseconds(RETRY_PERIOD_MS) {
             self.last_open_attempt = now;
             match AlsaInput::open(
                 &self.device_name,
-                TARGET_SAMPLE_RATE,
+                TARGET_SAMPLE_RATES[self.next_sample_rate_to_probe],
                 self.period_duration,
                 true,
             ) {
-                Ok(input) => self.input = Some(input),
-                Err(e) => println!("info: Failed to reopen {}", e),
-            }
+                Ok(input) => {
+                    self.input = Some(input);
+                    self.last_active = now;
+                }
+                Err(_) => (),
+            };
+            self.next_sample_rate_to_probe =
+                (self.next_sample_rate_to_probe + 1) % TARGET_SAMPLE_RATES.len();
         }
     }
 }
@@ -302,8 +303,16 @@ impl Input for ResilientAlsaInput {
         let mut reset = false;
         let result = match self.input.as_mut() {
             Some(input) => match input.read() {
-                Ok(Some(frame)) => Some(frame),
-                Ok(None) => None,
+                Ok(Some(frame)) => {
+                    self.last_active = Time::now();
+                    Some(frame)
+                }
+                Ok(None) => {
+                    if Time::now() - self.last_active > TimeDelta::milliseconds(PROBE_TIME_MS) {
+                        reset = true;
+                    }
+                    None
+                }
                 Err(e) => {
                     println!(
                         "warning: input read from {} failed: {}",
