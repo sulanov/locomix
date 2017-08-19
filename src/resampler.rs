@@ -445,7 +445,11 @@ pub struct FineStreamResampler {
 }
 
 impl FineStreamResampler {
-    pub fn new(output_sample_rate: f64, reported_output_sample_rate: usize, window_size: usize) -> FineStreamResampler {
+    pub fn new(
+        output_sample_rate: f64,
+        reported_output_sample_rate: usize,
+        window_size: usize,
+    ) -> FineStreamResampler {
         FineStreamResampler {
             input_sample_rate: 48000,
             output_sample_rate: output_sample_rate,

@@ -33,7 +33,7 @@ impl RateDetector {
         self.sum += samples;
         self.history.push_back((now, samples));
         while self.history.len() > 0 &&
-            (now - self.history[0].0).in_seconds() >= RATE_DETECTION_PERIOD_MS as i64
+            now - self.history[0].0 >= TimeDelta::milliseconds(RATE_DETECTION_PERIOD_MS)
         {
             self.sum -= self.history.pop_front().unwrap().1;
         }

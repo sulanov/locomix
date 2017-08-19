@@ -224,7 +224,7 @@ fn run_loop(
     let period_size = (period_duration * sample_rate as i64 / TimeDelta::seconds(1)) as usize;
     let resampler_delay = TimeDelta::seconds(1) * resampler_window as i64 / sample_rate as i64;
     let mix_delay = period_duration * 3 + resampler_delay;
-    let target_output_delay = mix_delay + period_duration * 5 + resampler_delay;
+    let target_output_delay = mix_delay + period_duration * 6 + resampler_delay;
 
     loop {
         let frame_timestamp =
@@ -393,7 +393,12 @@ fn run() -> Result<()> {
     opts.optmulti("p", "input-pipe", "Input pipe name", "PIPE");
     opts.optmulti("o", "output", "Output device name", "OUTPUT");
     opts.optopt("r", "sample-rate", "Output sample rate", "RATE");
-    opts.optopt("R", "resampler-window", "Resampler window size", "WINDOW_SIZE");
+    opts.optopt(
+        "R",
+        "resampler-window",
+        "Resampler window size",
+        "WINDOW_SIZE",
+    );
     opts.optopt("P", "period-duration", "Output sample rate", "RATE");
     opts.optopt("w", "web-address", "Address:port for web UI", "ADDRESS");
     opts.optopt(
@@ -576,7 +581,11 @@ fn run() -> Result<()> {
     let wrapped_inputs = inputs
         .drain(..)
         .map(|input| {
-            async_input::AsyncInput::new(Box::new(input::InputResampler::new(input, sample_rate, resampler_window)))
+            async_input::AsyncInput::new(Box::new(input::InputResampler::new(
+                input,
+                sample_rate,
+                resampler_window,
+            )))
         })
         .collect();
 
