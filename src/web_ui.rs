@@ -149,6 +149,23 @@ fn serve_web(address: &str, shared_state: SharedState) {
 
                 Response::json(&EmptyResponse{})
             },
+            (GET) (/status) => {
+                let temp_str = match load_file("/sys/class/thermal/thermal_zone0/temp") {
+                    Ok(s) => s,
+                    Err(error) => {
+                        println!("Failed to get temp: {}", error);
+                        return Response::text("Internal Server Error").with_status_code(500)
+                    }
+                };
+                let temp = match temp_str.trim().parse::<usize>() {
+                    Ok(temp) => temp,
+                    Err(error) => {
+                        println!("Failed to parse temp: {}", error);
+                        return Response::text("Internal Server Error").with_status_code(500)
+                    }
+                };
+                Response::html(format!("<html><body>CPU temperature: <b>{:.1}</b>°C</body></html>", temp as f32 / 1000.0))
+            },
             _ => Response::empty_404()
         )
     });
