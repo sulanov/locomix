@@ -164,7 +164,15 @@ fn serve_web(address: &str, shared_state: SharedState) {
                         return Response::text("Internal Server Error").with_status_code(500)
                     }
                 };
-                Response::html(format!("<html><body>CPU temperature: <b>{:.1}</b>°C</body></html>", temp as f32 / 1000.0))
+                Response::html(format!(r#"
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</meta>
+<body>
+CPU temperature: <b>{:.1}</b>°C
+</body>
+</html>"#, temp as f32 / 1000.0))
             },
             _ => Response::empty_404()
         )
