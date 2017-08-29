@@ -115,7 +115,7 @@ impl AlsaInput {
                 target_period_size as alsa::pcm::Frames,
                 alsa::ValueOr::Nearest
             ));
-            try!(hwp.set_periods(10, alsa::ValueOr::Nearest));
+            try!(hwp.set_periods(8, alsa::ValueOr::Nearest));
             try!(hwp.set_rate_resample(false));
             try!(hwp.set_access(alsa::pcm::Access::RWInterleaved));
             try!(pcm.hw_params(&hwp));

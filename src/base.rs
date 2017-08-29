@@ -109,44 +109,35 @@ fn read_sample_s32le(buf: &[u8], pos: usize) -> f32 {
 pub fn convolve(v1: &[f32], v2: &[f32]) -> f32 {
     assert!(v1.len() == v2.len());
 
-    let mut sum_0 = f32x4::splat(0.0);
-    let mut sum_4 = f32x4::splat(0.0);
-    let mut sum_8 = f32x4::splat(0.0);
+    let mut sum1 = f32x4::splat(0.0);
+    let mut sum2 = f32x4::splat(0.0);
 
-    let mut i = 0;
-    while i + 12 <= v1.len() {
-        let v1_0 = f32x4::load(v1, i);
-        let v1_4 = f32x4::load(v1, i + 4);
-        let v1_8 = f32x4::load(v1, i + 8);
+    for i in 0..(v1.len() / 8) {
+        let v1_0 = f32x4::load(v1, i * 8);
+        let v1_4 = f32x4::load(v1, i * 8 + 4);
 
-        let v2_0 = f32x4::load(v2, i);
-        let v2_4 = f32x4::load(v2, i + 4);
-        let v2_8 = f32x4::load(v2, i + 8);
+        let v2_0 = f32x4::load(v2, i * 8);
+        let v2_4 = f32x4::load(v2, i * 8 + 4);
 
-        sum_0 = sum_0 + v1_0 * v2_0;
-        sum_4 = sum_4 + v1_4 * v2_4;
-        sum_8 = sum_8 + v1_8 * v2_8;
-
-        i += 12;
+        sum1 = sum1 + v1_0 * v2_0;
+        sum2 = sum2 + v1_4 * v2_4;
     }
 
-    while i + 4 <= v1.len() {
-        let r1a = f32x4::load(v1, i);
-        let r2a = f32x4::load(v2, i);
-        sum_0 = sum_0 + r1a * r2a;
-        i += 4;
+    let mut pos = (v1.len() / 8) * 8;
+    while pos + 4 <= v1.len() {
+        sum1 = sum1 + f32x4::load(v1, pos) * f32x4::load(v2, pos);
+        pos += 4;
     }
 
     let mut sum_end = 0.0;
-    while i < v1.len() {
-        sum_end += v1[i] * v2[i];
-        i += 1;
+    while pos < v1.len() {
+        sum_end += v1[pos] * v2[pos];
+        pos += 1;
     }
 
-    sum_0.extract(0) + sum_0.extract(1) + sum_0.extract(2) + sum_0.extract(3) +
-        sum_4.extract(0) + sum_4.extract(1) + sum_4.extract(2) + sum_4.extract(3) +
-        sum_8.extract(0) + sum_8.extract(1) +
-        sum_8.extract(2) + sum_8.extract(3) + sum_end
+    sum1.extract(0) + sum1.extract(1) + sum1.extract(2) + sum1.extract(3) +
+    sum2.extract(0) + sum2.extract(1) + sum2.extract(2) + sum2.extract(3) +
+    sum_end
 }
 
 pub fn get_sample_timestamp_f(start: Time, sample_rate: f64, sample: i64) -> Time {
