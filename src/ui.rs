@@ -93,8 +93,8 @@ impl CrossfeedConfig {
     pub fn default() -> CrossfeedConfig {
         CrossfeedConfig {
             enabled: false,
-            level: 0.5,
-            delay_ms: 0.5,
+            level: 0.3,
+            delay_ms: 0.2,
         }
     }
 

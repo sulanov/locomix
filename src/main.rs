@@ -217,7 +217,7 @@ fn run_loop(
     let mut loudness_filter =
         StereoFilter::<LoudnessFilter>::new(SimpleFilterParams::new(sample_rate, 10.0));
     let mut voice_boost_filter: Option<StereoFilter<VoiceBoostFilter>> = None;
-    let mut crossfeed_filter = CrossfeedFilter::new();
+    let mut crossfeed_filter = CrossfeedFilter::new(sample_rate);
 
     let mut exclusive_mux_mode = true;
 
@@ -417,7 +417,7 @@ fn run() -> Result<()> {
         "dynamic-resampling",
         "Enable dynamic stream resampling to match sample rate.",
     );
-    opts.optflag("g", "loudness-graph", "Print out loudness graph");
+    opts.optflag("g", "frequency-response", "Print out frequency response for all filters");
     opts.optflag("m", "impulse-response", "Measure impulse response");
     opts.optflag("h", "help", "Print this help menu");
 
@@ -462,20 +462,24 @@ fn run() -> Result<()> {
     }
 
     if matches.opt_present("g") {
-        print!("Loudness filter");
+        println!("Crossfeed filter");
+        filters::draw_crossfeed_graph(sample_rate);
+
+
+        println!("Loudness filter");
         filters::draw_filter_graph::<LoudnessFilter>(
             sample_rate,
             SimpleFilterParams::new(sample_rate, 10.0),
         );
 
-        print!("Voice Boost filter");
+        println!("Voice Boost filter");
         filters::draw_filter_graph::<VoiceBoostFilter>(
             sample_rate,
             SimpleFilterParams::new(sample_rate, 10.0),
         );
 
         for i in 0..fir_filters.len() {
-            print!("FIR filter {}", i);
+            println!("FIR filter {}", i);
             filters::draw_filter_graph::<FirFilter>(
                 sample_rate,
                 filters::reduce_fir(fir_filters[i].clone(), filter_length),

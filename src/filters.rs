@@ -8,6 +8,7 @@ use std::mem;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
+use time;
 
 type FCoef = f32;
 
@@ -86,6 +87,34 @@ impl BiquadParams {
             (a + 1.0) - (a - 1.0) * w0_cos + alpha_a,
             2.0 * ((a - 1.0) - (a + 1.0) * w0_cos),
             (a + 1.0) - (a - 1.0) * w0_cos - alpha_a,
+        )
+    }
+
+    pub fn low_pass_filter(sample_rate: FCoef, f0: FCoef, slope: FCoef) -> BiquadParams {
+        let w0 = 2.0 * PI * f0 / sample_rate;
+        let w0_cos = w0.cos();
+        let alpha = w0.sin() / (2.0 * slope);
+        BiquadParams::new(
+            (1.0 - w0_cos) / 2.0,
+            1.0 - w0_cos,
+            (1.0 - w0_cos) / 2.0,
+            1.0 + alpha,
+            -2.0 * w0_cos,
+            1.0 - alpha,
+        )
+    }
+
+    pub fn high_pass_filter(sample_rate: FCoef, f0: FCoef, slope: FCoef) -> BiquadParams {
+        let w0 = 2.0 * PI * f0 / sample_rate;
+        let w0_cos = w0.cos();
+        let alpha = w0.sin() / (2.0 * slope);
+        BiquadParams::new(
+            (1.0 + w0_cos) / 2.0,
+            -1.0 - w0_cos,
+            (1.0 + w0_cos) / 2.0,
+            1.0 + alpha,
+            -2.0 * w0_cos,
+            1.0 - alpha,
         )
     }
 }
@@ -444,14 +473,32 @@ pub struct CrossfeedFilter {
     level: f32,
     delay_ms: f32,
     previous: Option<Frame>,
+    left_cross_filter: BiquadFilter,
+    left_straigh_filter: BiquadFilter,
+    right_cross_filter: BiquadFilter,
+    right_straight_filter: BiquadFilter,
+}
+
+pub struct CrossFeedParams {
+    level: f32,
+    delay_ms: f32,
+    frequency: f32,
 }
 
 impl CrossfeedFilter {
-    pub fn new() -> CrossfeedFilter {
+    pub fn new(sample_rate: usize) -> CrossfeedFilter {
         CrossfeedFilter {
             level: 0.0,
-            delay_ms: 0.5,
+            delay_ms: 0.3,
             previous: None,
+            left_straigh_filter: BiquadFilter::new(BiquadParams::low_shelf_filter(
+                sample_rate as FCoef, 200.0, 1.1, -2.5)),
+            left_cross_filter: BiquadFilter::new(BiquadParams::low_pass_filter(
+                sample_rate as FCoef, 400.0, 0.8)),
+            right_straight_filter: BiquadFilter::new(BiquadParams::low_shelf_filter(
+                sample_rate as FCoef, 200.0, 1.1, -2.5)),
+            right_cross_filter: BiquadFilter::new(BiquadParams::low_pass_filter(
+                sample_rate as FCoef, 400.0, 0.8)),
         }
     }
 
@@ -465,8 +512,6 @@ impl CrossfeedFilter {
             return frame;
         }
         let mut out = Frame::new(frame.sample_rate, frame.timestamp, frame.len());
-        let b = self.level * 0.5;
-        let a = 1.0 - b;
 
         let delay = (self.delay_ms * frame.sample_rate as f32 / 1000.0) as usize;
         assert!(delay < out.len());
@@ -475,19 +520,19 @@ impl CrossfeedFilter {
             Some(ref p) => {
                 let s = p.len() - delay;
                 for i in 0..delay {
-                    out.left[i] = frame.left[i] * a + p.right[s + i] * b;
-                    out.right[i] = frame.right[i] * a + p.left[s + i] * b;
+                    out.left[i] = self.left_straigh_filter.apply_one(frame.left[i]) + self.left_cross_filter.apply_one(p.right[s + i]) * self.level;
+                    out.right[i] = self.right_straight_filter.apply_one(frame.right[i]) + self.right_cross_filter.apply_one(p.left[s + i]) * self.level;
                 }
             }
             None => for i in 0..delay {
-                out.left[i] = frame.left[i] * a;
-                out.right[i] = frame.right[i] * a;
+                out.left[i] = frame.left[i];
+                out.right[i] = frame.right[i];
             },
         }
 
         for i in delay..out.len() {
-            out.left[i] = frame.left[i] * a + frame.right[i - delay] * b;
-            out.right[i] = frame.right[i] * a + frame.left[i - delay] * b;
+            out.left[i] = self.left_straigh_filter.apply_one(frame.left[i]) + self.left_cross_filter.apply_one(frame.right[i - delay]) * self.level;
+            out.right[i] = self.right_straight_filter.apply_one(frame.right[i]) + self.right_cross_filter.apply_one(frame.left[i - delay]) * self.level;
         }
 
         self.previous = Some(frame);
@@ -509,13 +554,41 @@ fn get_filter_response<T: AudioFilter<T>>(p: T::Params, sample_rate: FCoef, freq
         p_sum += (test_signal[i] as FCoef).powi(2);
     }
 
-    ((p_sum / (test_signal.len() as FCoef)) * (2 as FCoef)).log(10.0) * 10.0
+    ((p_sum / (test_signal.len() as FCoef)) * 2.0).log(10.0) * 10.0
 }
 
 pub fn draw_filter_graph<T: AudioFilter<T>>(sample_rate: usize, params: T::Params) {
     let mut freq: FCoef = 20.0;
     for _ in 0..82 {
         let response = get_filter_response::<T>(params.clone(), sample_rate as FCoef, freq);
+        println!("{} {}", freq as usize, response);
+        freq = freq * (2.0 as FCoef).powf(0.125);
+    }
+}
+
+
+fn get_crossfeed_response(sample_rate: FCoef, freq: FCoef) -> FCoef {
+    let mut f = CrossfeedFilter::new(sample_rate as usize);
+    f.set_params(0.3, 0.3);
+    let mut test_signal = Frame::new(sample_rate as usize, time::Time::now(), (sample_rate as usize) * 2);
+    for i in 0..test_signal.len() {
+        test_signal.left[i] = (i as FCoef / sample_rate * freq * 2.0 * PI).sin() as f32;
+        test_signal.right[i] = (i as FCoef / sample_rate * freq * 2.0 * PI).sin() as f32;
+    }
+    let response = f.apply(test_signal);
+
+    let mut p_sum = 0.0;
+    for i in 0..response.len() {
+        p_sum += (response.left[i] as FCoef).powi(2);
+    }
+
+    ((p_sum / (response.len() as FCoef)) * 2.0).log(10.0) * 10.0
+}
+
+pub fn draw_crossfeed_graph(sample_rate: usize) {
+    let mut freq: FCoef = 20.0;
+    for _ in 0..82 {
+        let response = get_crossfeed_response(sample_rate as FCoef, freq);
         println!("{} {}", freq as usize, response);
         freq = freq * (2 as FCoef).powf(0.125);
     }
