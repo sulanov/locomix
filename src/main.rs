@@ -36,23 +36,19 @@ impl From<getopts::Fail> for Error {
 
 struct InputMixer {
     input: AsyncInput,
-    current_frame: Option<Frame>,
+    current_frame: Frame,
+    current_frame_pos: usize,
     volume: ui::Gain,
     gain: ui::Gain,
     multiplier: f32,
-}
-
-enum MixResult {
-    Again { new_pos: usize },
-    FrameInFuture,
-    Done,
 }
 
 impl InputMixer {
     fn new(input: AsyncInput) -> InputMixer {
         let mut r = InputMixer {
             input: input,
-            current_frame: None,
+            current_frame: Frame::new(1, Time::zero(), 0),
+            current_frame_pos: 0,
             volume: ui::Gain { db: -20.0 },
             gain: ui::Gain { db: 0.0 },
             multiplier: 1.0,
@@ -75,61 +71,27 @@ impl InputMixer {
         self.multiplier = 10f32.powf((self.volume.db + self.gain.db) / 20.0);
     }
 
-    fn mix(&self, mixed_frame: &mut Frame, frame: &Frame) -> MixResult {
-        if frame.timestamp >= mixed_frame.end_timestamp() {
-            // Current frame is in the future.
-            return MixResult::FrameInFuture;
-        }
-
-        if mixed_frame.timestamp >= frame.end_timestamp() {
-            // Current frame is in the past.
-            return MixResult::Again { new_pos: 0 };
-        }
-
-        let start_time = std::cmp::max(frame.timestamp, mixed_frame.timestamp);
-        let end_time = std::cmp::min(frame.end_timestamp(), mixed_frame.end_timestamp());
-        assert!(start_time < end_time);
-
-        let mut pos = frame.position_at(start_time);
-        let end = mixed_frame.position_at(end_time);
-
-        for i in mixed_frame.position_at(start_time)..end {
-            mixed_frame.left[i] += self.multiplier * frame.left[pos];
-            mixed_frame.right[i] += self.multiplier * frame.right[pos];
-            pos += 1;
-        }
-
-        if end == mixed_frame.len() {
-            MixResult::Done
-        } else {
-            MixResult::Again { new_pos: end }
-        }
-    }
-
     fn mix_into(&mut self, mixed_frame: &mut Frame, deadline: Time) -> Result<bool> {
         let mut pos = 0;
         while pos < mixed_frame.len() {
-            if self.current_frame.is_none() {
-                self.current_frame = try!(self.input.read(deadline - Time::now()));
-            }
-
-            let mix_result = match self.current_frame {
-                None => return Ok(pos > 0),
-                Some(ref frame) => self.mix(mixed_frame, frame),
-            };
-
-            match mix_result {
-                MixResult::Again { new_pos } => {
-                    pos = new_pos;
-                    self.current_frame = None;
-                }
-                MixResult::FrameInFuture => {
-                    return Ok(pos > 0);
-                }
-                MixResult::Done => {
-                    return Ok(true);
+            if self.current_frame_pos >= self.current_frame.len() {
+                match try!(self.input.read(deadline - Time::now())) {
+                    None => return Ok(pos > 0),
+                    Some(frame) => {
+                        // If the frame is too old then drop it.
+                        if frame.timestamp < mixed_frame.timestamp {
+                          continue;
+                        }
+                        self.current_frame = frame;
+                        self.current_frame_pos = 0;
+                    }
                 }
             }
+
+            mixed_frame.left[pos] += self.multiplier * self.current_frame.left[self.current_frame_pos];
+            mixed_frame.right[pos] += self.multiplier * self.current_frame.right[self.current_frame_pos];
+            self.current_frame_pos += 1;
+            pos += 1;
         }
 
         Ok(true)
@@ -211,9 +173,6 @@ fn run_loop(
     let mut state = ui::StreamState::Active;
     let mut selected_output = 0;
 
-    let mut stream_start_time = Time::now();
-    let mut stream_pos: i64 = 0;
-
     let mut loudness_filter =
         StereoFilter::<LoudnessFilter>::new(SimpleFilterParams::new(sample_rate, 10.0));
     let mut voice_boost_filter: Option<StereoFilter<VoiceBoostFilter>> = None;
@@ -225,6 +184,9 @@ fn run_loop(
     let resampler_delay = TimeDelta::seconds(1) * resampler_window as i64 / sample_rate as i64;
     let mix_delay = period_duration * 3 + resampler_delay;
     let target_output_delay = mix_delay + period_duration * 6 + resampler_delay;
+
+    let mut stream_start_time = Time::now() - mix_delay;
+    let mut stream_pos: i64 = 0;
 
     loop {
         let frame_timestamp =
@@ -289,7 +251,7 @@ fn run_loop(
             try!(outputs[selected_output].write(frame));
         } else {
             std::thread::sleep(TimeDelta::milliseconds(500).as_duration());
-            stream_start_time = Time::now();
+            stream_start_time = Time::now() - mix_delay;
             stream_pos = 0;
         }
 

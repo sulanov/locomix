@@ -153,6 +153,10 @@ impl PartialOrd for TimeDelta {
 pub struct Time(i64);
 
 impl Time {
+    pub fn zero() -> Time {
+        Time(0)
+    }
+
     pub fn now() -> Time {
         let mut ts = libc::timespec {
             tv_sec: 0,

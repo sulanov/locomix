@@ -65,13 +65,10 @@ pub struct AlsaInput {
     spec: DeviceSpec,
     pcm: alsa::PCM,
     sample_rate: usize,
-    period_duration: TimeDelta,
     format: SampleFormat,
     period_size: usize,
     rate_detector: Option<RateDetector>,
     state: State,
-    reference_time: Time,
-    pos: i64,
 }
 
 // Deactivate input after 5 seconds of silence.
@@ -145,7 +142,6 @@ impl AlsaInput {
             spec: spec,
             pcm: pcm,
             sample_rate: sample_rate,
-            period_duration: period_duration,
             format: format,
             period_size: period_size,
             rate_detector: if detect_rate {
@@ -154,8 +150,6 @@ impl AlsaInput {
                 None
             },
             state: State::Inactive,
-            reference_time: Time::now(),
-            pos: 0,
         }))
     }
 }
@@ -225,26 +219,11 @@ impl Input for AlsaInput {
             _ => (),
         }
 
-        let mut timestamp = get_sample_timestamp(self.reference_time, self.sample_rate, self.pos);
-        self.pos += samples as i64;
-
-        let now = Time::now();
-        if (now - timestamp).abs() >= self.period_duration * 2 {
-            println!(
-                "INFO: Resetting input reference time for {}, Time difference: {}ms ",
-                &self.spec.name,
-                (now - timestamp).abs().in_milliseconds()
-            );
-            self.reference_time = now;
-            timestamp = now;
-            self.pos = 0;
-        }
-
         Ok(Some(Frame::from_buffer(
             self.format,
             self.sample_rate,
             &buf[0..bytes],
-            timestamp,
+            Time::now(),
         )))
     }
 }

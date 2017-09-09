@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use base;
 use base::convolve;
-use time::Time;
+use time::TimeDelta;
 
 struct QuadFunction {
     a: f32,
@@ -359,9 +359,7 @@ pub struct StreamResampler {
     output_sample_rate: usize,
     resampler_factory: ResamplerFactory,
     resamplers: Option<[FastResampler; 2]>,
-    reference_time: Time,
-    input_pos: i64,
-    output_pos: i64,
+    window_size: usize,
 }
 
 impl StreamResampler {
@@ -371,9 +369,7 @@ impl StreamResampler {
             output_sample_rate: output_sample_rate,
             resampler_factory: ResamplerFactory::new(window_size),
             resamplers: None,
-            reference_time: Time::now(),
-            input_pos: 0,
-            output_pos: 0,
+            window_size: window_size,
         }
     }
 
@@ -388,18 +384,9 @@ impl StreamResampler {
 
 
     pub fn resample(&mut self, frame: &base::Frame) -> Option<base::Frame> {
-        if self.input_sample_rate != frame.sample_rate ||
-            base::get_sample_from_timestamp(
-                self.reference_time,
-                self.input_sample_rate,
-                frame.timestamp,
-            ) != self.input_pos
-        {
+        if self.input_sample_rate != frame.sample_rate {
             self.resamplers = None;
             self.input_sample_rate = frame.sample_rate;
-            self.reference_time = frame.timestamp;
-            self.input_pos = 0;
-            self.output_pos = 0;
         }
 
         if self.resamplers.is_none() {
@@ -411,19 +398,14 @@ impl StreamResampler {
             ]);
         }
 
+        let delay = (TimeDelta::seconds(1) * self.window_size as i64) / self.input_sample_rate as i64;
+
         let result = base::Frame {
             sample_rate: self.output_sample_rate,
-            timestamp: base::get_sample_timestamp(
-                self.reference_time,
-                self.output_sample_rate,
-                self.output_pos,
-            ),
+            timestamp: frame.timestamp - delay,
             left: self.resamplers.as_mut().unwrap()[0].resample(&frame.left),
             right: self.resamplers.as_mut().unwrap()[1].resample(&frame.right),
         };
-
-        self.input_pos += frame.len() as i64;
-        self.output_pos += result.len() as i64;
 
         if result.len() > 0 {
             Some(result)
@@ -438,10 +420,7 @@ pub struct FineStreamResampler {
     output_sample_rate: f64,
     reported_output_sample_rate: usize,
     resamplers: [Resampler; 2],
-    input_reference_time: Time,
-    input_pos: i64,
-    output_reference_time: Time,
-    output_pos: i64,
+    window_size: usize,
 }
 
 impl FineStreamResampler {
@@ -458,10 +437,7 @@ impl FineStreamResampler {
                 Resampler::new(48000.0, output_sample_rate, window_size),
                 Resampler::new(48000.0, output_sample_rate, window_size),
             ],
-            input_reference_time: Time::now(),
-            input_pos: 0,
-            output_reference_time: Time::now(),
-            output_pos: 0,
+            window_size: window_size,
         }
     }
 
@@ -474,12 +450,6 @@ impl FineStreamResampler {
         output_sample_rate: f64,
         reported_output_sample_rate: usize,
     ) {
-        self.output_reference_time = base::get_sample_timestamp_f(
-            self.output_reference_time,
-            self.output_sample_rate,
-            self.output_pos,
-        );
-        self.output_pos = 0;
         self.output_sample_rate = output_sample_rate;
         self.reported_output_sample_rate = reported_output_sample_rate;
         self.resamplers[0].set_frequencies(self.input_sample_rate as f64, self.output_sample_rate);
@@ -488,38 +458,22 @@ impl FineStreamResampler {
 
 
     pub fn resample(&mut self, frame: &base::Frame) -> Option<base::Frame> {
-        if self.input_sample_rate != frame.sample_rate ||
-            base::get_sample_from_timestamp(
-                self.input_reference_time,
-                frame.sample_rate,
-                frame.timestamp,
-            ) != self.input_pos
-        {
+        if self.input_sample_rate != frame.sample_rate {
             self.input_sample_rate = frame.sample_rate;
             self.resamplers = [
                 Resampler::new(frame.sample_rate as f64, self.output_sample_rate as f64, 20),
                 Resampler::new(frame.sample_rate as f64, self.output_sample_rate as f64, 20),
             ];
-
-            self.input_reference_time = frame.timestamp;
-            self.output_reference_time = frame.timestamp;
-            self.input_pos = 0;
-            self.output_pos = 0;
         }
+
+        let delay = (TimeDelta::seconds(1) * self.window_size as i64) / self.input_sample_rate as i64;
 
         let result = base::Frame {
             sample_rate: self.reported_output_sample_rate,
-            timestamp: base::get_sample_timestamp_f(
-                self.output_reference_time,
-                self.output_sample_rate,
-                self.output_pos,
-            ),
+            timestamp: frame.timestamp - delay,
             left: self.resamplers[0].resample(&frame.left),
             right: self.resamplers[1].resample(&frame.right),
         };
-
-        self.input_pos += frame.len() as i64;
-        self.output_pos += result.len() as i64;
 
         if result.len() > 0 {
             Some(result)

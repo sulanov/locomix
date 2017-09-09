@@ -140,18 +140,10 @@ pub fn convolve(v1: &[f32], v2: &[f32]) -> f32 {
     sum_end
 }
 
-pub fn get_sample_timestamp_f(start: Time, sample_rate: f64, sample: i64) -> Time {
-    start + TimeDelta::nanoseconds(((1000_000_000 * sample) as f64 / sample_rate) as i64)
-}
-
 pub fn get_sample_timestamp(start: Time, sample_rate: usize, sample: i64) -> Time {
     start +
         (TimeDelta::seconds(1) * sample + TimeDelta::nanoseconds(sample_rate as i64 / 2)) /
             sample_rate as i64
-}
-
-pub fn get_sample_from_timestamp(start: Time, sample_rate: usize, time: Time) -> i64 {
-    ((time - start) * sample_rate as i64 + (TimeDelta::seconds(1) / 2)) / TimeDelta::seconds(1)
 }
 
 pub struct Frame {
@@ -178,16 +170,8 @@ impl Frame {
         self.left.len()
     }
 
-    pub fn get_sample_timestamp(&self, sample: usize) -> Time {
-        get_sample_timestamp(self.timestamp, self.sample_rate, sample as i64)
-    }
-
-    pub fn position_at(&self, time: Time) -> usize {
-        get_sample_from_timestamp(self.timestamp, self.sample_rate, time) as usize
-    }
-
     pub fn end_timestamp(&self) -> Time {
-        self.get_sample_timestamp(self.len())
+        get_sample_timestamp(self.timestamp, self.sample_rate, self.len() as i64)
     }
 
     pub fn to_buffer(&self, format: SampleFormat) -> Vec<u8> {
