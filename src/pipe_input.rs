@@ -1,5 +1,4 @@
 extern crate nix;
-extern crate libc;
 
 use std;
 use std::fs::File;

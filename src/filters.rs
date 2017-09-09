@@ -103,20 +103,6 @@ impl BiquadParams {
             1.0 - alpha,
         )
     }
-
-    pub fn high_pass_filter(sample_rate: FCoef, f0: FCoef, slope: FCoef) -> BiquadParams {
-        let w0 = 2.0 * PI * f0 / sample_rate;
-        let w0_cos = w0.cos();
-        let alpha = w0.sin() / (2.0 * slope);
-        BiquadParams::new(
-            (1.0 + w0_cos) / 2.0,
-            -1.0 - w0_cos,
-            (1.0 + w0_cos) / 2.0,
-            1.0 + alpha,
-            -2.0 * w0_cos,
-            1.0 - alpha,
-        )
-    }
 }
 
 pub struct BiquadFilter {
@@ -477,12 +463,6 @@ pub struct CrossfeedFilter {
     left_straigh_filter: BiquadFilter,
     right_cross_filter: BiquadFilter,
     right_straight_filter: BiquadFilter,
-}
-
-pub struct CrossFeedParams {
-    level: f32,
-    delay_ms: f32,
-    frequency: f32,
 }
 
 impl CrossfeedFilter {
