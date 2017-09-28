@@ -80,7 +80,7 @@ impl InputMixer {
                     Some(frame) => {
                         // If the frame is too old then drop it.
                         if frame.timestamp < mixed_frame.timestamp {
-                          continue;
+                            continue;
                         }
                         self.current_frame = frame;
                         self.current_frame_pos = 0;
@@ -88,8 +88,10 @@ impl InputMixer {
                 }
             }
 
-            mixed_frame.left[pos] += self.multiplier * self.current_frame.left[self.current_frame_pos];
-            mixed_frame.right[pos] += self.multiplier * self.current_frame.right[self.current_frame_pos];
+            mixed_frame.left[pos] +=
+                self.multiplier * self.current_frame.left[self.current_frame_pos];
+            mixed_frame.right[pos] +=
+                self.multiplier * self.current_frame.right[self.current_frame_pos];
             self.current_frame_pos += 1;
             pos += 1;
         }
@@ -151,7 +153,7 @@ impl output::Output for FilteredOutput {
     }
 }
 
-const OUTPUT_SHUTDOWN_SECONDS: i64 = 5;
+const OUTPUT_SHUTDOWN_SECONDS: i64 = 30;
 const STANDBY_SECONDS: i64 = 3600;
 
 fn run_loop(
@@ -183,7 +185,7 @@ fn run_loop(
     let period_size = (period_duration * sample_rate as i64 / TimeDelta::seconds(1)) as usize;
     let resampler_delay = TimeDelta::seconds(1) * resampler_window as i64 / sample_rate as i64;
     let mix_delay = period_duration * 3 + resampler_delay;
-    let target_output_delay = mix_delay + period_duration * 6 + resampler_delay;
+    let target_output_delay = mix_delay + period_duration * 5 + resampler_delay;
 
     let mut stream_start_time = Time::now() - mix_delay;
     let mut stream_pos: i64 = 0;
@@ -247,7 +249,7 @@ fn run_loop(
             frame = crossfeed_filter.apply(frame);
 
             frame.timestamp += target_output_delay;
-
+            //  println!("out: {:?}", frame.timestamp -  Time::now());
             try!(outputs[selected_output].write(frame));
         } else {
             std::thread::sleep(TimeDelta::milliseconds(500).as_duration());
@@ -379,7 +381,11 @@ fn run() -> Result<()> {
         "dynamic-resampling",
         "Enable dynamic stream resampling to match sample rate.",
     );
-    opts.optflag("g", "frequency-response", "Print out frequency response for all filters");
+    opts.optflag(
+        "g",
+        "frequency-response",
+        "Print out frequency response for all filters",
+    );
     opts.optflag("m", "impulse-response", "Measure impulse response");
     opts.optflag("h", "help", "Print this help menu");
 

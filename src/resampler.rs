@@ -398,7 +398,8 @@ impl StreamResampler {
             ]);
         }
 
-        let delay = (TimeDelta::seconds(1) * self.window_size as i64) / self.input_sample_rate as i64;
+        let delay =
+            (TimeDelta::seconds(1) * self.window_size as i64) / self.input_sample_rate as i64;
 
         let result = base::Frame {
             sample_rate: self.output_sample_rate,
@@ -466,7 +467,8 @@ impl FineStreamResampler {
             ];
         }
 
-        let delay = (TimeDelta::seconds(1) * self.window_size as i64) / self.input_sample_rate as i64;
+        let delay =
+            (TimeDelta::seconds(1) * self.window_size as i64) / self.input_sample_rate as i64;
 
         let result = base::Frame {
             sample_rate: self.reported_output_sample_rate,

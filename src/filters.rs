@@ -290,12 +290,16 @@ impl<T: AudioFilter<T>> StereoFilter<T> {
 
 struct FilterJob {
     data: Vec<f32>,
+    size_multiplier: usize,
     response_channel: mpsc::Sender<Vec<f32>>,
 }
 
 pub struct ParallelFirFilter {
     left: FirFilter,
     right_thread: mpsc::Sender<FilterJob>,
+    size_multiplier: usize,
+    delay1: f64,
+    delay2: f64,
 }
 
 impl ParallelFirFilter {
@@ -306,6 +310,7 @@ impl ParallelFirFilter {
             for mut job in job_receiver.iter() {
                 let mut v = vec![0f32; 0];
                 mem::swap(&mut v, &mut job.data);
+                filter.window_size = filter.buffer.len() * job.size_multiplier / 256;
                 filter.apply_multi(&mut v[..]);
                 job.response_channel.send(v).expect("Failed to send");
             }
@@ -314,10 +319,14 @@ impl ParallelFirFilter {
         ParallelFirFilter {
             left: FirFilter::new(left),
             right_thread: right_thread,
+            size_multiplier: 256,
+            delay1: 0.0,
+            delay2: 0.0,
         }
     }
 
     pub fn apply(&mut self, frame: &mut Frame) {
+        let start = time::Time::now();
         let (s, r) = mpsc::channel::<Vec<f32>>();
         let mut v = vec![0f32; 0];
         mem::swap(&mut v, &mut frame.right);
@@ -325,13 +334,35 @@ impl ParallelFirFilter {
             .send(FilterJob {
                 data: v,
                 response_channel: s,
+                size_multiplier: self.size_multiplier,
             })
             .expect("Failed to send");
 
+        self.left.window_size = self.left.buffer.len() * self.size_multiplier / 256;
         self.left.apply_multi(&mut frame.left[..]);
 
         let mut v = r.recv().expect("Failed to apply filter");
         mem::swap(&mut v, &mut frame.right);
+        let now = time::Time::now();
+        let delay = (now - start).in_seconds_f() / frame.duration().in_seconds_f();
+        let mean_delay = (self.delay1 + self.delay2 + delay) / 3.0;
+        if mean_delay > 0.9 && self.size_multiplier > 1 {
+            self.size_multiplier /= 2;
+            println!(
+                "Reduced FIR filter size to {}, delay: {:?} ",
+                self.size_multiplier * self.left.buffer.len() / 256,
+                mean_delay
+            );
+        } else if mean_delay < 0.4 && self.size_multiplier < 256 {
+            self.size_multiplier *= 2;
+            println!(
+                "Increased FIR filter size to {}, delay: {:?} ",
+                self.size_multiplier * self.left.buffer.len() / 256,
+                mean_delay
+            );
+        }
+        self.delay1 = self.delay2;
+        self.delay2 = delay;
     }
 }
 
@@ -420,6 +451,8 @@ pub struct FirFilter {
 
     // Current position in the buffer.
     buffer_pos: usize,
+
+    window_size: usize,
 }
 
 impl AudioFilter<FirFilter> for FirFilter {
@@ -431,6 +464,7 @@ impl AudioFilter<FirFilter> for FirFilter {
             params: params,
             buffer: vec![0.0; size],
             buffer_pos: 0,
+            window_size: 0,
         }
     }
 
@@ -438,20 +472,29 @@ impl AudioFilter<FirFilter> for FirFilter {
         self.params = params;
         self.buffer = vec![0.0; self.params.coefficients.len()];
         self.buffer_pos = 0;
+        self.window_size = self.buffer.len();
     }
 
     fn apply_one(&mut self, x0: FCoef) -> FCoef {
         self.buffer_pos = (self.buffer_pos + self.buffer.len() - 1) % self.buffer.len();
         self.buffer[self.buffer_pos] = x0;
 
-        convolve(
-            &self.buffer[self.buffer_pos..],
-            &self.params.coefficients[0..(self.buffer.len() - self.buffer_pos)],
-        ) +
+        let p1_size = self.buffer.len() - self.buffer_pos;
+        if self.window_size <= p1_size {
             convolve(
-                &self.buffer[0..self.buffer_pos],
-                &self.params.coefficients[(self.buffer.len() - self.buffer_pos)..],
+                &self.buffer[self.buffer_pos..(self.buffer_pos + self.window_size)],
+                &self.params.coefficients[0..self.window_size],
             )
+        } else {
+            convolve(
+                &self.buffer[self.buffer_pos..],
+                &self.params.coefficients[0..p1_size],
+            ) +
+                convolve(
+                    &self.buffer[0..(self.window_size - p1_size)],
+                    &self.params.coefficients[p1_size..self.window_size],
+                )
+        }
     }
 }
 
@@ -472,13 +515,27 @@ impl CrossfeedFilter {
             delay_ms: 0.3,
             previous: None,
             left_straigh_filter: BiquadFilter::new(BiquadParams::low_shelf_filter(
-                sample_rate as FCoef, 200.0, 1.1, -2.5)),
+                sample_rate as FCoef,
+                200.0,
+                1.1,
+                -2.5,
+            )),
             left_cross_filter: BiquadFilter::new(BiquadParams::low_pass_filter(
-                sample_rate as FCoef, 400.0, 0.8)),
+                sample_rate as FCoef,
+                400.0,
+                0.8,
+            )),
             right_straight_filter: BiquadFilter::new(BiquadParams::low_shelf_filter(
-                sample_rate as FCoef, 200.0, 1.1, -2.5)),
+                sample_rate as FCoef,
+                200.0,
+                1.1,
+                -2.5,
+            )),
             right_cross_filter: BiquadFilter::new(BiquadParams::low_pass_filter(
-                sample_rate as FCoef, 400.0, 0.8)),
+                sample_rate as FCoef,
+                400.0,
+                0.8,
+            )),
         }
     }
 
@@ -500,8 +557,10 @@ impl CrossfeedFilter {
             Some(ref p) => {
                 let s = p.len() - delay;
                 for i in 0..delay {
-                    out.left[i] = self.left_straigh_filter.apply_one(frame.left[i]) + self.left_cross_filter.apply_one(p.right[s + i]) * self.level;
-                    out.right[i] = self.right_straight_filter.apply_one(frame.right[i]) + self.right_cross_filter.apply_one(p.left[s + i]) * self.level;
+                    out.left[i] = self.left_straigh_filter.apply_one(frame.left[i]) +
+                        self.left_cross_filter.apply_one(p.right[s + i]) * self.level;
+                    out.right[i] = self.right_straight_filter.apply_one(frame.right[i]) +
+                        self.right_cross_filter.apply_one(p.left[s + i]) * self.level;
                 }
             }
             None => for i in 0..delay {
@@ -511,8 +570,10 @@ impl CrossfeedFilter {
         }
 
         for i in delay..out.len() {
-            out.left[i] = self.left_straigh_filter.apply_one(frame.left[i]) + self.left_cross_filter.apply_one(frame.right[i - delay]) * self.level;
-            out.right[i] = self.right_straight_filter.apply_one(frame.right[i]) + self.right_cross_filter.apply_one(frame.left[i - delay]) * self.level;
+            out.left[i] = self.left_straigh_filter.apply_one(frame.left[i]) +
+                self.left_cross_filter.apply_one(frame.right[i - delay]) * self.level;
+            out.right[i] = self.right_straight_filter.apply_one(frame.right[i]) +
+                self.right_cross_filter.apply_one(frame.left[i - delay]) * self.level;
         }
 
         self.previous = Some(frame);
@@ -550,7 +611,11 @@ pub fn draw_filter_graph<T: AudioFilter<T>>(sample_rate: usize, params: T::Param
 fn get_crossfeed_response(sample_rate: FCoef, freq: FCoef) -> FCoef {
     let mut f = CrossfeedFilter::new(sample_rate as usize);
     f.set_params(0.3, 0.3);
-    let mut test_signal = Frame::new(sample_rate as usize, time::Time::now(), (sample_rate as usize) * 2);
+    let mut test_signal = Frame::new(
+        sample_rate as usize,
+        time::Time::now(),
+        (sample_rate as usize) * 2,
+    );
     for i in 0..test_signal.len() {
         test_signal.left[i] = (i as FCoef / sample_rate * freq * 2.0 * PI).sin() as f32;
         test_signal.right[i] = (i as FCoef / sample_rate * freq * 2.0 * PI).sin() as f32;

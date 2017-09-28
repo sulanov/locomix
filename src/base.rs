@@ -136,8 +136,7 @@ pub fn convolve(v1: &[f32], v2: &[f32]) -> f32 {
     }
 
     sum1.extract(0) + sum1.extract(1) + sum1.extract(2) + sum1.extract(3) +
-    sum2.extract(0) + sum2.extract(1) + sum2.extract(2) + sum2.extract(3) +
-    sum_end
+        sum2.extract(0) + sum2.extract(1) + sum2.extract(2) + sum2.extract(3) + sum_end
 }
 
 pub fn get_sample_timestamp(start: Time, sample_rate: usize, sample: i64) -> Time {
@@ -170,8 +169,12 @@ impl Frame {
         self.left.len()
     }
 
+    pub fn duration(&self) -> TimeDelta {
+        (TimeDelta::seconds(1) * self.len() as i64) / self.sample_rate as i64
+    }
+
     pub fn end_timestamp(&self) -> Time {
-        get_sample_timestamp(self.timestamp, self.sample_rate, self.len() as i64)
+        self.timestamp + self.duration()
     }
 
     pub fn to_buffer(&self, format: SampleFormat) -> Vec<u8> {
