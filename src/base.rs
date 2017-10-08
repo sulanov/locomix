@@ -330,7 +330,7 @@ mod tests {
             buf.push(((r & 0xff00) >> 8) as u8);
         }
 
-        let frame = Frame::from_buffer(SampleFormat::S16LE, 44100, &buf[..]);
+        let frame = Frame::from_buffer(SampleFormat::S16LE, 44100, &buf[..], Time::now());
         let buf2 = frame.to_buffer(SampleFormat::S16LE);
 
         assert_eq!(buf.len(), buf2.len());
@@ -341,7 +341,7 @@ mod tests {
 
     #[test]
     fn clamping() {
-        let mut frame = Frame::new(100, 1);
+        let mut frame = Frame::new(100, Time::now(), 1);
         frame.left[0] = 1.5;
         frame.right[0] = -1.5;
 
