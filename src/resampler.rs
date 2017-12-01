@@ -508,12 +508,12 @@ mod tests {
         let mut buf = Vec::<f32>::new();
         for i in 0..(irate * 2) {
             let v = val(i, irate, f);
-            buf.push(((v * 32768.0).round() / 32768.0) as f32);
+            buf.push(((v * 32767.0).round() / 32767.0) as f32);
             // buf.push(v as f32);
         }
 
-        let mut factory = resampler::ResamplerFactory::new();
-        let mut r = factory.create_resampler(irate, orate, 200);
+        let mut factory = resampler::ResamplerFactory::new(200);
+        let mut r = factory.create_resampler(irate, orate);
         let mut out = Vec::new();
 
         let start = Instant::now();
@@ -532,9 +532,6 @@ mod tests {
 
         let out64: Vec<f64> = out.iter().map(|x| -> f64 { *x as f64 }).collect();
 
-        for i in 100..200 {
-            println!("{} {} {}", i, out[i], { out64[i] - val(i, orate, f) });
-        }
         for i in 1..(out.len() / RANGE) {
             let s = i * RANGE;
             let e = (i + 1) * RANGE;
@@ -545,8 +542,8 @@ mod tests {
             let nsr = noise / signal;
             let nsr_db = 10.0 * nsr.log(10.0);
             println!("{} {} {} {}", signal, noise, 1.0 / nsr, nsr_db);
-            // Target: -97
-            assert!(nsr_db < -97.0);
+            // Target: -96
+            assert!(nsr_db < -95.0);
         }
     }
 }

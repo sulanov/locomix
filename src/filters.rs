@@ -312,23 +312,26 @@ impl ParallelFirFilter {
         let now = time::Time::now();
         let delay = (now - start).in_seconds_f() / frame.duration().in_seconds_f();
         let mean_delay = (self.delay1 + self.delay2 + delay) / 3.0;
-        if mean_delay > 0.9 && self.size_multiplier > 1 {
-            self.size_multiplier /= 2;
-            println!(
-                "Reduced FIR filter size to {}, delay: {:?} ",
-                self.size_multiplier * self.left.buffer.len() / 256,
-                mean_delay
-            );
+        let m: f64 = if mean_delay > 0.9 && self.size_multiplier > 1 {
+            0.5
         } else if mean_delay < 0.4 && self.size_multiplier < 256 {
-            self.size_multiplier *= 2;
+            2.0
+        } else {
+            1.0
+        };
+        self.delay1 = self.delay2;
+        self.delay2 = delay;
+
+        if m != 1.0 {
+            self.size_multiplier = self.size_multiplier * (2.0 * m) as usize / 2;
+            self.delay1 *= m;
+            self.delay2 *= m;
             println!(
-                "Increased FIR filter size to {}, delay: {:?} ",
+                "Updated FIR filter size to {}, delay: {:?} ",
                 self.size_multiplier * self.left.buffer.len() / 256,
                 mean_delay
             );
         }
-        self.delay1 = self.delay2;
-        self.delay2 = delay;
     }
 }
 
