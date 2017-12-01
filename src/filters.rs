@@ -230,40 +230,6 @@ impl FilterPairConfig for LoudnessFilterPairConfig {
 }
 pub type LoudnessFilter = FilterPair<LoudnessFilterPairConfig>;
 
-pub struct VoiceBoostFilterPairConfig(SimpleFilterParams);
-
-impl FilterPairConfig for VoiceBoostFilterPairConfig {
-    type Impl = VoiceBoostFilterPairConfig;
-
-    fn new(p: SimpleFilterParams) -> VoiceBoostFilterPairConfig {
-        VoiceBoostFilterPairConfig(p)
-    }
-    fn set_params(&mut self, p: SimpleFilterParams) {
-        self.0 = p;
-    }
-    fn get_filter1_params(&self) -> BiquadParams {
-        const VOICE_BOOST_BASS_F0: FCoef = 270.0;
-        const VOICE_BOOST_BASS_Q: FCoef = 2.0;
-        BiquadParams::low_shelf_filter(
-            self.0.sample_rate,
-            VOICE_BOOST_BASS_F0,
-            VOICE_BOOST_BASS_Q,
-            -self.0.gain_db,
-        )
-    }
-    fn get_filter2_params(&self) -> BiquadParams {
-        const VOICE_BOOST_TREBLE_F0: FCoef = 3300.0;
-        const VOICE_BOOST_TREBLE_Q: FCoef = 2.0;
-        BiquadParams::high_shelf_filter(
-            self.0.sample_rate,
-            VOICE_BOOST_TREBLE_F0,
-            VOICE_BOOST_TREBLE_Q,
-            -self.0.gain_db,
-        )
-    }
-}
-pub type VoiceBoostFilter = FilterPair<VoiceBoostFilterPairConfig>;
-
 pub struct StereoFilter<T: AudioFilter<T>> {
     left: T,
     right: T,

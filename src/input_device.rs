@@ -25,7 +25,6 @@ pub const KEY_MUTE: u16 = 113;
 pub const KEY_VOLUMEDOWN: u16 = 114;
 pub const KEY_VOLUMEUP: u16 = 115;
 pub const KEY_MENU: u16 = 127;
-pub const KEY_HOMEPAGE: u16 = 172;
 
 pub const REL_DIAL: u16 = 0x07;
 

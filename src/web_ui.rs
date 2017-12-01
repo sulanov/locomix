@@ -48,19 +48,12 @@ fn serve_web(address: &str, shared_state: SharedState) {
                  }
 
                  #[derive(RustcDecodable)]
-                 struct FeatureParams {
-                     enabled: Option<bool>,
-                     level: Option<f32>,
-                 }
-
-                 #[derive(RustcDecodable)]
                  struct RequestParams {
                      volume: Option<f32>,
                      output: Option<usize>,
                      mux_mode: Option<MuxMode>,
                      enable_drc: Option<bool>,
                      loudness: Option<LoudnessParams>,
-                     voice_boost: Option<FeatureParams>,
                      crossfeed: Option<CrossfeedParams>,
                  }
 
@@ -102,17 +95,6 @@ fn serve_web(address: &str, shared_state: SharedState) {
                         loudness_config.level = level;
                     });
                     state_controller.set_loudness(loudness_config);
-                });
-
-                json.voice_boost.map( |voice_boost| {
-                    let mut voice_boost_config = state_controller.state().voice_boost.clone();
-                    voice_boost.enabled.map( |enabled| {
-                        voice_boost_config.enabled = enabled;
-                    });
-                    voice_boost.level.map( |level| {
-                        voice_boost_config.level = level;
-                    });
-                    state_controller.set_voice_boost(voice_boost_config);
                 });
 
                 json.crossfeed.map( |crossfeed| {

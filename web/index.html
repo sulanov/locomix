@@ -51,13 +51,6 @@
     <value></value>
   </div>
 
-  <div class="voice_boost_box">
-    <label><input id="enable" type="checkbox"></input>Voice Boost</label>
-    </br>
-    <input class="slider" type="range" min="0" max="1.0" step="0.05"></input>
-    <value></value>
-  </div>
-
   <div class="crossfeed_box">
     <label><input id="enable" type="checkbox"></input>Crossfeed</label>
     </br>
@@ -294,9 +287,6 @@ document.body.onload = () => {
         params: {"loudness": {"auto": auto } }
       })
     ));
-
-    slider_with_checkbox(document.querySelector(".voice_boost_box"),
-                         state.voice_boost, "voice_boost");
 
     slider_with_checkbox(document.querySelector(".crossfeed_box"),
                          state.crossfeed, "crossfeed");

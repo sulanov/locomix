@@ -68,18 +68,6 @@ fn process_event(shared_state: &mut SharedState, event: InputEvent) {
 
         InputEvent {
             time: _,
-            type_: EV_KEY,
-            code: KEY_HOMEPAGE,
-            value: EV_PRESSED,
-        } => {
-            let mut state = shared_state.lock();
-            let mut voice_boost_config = state.state().voice_boost.clone();
-            voice_boost_config.enabled = !voice_boost_config.enabled;
-            state.set_voice_boost(voice_boost_config);
-        }
-
-        InputEvent {
-            time: _,
             type_: EV_REL,
             code: REL_DIAL,
             value: change,
