@@ -107,29 +107,6 @@ impl CrossfeedConfig {
     }
 }
 
-#[derive(RustcEncodable, Copy, Clone)]
-pub struct FeatureConfig {
-    pub enabled: bool,
-    pub level: f32,
-}
-
-impl FeatureConfig {
-    pub fn default() -> FeatureConfig {
-        FeatureConfig {
-            enabled: false,
-            level: 0.5,
-        }
-    }
-
-    pub fn get_level(&self) -> f32 {
-        if self.enabled {
-            self.level
-        } else {
-            0.0
-        }
-    }
-}
-
 #[derive(Copy, Clone, RustcEncodable, RustcDecodable)]
 pub enum MuxMode {
     Exclusive,
@@ -145,7 +122,6 @@ pub struct State {
     pub loudness: LoudnessConfig,
     pub enable_drc: bool,
     pub crossfeed: CrossfeedConfig,
-    pub voice_boost: FeatureConfig,
 }
 
 #[derive(Copy, Clone)]
@@ -155,7 +131,6 @@ pub enum UiMessage {
     SetInputGain { device: DeviceId, gain: Gain },
     SetMuxMode { mux_mode: MuxMode },
     SetEnableDrc { enable: bool },
-    SetVoiceBoost { boost: Gain },
     SetCrossfeed { level: f32, delay_ms: f32 },
 }
 
@@ -197,7 +172,6 @@ impl StateController {
                 enable_drc: true,
                 loudness: LoudnessConfig::default(),
                 crossfeed: CrossfeedConfig::default(),
-                voice_boost: FeatureConfig::default(),
             },
             stream_observers: Vec::new(),
             observers: Vec::new(),
@@ -298,16 +272,6 @@ impl StateController {
             device: input_id,
             gain: gain,
         });
-    }
-
-    pub fn set_voice_boost(&mut self, voice_boost: FeatureConfig) {
-        self.state.voice_boost = voice_boost;
-        let msg = UiMessage::SetVoiceBoost {
-            boost: Gain {
-                db: self.state.voice_boost.get_level() * 20.0,
-            },
-        };
-        self.broadcast(msg);
     }
 
     pub fn set_crossfeed(&mut self, crossfeed: CrossfeedConfig) {

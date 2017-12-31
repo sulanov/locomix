@@ -8,7 +8,6 @@ Currently the following features are supported:
  * Mixing multiple audio streams,
  * Per-stream volume control,
  * Crossfeed filter,
- * Voice booster,
  * Adaptive loudness correction,
  * Web-based UI (rudimentary, but usable),
  * Remote control,

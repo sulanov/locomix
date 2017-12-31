@@ -178,12 +178,6 @@ fn run() -> Result<(), RunError> {
             filters::SimpleFilterParams::new(sample_rate, 10.0),
         );
 
-        println!("Voice Boost filter");
-        filters::draw_filter_graph::<filters::VoiceBoostFilter>(
-            sample_rate,
-            filters::SimpleFilterParams::new(sample_rate, 10.0),
-        );
-
         for i in 0..fir_filters.len() {
             println!("FIR filter {}", i);
             filters::draw_filter_graph::<filters::FirFilter>(

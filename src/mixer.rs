@@ -149,7 +149,6 @@ pub fn run_mixer_loop(
 
     let mut loudness_filter =
         StereoFilter::<LoudnessFilter>::new(SimpleFilterParams::new(sample_rate, 10.0));
-    let mut voice_boost_filter: Option<StereoFilter<VoiceBoostFilter>> = None;
     let mut crossfeed_filter = CrossfeedFilter::new(sample_rate);
 
     let mut exclusive_mux_mode = true;
@@ -211,12 +210,6 @@ pub fn run_mixer_loop(
 
         if state == ui::StreamState::Active {
             loudness_filter.apply(&mut frame);
-            match voice_boost_filter.as_mut() {
-                Some(ref mut f) => {
-                    f.apply(&mut frame);
-                }
-                None => (),
-            }
             frame = crossfeed_filter.apply(frame);
 
             frame.timestamp += target_output_delay;
@@ -244,18 +237,6 @@ pub fn run_mixer_loop(
                     mixers[device as usize].set_input_gain(gain);
                 }
                 ui::UiMessage::SetEnableDrc { enable: _ } => (),
-                ui::UiMessage::SetVoiceBoost { boost } => if boost.db > 0.0 {
-                    let p = SimpleFilterParams::new(sample_rate, boost.db);
-                    if voice_boost_filter.is_some() {
-                        voice_boost_filter.as_mut().unwrap().set_params(p);
-                    } else {
-                        voice_boost_filter = Some(StereoFilter::<VoiceBoostFilter>::new(
-                            SimpleFilterParams::new(sample_rate, boost.db),
-                        ))
-                    }
-                } else {
-                    voice_boost_filter = None
-                },
                 ui::UiMessage::SetCrossfeed { level, delay_ms } => {
                     crossfeed_filter.set_params(level, delay_ms);
                 }
