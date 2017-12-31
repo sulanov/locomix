@@ -156,8 +156,8 @@ pub fn run_mixer_loop(
 
     let period_size = (period_duration * sample_rate as i64 / TimeDelta::seconds(1)) as usize;
     let resampler_delay = TimeDelta::seconds(1) * resampler_window as i64 / sample_rate as i64;
-    let mix_delay = period_duration * 3 + resampler_delay;
-    let target_output_delay = mix_delay + period_duration * 5 + resampler_delay;
+    let mix_delay = period_duration * 2 + resampler_delay;
+    let target_output_delay = mix_delay + period_duration * 2 + resampler_delay;
 
     let mut stream_start_time = Time::now() - mix_delay;
     let mut stream_pos: i64 = 0;
