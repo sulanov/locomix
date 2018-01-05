@@ -81,6 +81,7 @@ pub struct AlsaOutput {
     sample_rate: usize,
     period_size: usize,
     format: SampleFormat,
+    channels: usize,
     rate_detector: RateDetector,
     measured_sample_rate: f64,
 }
@@ -98,7 +99,7 @@ impl AlsaOutput {
         let format;
         {
             let hwp = try!(alsa::pcm::HwParams::any(&pcm));
-            try!(hwp.set_channels(2));
+            try!(hwp.set_channels(spec.channels as u32));
 
             try!(hwp.set_access(alsa::pcm::Access::RWInterleaved));
             try!(hwp.set_rate_resample(false));
@@ -161,19 +162,21 @@ impl AlsaOutput {
             };
 
             println!(
-                "INFO: Opened {} ({}). Buffer size: {}x{}. {} {}.",
+                "INFO: Opened {} ({}). Buffer size: {}x{}. {} {} {}ch.",
                 spec.name,
                 spec.id,
                 period_size,
                 try!(hwp.get_periods()),
                 sample_rate,
-                format
+                format,
+                spec.channels
             );
         }
 
         Ok(AlsaOutput {
             pcm: pcm,
             sample_rate: sample_rate,
+            channels: spec.channels,
             period_size: period_size,
             format: format,
             rate_detector: RateDetector::new(sample_rate as f64),
@@ -193,11 +196,11 @@ impl Output for AlsaOutput {
             return Ok(());
         }
 
-        let buf = frame.to_buffer(self.format);
+        let buf = frame.to_buffer_with_channels(self.format, self.channels);
         let mut pos: usize = 0;
 
         while pos < frame.len() {
-            let start = pos * self.format.bytes_per_sample() * CHANNELS;
+            let start = pos * self.format.bytes_per_sample() * self.channels;
             let r = self.pcm.io().writei(&buf[start..]);
             match r {
                 Ok(l) => pos += l,
@@ -205,8 +208,11 @@ impl Output for AlsaOutput {
                     println!("Recovering output {}", e);
                     try!(self.pcm.recover(e.code(), true));
 
-                    let zero_buf =
-                        vec![0u8; self.period_size * CHANNELS * self.format.bytes_per_sample()];
+                    let zero_buf = vec![
+                        0u8;
+                        self.period_size * self.channels *
+                            self.format.bytes_per_sample()
+                    ];
                     try!(self.pcm.io().writei(&zero_buf[..]));
                     try!(self.pcm.io().writei(&zero_buf[..]));
                     try!(self.pcm.io().writei(&zero_buf[..]));

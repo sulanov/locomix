@@ -3,8 +3,12 @@ use base::*;
 use time::*;
 use filters::*;
 use std;
+use std::cmp;
 use output;
 use ui;
+
+// Currently mixing handles only 2 channels.
+const CHANNEL_LAYOUT: ChannelLayout = ChannelLayout::Stereo;
 
 struct InputMixer {
     input: AsyncInput,
@@ -19,7 +23,7 @@ impl InputMixer {
     fn new(input: AsyncInput) -> InputMixer {
         let mut r = InputMixer {
             input: input,
-            current_frame: Frame::new(1, Time::zero(), 0),
+            current_frame: Frame::new(1, CHANNEL_LAYOUT, Time::zero(), 0),
             current_frame_pos: 0,
             volume: ui::Gain { db: -20.0 },
             gain: ui::Gain { db: 0.0 },
@@ -60,10 +64,11 @@ impl InputMixer {
                 }
             }
 
-            mixed_frame.left[pos] +=
-                self.multiplier * self.current_frame.left[self.current_frame_pos];
-            mixed_frame.right[pos] +=
-                self.multiplier * self.current_frame.right[self.current_frame_pos];
+            for i in 0..cmp::min(mixed_frame.channels(), self.current_frame.channels()) {
+                mixed_frame.data[i][pos] +=
+                    self.multiplier * self.current_frame.data[i][self.current_frame_pos];
+            }
+
             self.current_frame_pos += 1;
             pos += 1;
         }
@@ -74,7 +79,7 @@ impl InputMixer {
 
 pub struct FilteredOutput {
     output: Box<output::Output>,
-    filter: ParallelFirFilter,
+    filter: MultichannelFirFilter,
     enabled: bool,
     ui_msg_receiver: ui::UiMessageReceiver,
 }
@@ -82,7 +87,7 @@ pub struct FilteredOutput {
 impl FilteredOutput {
     pub fn new(
         output: Box<output::Output>,
-        filter: ParallelFirFilter,
+        filter: MultichannelFirFilter,
         shared_state: &ui::SharedState,
     ) -> Box<output::Output> {
         Box::new(FilteredOutput {
@@ -148,7 +153,7 @@ pub fn run_mixer_loop(
     let mut selected_output = 0;
 
     let mut loudness_filter =
-        StereoFilter::<LoudnessFilter>::new(SimpleFilterParams::new(sample_rate, 10.0));
+        MultichannelFilter::<LoudnessFilter>::new(SimpleFilterParams::new(sample_rate, 10.0), 2);
     let mut crossfeed_filter = CrossfeedFilter::new(sample_rate);
 
     let mut exclusive_mux_mode = true;
@@ -163,7 +168,7 @@ pub fn run_mixer_loop(
 
     loop {
         let frame_timestamp = get_sample_timestamp(stream_start_time, sample_rate, stream_pos);
-        let mut frame = Frame::new(sample_rate, frame_timestamp, period_size);
+        let mut frame = Frame::new(sample_rate, CHANNEL_LAYOUT, frame_timestamp, period_size);
         stream_pos += frame.len() as i64;
 
         let mut have_data = false;
@@ -213,7 +218,6 @@ pub fn run_mixer_loop(
             frame = crossfeed_filter.apply(frame);
 
             frame.timestamp += target_output_delay;
-            //  println!("out: {:?}", frame.timestamp -  Time::now());
             try!(outputs[selected_output].write(frame));
         } else {
             std::thread::sleep(TimeDelta::milliseconds(500).as_duration());
@@ -237,6 +241,7 @@ pub fn run_mixer_loop(
                     mixers[device as usize].set_input_gain(gain);
                 }
                 ui::UiMessage::SetEnableDrc { enable: _ } => (),
+                ui::UiMessage::SetSubwooferConfig { config: _ } => (),
                 ui::UiMessage::SetCrossfeed { level, delay_ms } => {
                     crossfeed_filter.set_params(level, delay_ms);
                 }

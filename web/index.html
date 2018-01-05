@@ -51,6 +51,13 @@
     <value></value>
   </div>
 
+  <div class="subwoofer_box">
+    <label><input id="enable" type="checkbox"></input>Subwoofer</label>
+    </br>
+    <input class="slider" type="range" min="40" max="160" step="5"></input>
+    <value></value>
+  </div>
+
   <div class="crossfeed_box">
     <label><input id="enable" type="checkbox"></input>Crossfeed</label>
     </br>
@@ -204,16 +211,21 @@ function add_input(id, input, template) {
   template.parentElement.insertBefore(i, template);
 }
 
-function slider_with_checkbox(container, state, name) {
-  container.querySelector(".slider").value = state.level;
-  autoupdate_slider(container, (level) => {
+function postState(params) {
+  return makeRequest({
+    method: "POST",
+    url: "/api/state",
+    params: params
+  })  
+}
+
+function slider_with_checkbox(container, state, name, slider_value) {
+  container.querySelector(".slider").value = state[slider_value];
+  autoupdate_slider(container, (value) => {
     let params = {};
-    params[name] = {"level": level};
-    return makeRequest({
-      method: "POST",
-      url: "/api/state",
-      params: params
-    })
+    params[name] = {};
+    params[name][slider_value] = value;
+    return postState(params);
   });
 
   let enable_checkbox = container.querySelector("#enable");
@@ -221,11 +233,7 @@ function slider_with_checkbox(container, state, name) {
   autoupdate_checkbox(enable_checkbox, (enabled) => {
     let params = {};
     params[name] = {"enabled": enabled};
-    return makeRequest({
-      method: "POST",
-      url: "/api/state",
-      params: params
-    })
+    return postState(params);
   });
 }
 
@@ -237,11 +245,7 @@ document.body.onload = () => {
     let volume_box = document.querySelector(".master_volume_box");
     autoupdate_slider(volume_box, (volume) => {
       state.outputs[state.output].gain = volume;
-      return makeRequest({
-        method: "POST",
-        url: "/api/state",
-        params: {"volume": volume}
-      })
+      return postState({"volume": volume});
     });
     update_volume_slider(state);
 
@@ -256,49 +260,36 @@ document.body.onload = () => {
     for (var mode_radio of document.querySelectorAll('input[name="mux_mode"]')) {
       mode_radio.onchange = (event) => {
         if (event.target.checked) {
-          makeRequest({
-            method: "POST",
-            url: "/api/state",
-            params: {"mux_mode": event.target.value}
-          })
+          postState({"mux_mode": event.target.value});
         }
       }
     }
 
-    let drc_box = document.querySelector('#enable_drc_checkbox');
+    let drc_box = document.querySelector("#enable_drc_checkbox");
     drc_box.checked = state.enable_drc;
     drc_box.onchange = (event) => {
-      makeRequest({
-        method: "POST",
-        url: "/api/state",
-        params: {"enable_drc": drc_box.checked}
-      })
+      postState({"enable_drc": drc_box.checked})
     }
 
     let loudness_box = document.querySelector(".loudness_box");
-    slider_with_checkbox(loudness_box, state.loudness, "loudness");
+    slider_with_checkbox(loudness_box, state.loudness, "loudness", "level");
 
     let auto_checkbox = loudness_box.querySelector("#auto");
     auto_checkbox.checked = state.loudness.auto;
     autoupdate_checkbox(auto_checkbox, (auto) => (
-      makeRequest({
-        method: "POST",
-        url: "/api/state",
-        params: {"loudness": {"auto": auto } }
-      })
+      postState({"loudness": {"auto": auto } })
     ));
 
+    slider_with_checkbox(document.querySelector(".subwoofer_box"),
+                         state.subwoofer, "subwoofer", "crossover_frequency");
+
     slider_with_checkbox(document.querySelector(".crossfeed_box"),
-                         state.crossfeed, "crossfeed");
+                         state.crossfeed, "crossfeed", "level");
 
     let crossfeed_delay_box = document.querySelector(".crossfeed_delay_box");
     crossfeed_delay_box.querySelector(".slider").value = state.crossfeed.delay_ms;
     autoupdate_slider(crossfeed_delay_box, (delay_ms) => (
-      makeRequest({
-        method: "POST",
-        url: "/api/state",
-        params: {"crossfeed": { "delay_ms": delay_ms} }
-      })
+      postState({"crossfeed": { "delay_ms": delay_ms} })
     ));
 
     let input_template = document.querySelector(".input.template")

@@ -10,7 +10,7 @@ use std::sync::mpsc;
 use std::thread;
 use time;
 
-type FCoef = f32;
+pub type FCoef = f32;
 
 pub trait AudioFilter<T> {
     type Params: Clone + Send;
@@ -98,6 +98,20 @@ impl BiquadParams {
             (1.0 - w0_cos) / 2.0,
             1.0 - w0_cos,
             (1.0 - w0_cos) / 2.0,
+            1.0 + alpha,
+            -2.0 * w0_cos,
+            1.0 - alpha,
+        )
+    }
+
+    pub fn high_pass_filter(sample_rate: FCoef, f0: FCoef, slope: FCoef) -> BiquadParams {
+        let w0 = 2.0 * PI * f0 / sample_rate;
+        let w0_cos = w0.cos();
+        let alpha = w0.sin() / (2.0 * slope);
+        BiquadParams::new(
+            (1.0 + w0_cos) / 2.0,
+            -(1.0 + w0_cos),
+            (1.0 + w0_cos) / 2.0,
             1.0 + alpha,
             -2.0 * w0_cos,
             1.0 - alpha,
@@ -230,27 +244,30 @@ impl FilterPairConfig for LoudnessFilterPairConfig {
 }
 pub type LoudnessFilter = FilterPair<LoudnessFilterPairConfig>;
 
-pub struct StereoFilter<T: AudioFilter<T>> {
-    left: T,
-    right: T,
+pub struct MultichannelFilter<T: AudioFilter<T>> {
+    filters: Vec<T>,
 }
 
-impl<T: AudioFilter<T>> StereoFilter<T> {
-    pub fn new(params: T::Params) -> StereoFilter<T> {
-        StereoFilter {
-            left: T::new(params.clone()),
-            right: T::new(params),
+impl<T: AudioFilter<T>> MultichannelFilter<T> {
+    pub fn new(params: T::Params, channels: usize) -> MultichannelFilter<T> {
+        let mut filters: Vec<T> = Vec::<T>::with_capacity(channels);
+        for _ in 0..channels {
+            filters.push(T::new(params.clone()));
         }
+
+        MultichannelFilter { filters: filters }
     }
 
     pub fn set_params(&mut self, params: T::Params) {
-        self.left.set_params(params.clone());
-        self.right.set_params(params);
+        for i in 0..self.filters.len() {
+            self.filters[i].set_params(params.clone());
+        }
     }
 
     pub fn apply(&mut self, frame: &mut Frame) {
-        self.left.apply_multi(&mut frame.left[..]);
-        self.right.apply_multi(&mut frame.right[..]);
+        for i in 0..self.filters.len() {
+            self.filters[i].apply_multi(&mut frame.data[i][..]);
+        }
     }
 }
 
@@ -260,31 +277,39 @@ struct FilterJob {
     response_channel: mpsc::Sender<Vec<f32>>,
 }
 
-pub struct ParallelFirFilter {
-    left: FirFilter,
-    right_thread: mpsc::Sender<FilterJob>,
+pub struct MultichannelFirFilter {
+    channel0: FirFilter,
+    threads: Vec<mpsc::Sender<FilterJob>>,
     size_multiplier: usize,
     delay1: f64,
     delay2: f64,
 }
 
-impl ParallelFirFilter {
-    pub fn new_pair(left: FirFilterParams, right: FirFilterParams) -> ParallelFirFilter {
-        let (right_thread, job_receiver) = mpsc::channel::<FilterJob>();
-        thread::spawn(move || {
-            let mut filter = FirFilter::new(right);
-            for mut job in job_receiver.iter() {
-                let mut v = vec![0f32; 0];
-                mem::swap(&mut v, &mut job.data);
-                filter.window_size = filter.buffer.len() * job.size_multiplier / 256;
-                filter.apply_multi(&mut v[..]);
-                job.response_channel.send(v).expect("Failed to send");
-            }
-        });
+impl MultichannelFirFilter {
+    pub fn new_pair(left: FirFilterParams, right: FirFilterParams) -> MultichannelFirFilter {
+        return MultichannelFirFilter::new(vec![left, right]);
+    }
 
-        ParallelFirFilter {
-            left: FirFilter::new(left),
-            right_thread: right_thread,
+    pub fn new(mut params: Vec<FirFilterParams>) -> MultichannelFirFilter {
+        let mut threads = vec![];
+        for channel_params in params.drain(1..) {
+            let (thread, job_receiver) = mpsc::channel::<FilterJob>();
+            threads.push(thread);
+            thread::spawn(move || {
+                let mut filter = FirFilter::new(channel_params);
+                for mut job in job_receiver.iter() {
+                    let mut v = vec![0f32; 0];
+                    mem::swap(&mut v, &mut job.data);
+                    filter.window_size = filter.buffer.len() * job.size_multiplier / 256;
+                    filter.apply_multi(&mut v[..]);
+                    job.response_channel.send(v).expect("Failed to send");
+                }
+            });
+        }
+
+        MultichannelFirFilter {
+            channel0: FirFilter::new(params.swap_remove(0)),
+            threads: threads,
             size_multiplier: 256,
             delay1: 0.0,
             delay2: 0.0,
@@ -293,22 +318,31 @@ impl ParallelFirFilter {
 
     pub fn apply(&mut self, frame: &mut Frame) {
         let start = time::Time::now();
-        let (s, r) = mpsc::channel::<Vec<f32>>();
-        let mut v = vec![0f32; 0];
-        mem::swap(&mut v, &mut frame.right);
-        self.right_thread
-            .send(FilterJob {
-                data: v,
-                response_channel: s,
-                size_multiplier: self.size_multiplier,
-            })
-            .expect("Failed to send");
 
-        self.left.window_size = self.left.buffer.len() * self.size_multiplier / 256;
-        self.left.apply_multi(&mut frame.left[..]);
+        let mut recv_channels = vec![];
 
-        let mut v = r.recv().expect("Failed to apply filter");
-        mem::swap(&mut v, &mut frame.right);
+        for i in 0..self.threads.len() {
+            let (s, r) = mpsc::channel::<Vec<f32>>();
+            recv_channels.push(r);
+            let mut v = vec![0f32; 0];
+            mem::swap(&mut v, &mut frame.data[i + 1]);
+            self.threads[i]
+                .send(FilterJob {
+                    data: v,
+                    response_channel: s,
+                    size_multiplier: self.size_multiplier,
+                })
+                .expect("Failed to send");
+        }
+
+        self.channel0.window_size = self.channel0.buffer.len() * self.size_multiplier / 256;
+        self.channel0.apply_multi(&mut frame.data[0][..]);
+
+        for i in 0..self.threads.len() {
+            let mut v = recv_channels[i].recv().expect("Failed to apply filter");
+            mem::swap(&mut v, &mut frame.data[i + 1]);
+        }
+
         let now = time::Time::now();
         let delay = (now - start).in_seconds_f() / frame.duration().in_seconds_f();
         let mean_delay = (self.delay1 + self.delay2 + delay) / 3.0;
@@ -328,7 +362,7 @@ impl ParallelFirFilter {
             self.delay2 *= m;
             println!(
                 "Updated FIR filter size to {}, delay: {:?} ",
-                self.size_multiplier * self.left.buffer.len() / 256,
+                self.size_multiplier * self.channel0.buffer.len() / 256,
                 mean_delay
             );
         }
@@ -514,10 +548,17 @@ impl CrossfeedFilter {
     }
 
     pub fn apply(&mut self, frame: Frame) -> Frame {
+        assert!(frame.channel_layout == ChannelLayout::Stereo);
+
         if self.level == 0.0 {
             return frame;
         }
-        let mut out = Frame::new(frame.sample_rate, frame.timestamp, frame.len());
+        let mut out = Frame::new(
+            frame.sample_rate,
+            ChannelLayout::Stereo,
+            frame.timestamp,
+            frame.len(),
+        );
 
         let delay = (self.delay_ms * frame.sample_rate as f32 / 1000.0) as usize;
         assert!(delay < out.len());
@@ -526,23 +567,23 @@ impl CrossfeedFilter {
             Some(ref p) => {
                 let s = p.len() - delay;
                 for i in 0..delay {
-                    out.left[i] = self.left_straigh_filter.apply_one(frame.left[i]) +
-                        self.left_cross_filter.apply_one(p.right[s + i]) * self.level;
-                    out.right[i] = self.right_straight_filter.apply_one(frame.right[i]) +
-                        self.right_cross_filter.apply_one(p.left[s + i]) * self.level;
+                    out.data[0][i] = self.left_straigh_filter.apply_one(frame.data[0][i]) +
+                        self.left_cross_filter.apply_one(p.data[0][s + i]) * self.level;
+                    out.data[1][i] = self.right_straight_filter.apply_one(frame.data[1][i]) +
+                        self.right_cross_filter.apply_one(p.data[1][s + i]) * self.level;
                 }
             }
             None => for i in 0..delay {
-                out.left[i] = frame.left[i];
-                out.right[i] = frame.right[i];
+                out.data[0][i] = frame.data[0][i];
+                out.data[1][i] = frame.data[1][i];
             },
         }
 
         for i in delay..out.len() {
-            out.left[i] = self.left_straigh_filter.apply_one(frame.left[i]) +
-                self.left_cross_filter.apply_one(frame.right[i - delay]) * self.level;
-            out.right[i] = self.right_straight_filter.apply_one(frame.right[i]) +
-                self.right_cross_filter.apply_one(frame.left[i - delay]) * self.level;
+            out.data[0][i] = self.left_straigh_filter.apply_one(frame.data[0][i]) +
+                self.left_cross_filter.apply_one(frame.data[1][i - delay]) * self.level;
+            out.data[1][i] = self.right_straight_filter.apply_one(frame.data[1][i]) +
+                self.right_cross_filter.apply_one(frame.data[0][i - delay]) * self.level;
         }
 
         self.previous = Some(frame);
@@ -582,18 +623,19 @@ fn get_crossfeed_response(sample_rate: FCoef, freq: FCoef) -> FCoef {
     f.set_params(0.3, 0.3);
     let mut test_signal = Frame::new(
         sample_rate as usize,
+        ChannelLayout::Stereo,
         time::Time::now(),
         (sample_rate as usize) * 2,
     );
     for i in 0..test_signal.len() {
-        test_signal.left[i] = (i as FCoef / sample_rate * freq * 2.0 * PI).sin() as f32;
-        test_signal.right[i] = (i as FCoef / sample_rate * freq * 2.0 * PI).sin() as f32;
+        test_signal.data[0][i] = (i as FCoef / sample_rate * freq * 2.0 * PI).sin() as f32;
+        test_signal.data[1][i] = (i as FCoef / sample_rate * freq * 2.0 * PI).sin() as f32;
     }
     let response = f.apply(test_signal);
 
     let mut p_sum = 0.0;
     for i in 0..response.len() {
-        p_sum += (response.left[i] as FCoef).powi(2);
+        p_sum += (response.data[0][i] as FCoef).powi(2);
     }
 
     ((p_sum / (response.len() as FCoef)) * 2.0).log(10.0) * 10.0

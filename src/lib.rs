@@ -7,6 +7,7 @@ pub mod alsa_input;
 pub mod async_input;
 pub mod base;
 pub mod control;
+pub mod crossover;
 pub mod filters;
 pub mod input;
 pub mod input_device;

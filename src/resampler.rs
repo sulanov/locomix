@@ -358,7 +358,7 @@ pub struct StreamResampler {
     input_sample_rate: usize,
     output_sample_rate: usize,
     resampler_factory: ResamplerFactory,
-    resamplers: Option<[FastResampler; 2]>,
+    resamplers: Vec<FastResampler>,
     window_size: usize,
 }
 
@@ -368,7 +368,7 @@ impl StreamResampler {
             input_sample_rate: 0,
             output_sample_rate: output_sample_rate,
             resampler_factory: ResamplerFactory::new(window_size),
-            resamplers: None,
+            resamplers: vec![],
             window_size: window_size,
         }
     }
@@ -379,23 +379,25 @@ impl StreamResampler {
 
     pub fn set_output_sample_rate(&mut self, output_sample_rate: usize) {
         self.output_sample_rate = output_sample_rate;
-        self.resamplers = None;
+        self.resamplers.clear();
     }
-
 
     pub fn resample(&mut self, frame: &base::Frame) -> Option<base::Frame> {
         if self.input_sample_rate != frame.sample_rate {
-            self.resamplers = None;
+            self.resamplers.clear();
             self.input_sample_rate = frame.sample_rate;
         }
 
-        if self.resamplers.is_none() {
-            self.resamplers = Some([
+        while self.resamplers.len() < frame.channels() {
+            self.resamplers.push(
                 self.resampler_factory
                     .create_resampler(frame.sample_rate, self.output_sample_rate),
-                self.resampler_factory
-                    .create_resampler(frame.sample_rate, self.output_sample_rate),
-            ]);
+            );
+        }
+
+        let mut resampled = Vec::with_capacity(frame.channels());
+        for i in 0..self.resamplers.len() {
+            resampled.push(self.resamplers[i].resample(&frame.data[i]));
         }
 
         let delay =
@@ -403,9 +405,9 @@ impl StreamResampler {
 
         let result = base::Frame {
             sample_rate: self.output_sample_rate,
+            channel_layout: frame.channel_layout,
             timestamp: frame.timestamp - delay,
-            left: self.resamplers.as_mut().unwrap()[0].resample(&frame.left),
-            right: self.resamplers.as_mut().unwrap()[1].resample(&frame.right),
+            data: resampled,
         };
 
         if result.len() > 0 {
@@ -467,14 +469,19 @@ impl FineStreamResampler {
             ];
         }
 
+        let mut resampled = Vec::with_capacity(frame.channels());
+        for i in 0..self.resamplers.len() {
+            resampled.push(self.resamplers[i].resample(&frame.data[i]));
+        }
+
         let delay =
             (TimeDelta::seconds(1) * self.window_size as i64) / self.input_sample_rate as i64;
 
         let result = base::Frame {
             sample_rate: self.reported_output_sample_rate,
+            channel_layout: frame.channel_layout,
             timestamp: frame.timestamp - delay,
-            left: self.resamplers[0].resample(&frame.left),
-            right: self.resamplers[1].resample(&frame.right),
+            data: resampled,
         };
 
         if result.len() > 0 {

@@ -83,6 +83,21 @@ impl LoudnessConfig {
 }
 
 #[derive(RustcEncodable, Copy, Clone)]
+pub struct SubwooferConfig {
+    pub enabled: bool,
+    pub crossover_frequency: f32,
+}
+
+impl SubwooferConfig {
+    pub fn default() -> SubwooferConfig {
+        SubwooferConfig {
+            enabled: false,
+            crossover_frequency: 80.0,
+        }
+    }
+}
+
+#[derive(RustcEncodable, Copy, Clone)]
 pub struct CrossfeedConfig {
     pub enabled: bool,
     pub level: f32,
@@ -121,6 +136,7 @@ pub struct State {
     pub mux_mode: MuxMode,
     pub loudness: LoudnessConfig,
     pub enable_drc: bool,
+    pub subwoofer: SubwooferConfig,
     pub crossfeed: CrossfeedConfig,
 }
 
@@ -131,6 +147,7 @@ pub enum UiMessage {
     SetInputGain { device: DeviceId, gain: Gain },
     SetMuxMode { mux_mode: MuxMode },
     SetEnableDrc { enable: bool },
+    SetSubwooferConfig { config: SubwooferConfig },
     SetCrossfeed { level: f32, delay_ms: f32 },
 }
 
@@ -169,8 +186,9 @@ impl StateController {
                 outputs: outputs,
                 output: 0,
                 mux_mode: MuxMode::Exclusive,
-                enable_drc: true,
                 loudness: LoudnessConfig::default(),
+                enable_drc: true,
+                subwoofer: SubwooferConfig::default(),
                 crossfeed: CrossfeedConfig::default(),
             },
             stream_observers: Vec::new(),
@@ -272,6 +290,11 @@ impl StateController {
             device: input_id,
             gain: gain,
         });
+    }
+
+    pub fn set_subwoofer(&mut self, subwoofer: SubwooferConfig) {
+        self.state.subwoofer = subwoofer;
+        self.broadcast(UiMessage::SetSubwooferConfig { config: subwoofer });
     }
 
     pub fn set_crossfeed(&mut self, crossfeed: CrossfeedConfig) {

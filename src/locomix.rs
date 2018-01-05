@@ -6,6 +6,7 @@ use locomix::alsa_input;
 use locomix::async_input;
 use locomix::base;
 use locomix::control;
+use locomix::crossover;
 use locomix::filters;
 use locomix::input;
 use locomix::light;
@@ -32,13 +33,13 @@ impl RunError {
 
 impl From<getopts::Fail> for RunError {
     fn from(e: getopts::Fail) -> RunError {
-        RunError{ msg: e.to_string() }
+        RunError { msg: e.to_string() }
     }
 }
 
 impl From<base::Error> for RunError {
     fn from(e: base::Error) -> RunError {
-        RunError{ msg: e.to_string() }
+        RunError { msg: e.to_string() }
     }
 }
 
@@ -47,29 +48,47 @@ fn print_usage(program: &str, opts: Options) {
     print!("{}", opts.usage(&brief));
 }
 
-fn get_impulse_response(output: &mut output::Output, input: &mut async_input::AsyncInput) -> Result<Vec<f32>, RunError> {
+fn get_impulse_response(
+    output: &mut output::Output,
+    input: &mut async_input::AsyncInput,
+) -> Result<Vec<f32>, RunError> {
     let frame_duration = TimeDelta::milliseconds(10);
     let frame_size = output.sample_rate() / 100;
     let mut pos = Time::now();
 
     // Silence for 100 ms.
     for _ in 0..10 {
-        let zero = base::Frame::new(output.sample_rate(), pos, frame_size);
+        let zero = base::Frame::new(
+            output.sample_rate(),
+            base::ChannelLayout::Stereo,
+            pos,
+            frame_size,
+        );
         pos += frame_duration;
         try!(output.write(zero));
     }
 
     // Impulse at -6db.
-    let mut impulse = base::Frame::new(output.sample_rate(), pos, frame_size);
+    let mut impulse = base::Frame::new(
+        output.sample_rate(),
+        base::ChannelLayout::Stereo,
+        pos,
+        frame_size,
+    );
     pos += frame_duration;
-    impulse.left[0] = 0.5;
-    impulse.right[0] = 0.5;
+    impulse.data[0][0] = 0.5;
+    impulse.data[1][0] = 0.5;
     try!(output.write(impulse));
 
     // Silence for 500 ms.
     for _ in 0..50 {
         let frame_size = output.sample_rate() / 100;
-        let zero = base::Frame::new(output.sample_rate(), pos, frame_size);
+        let zero = base::Frame::new(
+            output.sample_rate(),
+            base::ChannelLayout::Stereo,
+            pos,
+            frame_size,
+        );
         pos += frame_duration;
         try!(output.write(zero));
     }
@@ -78,7 +97,7 @@ fn get_impulse_response(output: &mut output::Output, input: &mut async_input::As
     loop {
         match try!(input.read(TimeDelta::zero())) {
             None => return Ok(result),
-            Some(s) => result.extend_from_slice(&s.left),
+            Some(s) => result.extend_from_slice(&s.data[0]),
         };
     }
 }
@@ -134,9 +153,6 @@ fn run() -> Result<(), RunError> {
         print_usage(&program, opts);
         return Ok(());
     }
-
-    let mut inputs = Vec::<Box<input::Input>>::new();
-    let mut input_states = Vec::<ui::InputState>::new();
 
     let sample_rate = match matches.opt_str("r").map(|x| x.parse::<usize>()) {
         None => 48000,
@@ -216,23 +232,14 @@ fn run() -> Result<(), RunError> {
         return Ok(());
     }
 
-    let mut outputs = Vec::<Box<output::Output>>::new();
     let mut output_states = Vec::<ui::OutputState>::new();
-
-    let dynamic_resampling = matches.opt_present("D");
-
     for o in matches.opt_strs("o") {
         let spec = try!(base::DeviceSpec::parse(&o));
-        let state = ui::OutputState::new(&spec.name);
-        let out = output::AsyncOutput::new(output::ResilientAlsaOutput::new(spec, period_duration));
-        let resampled_out = if dynamic_resampling {
-            output::FineResamplingOutput::new(out, resampler_window)
-        } else {
-            output::ResamplingOutput::new(out, resampler_window)
-        };
-        outputs.push(output::AsyncOutput::new(resampled_out));
-        output_states.push(state);
+        output_states.push(ui::OutputState::new(&spec.name));
     }
+
+    let mut inputs = Vec::<Box<input::Input>>::new();
+    let mut input_states = Vec::<ui::InputState>::new();
 
     for p in matches.opt_strs("p") {
         inputs.push(pipe_input::PipeInput::open(&p, period_duration));
@@ -250,6 +257,27 @@ fn run() -> Result<(), RunError> {
     }
 
     let shared_state = ui::SharedState::new(input_states, output_states);
+
+    let mut outputs = Vec::<Box<output::Output>>::new();
+
+    let dynamic_resampling = matches.opt_present("D");
+
+    for o in matches.opt_strs("o") {
+        let spec = try!(base::DeviceSpec::parse(&o));
+        let with_subwoofer = spec.channels > 2;
+        let out = output::AsyncOutput::new(output::ResilientAlsaOutput::new(spec, period_duration));
+        let out = if with_subwoofer {
+            crossover::SubwooferCrossoverOutput::new(out, &shared_state)
+        } else {
+            out
+        };
+        let resampled_out = if dynamic_resampling {
+            output::FineResamplingOutput::new(out, resampler_window)
+        } else {
+            output::ResamplingOutput::new(out, resampler_window)
+        };
+        outputs.push(output::AsyncOutput::new(resampled_out));
+    }
 
     let web_addr = match matches.opt_str("w") {
         Some(addr) => addr,
@@ -277,7 +305,7 @@ fn run() -> Result<(), RunError> {
         );
         let filtered_output = output::AsyncOutput::new(mixer::FilteredOutput::new(
             outputs.remove(0),
-            filters::ParallelFirFilter::new_pair(left, right),
+            filters::MultichannelFirFilter::new_pair(left, right),
             &shared_state,
         ));
         outputs.insert(0, filtered_output);
