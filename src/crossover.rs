@@ -3,59 +3,66 @@ use filters::*;
 use output;
 use ui;
 
-pub struct CrossoverFilter {
-    left_high_filter: BiquadFilter,
-    left_low_filter: BiquadFilter,
-    right_high_filter: BiquadFilter,
-    right_low_filter: BiquadFilter,
+struct ChannelCrossover {
+    high_filter: BiquadFilter,
+    low_filter: BiquadFilter,
 }
 
-impl CrossoverFilter {
-    pub fn new(sample_rate: usize, frequency: f32) -> CrossoverFilter {
-        CrossoverFilter {
-            left_high_filter: BiquadFilter::new(BiquadParams::high_pass_filter(
+impl ChannelCrossover {
+    fn new(sample_rate: usize, frequency: f32) -> ChannelCrossover {
+        ChannelCrossover {
+            high_filter: BiquadFilter::new(BiquadParams::high_pass_filter(
                 sample_rate as FCoef,
                 frequency as FCoef,
                 1.0,
             )),
-            left_low_filter: BiquadFilter::new(BiquadParams::low_pass_filter(
-                sample_rate as FCoef,
-                frequency as FCoef,
-                1.0,
-            )),
-            right_high_filter: BiquadFilter::new(BiquadParams::high_pass_filter(
-                sample_rate as FCoef,
-                frequency as FCoef,
-                1.0,
-            )),
-            right_low_filter: BiquadFilter::new(BiquadParams::low_pass_filter(
+            low_filter: BiquadFilter::new(BiquadParams::low_pass_filter(
                 sample_rate as FCoef,
                 frequency as FCoef,
                 1.0,
             )),
         }
     }
+}
+
+pub struct CrossoverFilter {
+    sample_rate: usize,
+    frequency: f32,
+    channels: Vec<ChannelCrossover>,
+}
+
+impl CrossoverFilter {
+    pub fn new(sample_rate: usize, frequency: f32) -> CrossoverFilter {
+        CrossoverFilter {
+            sample_rate: sample_rate,
+            frequency: frequency,
+            channels: Vec::new(),
+        }
+    }
 
     pub fn apply(&mut self, mut frame: Frame) -> Frame {
-        assert!(frame.channel_layout == ChannelLayout::Stereo);
+        let mut bass = vec![0.0; frame.len()];
+        for c in 0..frame.channels.len() {
+            if self.channels.len() <= c {
+                self.channels
+                    .push(ChannelCrossover::new(self.sample_rate, self.frequency));
+            }
 
-        let mut left_bass = frame.data[0].clone();
-        self.left_low_filter.apply_multi(&mut left_bass[..]);
+            let crossover = &mut self.channels[c];
+            let pcm = &mut frame.channels[c].pcm;
 
-        let mut right_bass = frame.data[1].clone();
-        self.right_low_filter.apply_multi(&mut right_bass[..]);
+            for i in 0..bass.len() {
+                bass[i] += crossover.low_filter.apply_one(pcm[i]);
+            }
 
-        self.left_high_filter.apply_multi(&mut frame.data[0][..]);
-        self.right_high_filter.apply_multi(&mut frame.data[1][..]);
-
-        // Mix two sub channels.
-        for i in 0..left_bass.len() {
-            left_bass[i] += right_bass[i];
+            crossover.high_filter.apply_multi(&mut pcm[..]);
         }
 
         // Add the sub channel.
-        frame.data.push(left_bass);
-        frame.channel_layout = ChannelLayout::StereoSub;
+        frame.channels.push(ChannelData {
+            pos: ChannelPos::Sub,
+            pcm: bass,
+        });
 
         frame
     }

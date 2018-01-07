@@ -37,27 +37,12 @@ impl SampleFormat {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
-pub enum ChannelLayout {
-    Stereo,
-    StereoSub,
-}
-
-impl ChannelLayout {
-    pub fn channels(&self) -> usize {
-        match *self {
-            ChannelLayout::Stereo => 2,
-            ChannelLayout::StereoSub => 3,
-        }
-    }
-
-    pub fn from_channels_num(channels: usize) -> Option<ChannelLayout> {
-        match channels {
-            2 => Some(ChannelLayout::Stereo),
-            3 => Some(ChannelLayout::StereoSub),
-            _ => None,
-        }
-    }
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ChannelPos {
+    FL,
+    FR,
+    Sub,
+    Other,
 }
 
 impl fmt::Display for SampleFormat {
@@ -105,25 +90,25 @@ fn write_sample_s32le(val: f32, buf: &mut [u8]) {
     buf[3] = ((ival & 0xff000000) >> 24) as u8;
 }
 
-fn read_sample_s16le(buf: &[u8], pos: usize) -> f32 {
-    (((((buf[pos + 0] as u32) << 16) | ((buf[pos + 1] as u32) << 24)) as i32 as f64 +
-        32767.5) / 2147483648f64) as f32
+fn read_sample_s16le(buf: &[u8]) -> f32 {
+    (((((buf[0] as u32) << 16) | ((buf[1] as u32) << 24)) as i32 as f64 + 32767.5) /
+        2147483648f64) as f32
 }
 
-fn read_sample_s24le3(buf: &[u8], pos: usize) -> f32 {
-    (((((buf[pos + 0] as u32) << 8) | ((buf[pos + 1] as u32) << 16) |
-        ((buf[pos + 2] as u32) << 24)) as i32 as f64 + 127.5) / 2147483648f64) as f32
+fn read_sample_s24le3(buf: &[u8]) -> f32 {
+    (((((buf[0] as u32) << 8) | ((buf[1] as u32) << 16) |
+        ((buf[2] as u32) << 24)) as i32 as f64 + 127.5) / 2147483648f64) as f32
 }
 
-fn read_sample_s24le4(buf: &[u8], pos: usize) -> f32 {
-    (((((buf[pos + 0] as u32) << 8) | ((buf[pos + 1] as u32) << 16) |
-        ((buf[pos + 2] as u32) << 24)) as i32 as f64 + 127.5) / 2147483648f64) as f32
+fn read_sample_s24le4(buf: &[u8]) -> f32 {
+    (((((buf[0] as u32) << 8) | ((buf[1] as u32) << 16) |
+        ((buf[2] as u32) << 24)) as i32 as f64 + 127.5) / 2147483648f64) as f32
 }
 
-fn read_sample_s32le(buf: &[u8], pos: usize) -> f32 {
-    (((((buf[pos + 0] as u32) << 0) | ((buf[pos + 1] as u32) << 8) |
-        ((buf[pos + 2] as u32) << 16) | ((buf[pos + 3] as u32) << 24)) as i32 as
-        f64 + 0.5) / 2147483648f64) as f32
+fn read_sample_s32le(buf: &[u8]) -> f32 {
+    (((((buf[0] as u32) << 0) | ((buf[1] as u32) << 8) | ((buf[2] as u32) << 16) |
+        ((buf[3] as u32) << 24)) as i32 as f64 + 0.5) /
+        2147483648f64) as f32
 }
 
 // Fast SIMD-optimized convolution. Optimized for NEON on Raspberry PI 3.
@@ -166,36 +151,58 @@ pub fn get_sample_timestamp(start: Time, sample_rate: usize, sample: i64) -> Tim
             sample_rate as i64
 }
 
+pub struct ChannelData {
+    pub pos: ChannelPos,
+    pub pcm: Vec<f32>,
+}
+
+impl ChannelData {
+    pub fn new(pos: ChannelPos, samples: usize) -> ChannelData {
+        // Avoid denormal zero.
+        let zero = 1e-10f32;
+        ChannelData {
+            pos: pos,
+            pcm: vec![zero; samples],
+        }
+    }
+}
+
 pub struct Frame {
     pub sample_rate: usize,
-    pub channel_layout: ChannelLayout,
     pub timestamp: Time,
-    pub data: Vec<Vec<f32>>,
+    pub channels: Vec<ChannelData>,
 }
 
 impl Frame {
-    pub fn new(
-        sample_rate: usize,
-        channel_layout: ChannelLayout,
-        timestamp: Time,
-        samples: usize,
-    ) -> Frame {
-        // Avoid denormal zero.
-        let zero = 1e-10f32;
+    pub fn new(sample_rate: usize, timestamp: Time) -> Frame {
         Frame {
             sample_rate: sample_rate,
-            channel_layout: channel_layout,
             timestamp: timestamp,
-            data: vec![vec![zero; samples]; channel_layout.channels()],
+            channels: Vec::new(),
+        }
+    }
+
+    pub fn new_stereo(sample_rate: usize, timestamp: Time, samples: usize) -> Frame {
+        Frame {
+            sample_rate: sample_rate,
+            timestamp: timestamp,
+            channels: vec![
+                ChannelData::new(ChannelPos::FL, samples),
+                ChannelData::new(ChannelPos::FR, samples),
+            ],
         }
     }
 
     pub fn len(&self) -> usize {
-        self.data[0].len()
+        if self.channels.is_empty() {
+            0
+        } else {
+            self.channels[0].pcm.len()
+        }
     }
 
     pub fn channels(&self) -> usize {
-        self.channel_layout.channels()
+        self.channels.len()
     }
 
     pub fn duration(&self) -> TimeDelta {
@@ -207,30 +214,40 @@ impl Frame {
     }
 
     pub fn to_buffer(&self, format: SampleFormat) -> Vec<u8> {
-        self.to_buffer_with_channels(format, self.channels())
+        let chmap: Vec<ChannelPos> = self.channels.iter().map(|c| c.pos).collect();
+        self.to_buffer_with_channel_map(format, chmap.as_slice())
     }
 
-    pub fn to_buffer_with_channels(&self, format: SampleFormat, out_channels: usize) -> Vec<u8> {
-        let bytes_per_frame = format.bytes_per_sample() * out_channels;
+    pub fn to_buffer_with_channel_map(
+        &self,
+        format: SampleFormat,
+        out_channels: &[ChannelPos],
+    ) -> Vec<u8> {
+        let bytes_per_frame = format.bytes_per_sample() * out_channels.len();
         let mut buf = vec![0; bytes_per_frame * self.len()];
-        for c in 0..self.channels() {
-            if c >= out_channels {
+        for channel in &self.channels {
+            if channel.pos == ChannelPos::Other {
                 continue;
             }
-            let out_channel = if c == 2 { out_channels - 1 } else { c };
+
+            let out_channel = match out_channels.iter().position(|pos| channel.pos == *pos) {
+                Some(p) => p,
+                None => continue,
+            };
+
             let shift = out_channel * format.bytes_per_sample();
             match format {
                 SampleFormat::S16LE => for i in 0..self.len() {
-                    write_sample_s16le(self.data[c][i], &mut buf[i * bytes_per_frame + shift..]);
+                    write_sample_s16le(channel.pcm[i], &mut buf[i * bytes_per_frame + shift..]);
                 },
                 SampleFormat::S24LE3 => for i in 0..self.len() {
-                    write_sample_s24le3(self.data[c][i], &mut buf[i * bytes_per_frame + shift..]);
+                    write_sample_s24le3(channel.pcm[i], &mut buf[i * bytes_per_frame + shift..]);
                 },
                 SampleFormat::S24LE4 => for i in 0..self.len() {
-                    write_sample_s24le4(self.data[c][i], &mut buf[i * bytes_per_frame + shift..]);
+                    write_sample_s24le4(channel.pcm[i], &mut buf[i * bytes_per_frame + shift..]);
                 },
                 SampleFormat::S32LE => for i in 0..self.len() {
-                    write_sample_s32le(self.data[c][i], &mut buf[i * bytes_per_frame + shift..]);
+                    write_sample_s32le(channel.pcm[i], &mut buf[i * bytes_per_frame + shift..]);
                 },
             }
         }
@@ -238,43 +255,58 @@ impl Frame {
         buf
     }
 
-    pub fn from_buffer(
+    pub fn from_buffer_stereo(
         format: SampleFormat,
         sample_rate: usize,
-        channel_layout: ChannelLayout,
         buffer: &[u8],
         timestamp: Time,
     ) -> Frame {
-        let channels = channel_layout.channels();
-        let samples = buffer.len() / format.bytes_per_sample() / channels;
-        let mut frame = Frame::new(sample_rate, channel_layout, timestamp, samples);
+        Frame::from_buffer(
+            format,
+            sample_rate,
+            &[ChannelPos::FL, ChannelPos::FR],
+            buffer,
+            timestamp,
+        )
+    }
 
-        let bytes_per_sample = format.bytes_per_sample() * channels;
+    pub fn from_buffer(
+        format: SampleFormat,
+        sample_rate: usize,
+        channels: &[ChannelPos],
+        buffer: &[u8],
+        timestamp: Time,
+    ) -> Frame {
+        let samples = buffer.len() / format.bytes_per_sample() / channels.len();
+        let mut frame = Frame::new(sample_rate, timestamp);
 
-        match format {
-            SampleFormat::S16LE => for i in 0..samples {
-                for c in 0..channels {
-                    frame.data[c][i] = read_sample_s16le(&buffer, i * bytes_per_sample + c * 2);
-                }
-            },
-            SampleFormat::S24LE3 => for i in 0..samples {
-                for c in 0..channels {
-                    frame.data[c][i] = read_sample_s24le3(&buffer, i * bytes_per_sample + c * 3);
-                }
-            },
-            SampleFormat::S24LE4 => for i in 0..samples {
-                for c in 0..channels {
-                    frame.data[c][i] = read_sample_s24le4(&buffer, i * bytes_per_sample + c * 4);
-                }
-            },
-            SampleFormat::S32LE => for i in 0..samples {
-                for c in 0..channels {
-                    frame.data[c][i] = read_sample_s32le(&buffer, i * bytes_per_sample + c * 4);
-                }
-            },
+        let bytes_per_sample = format.bytes_per_sample() * channels.len();
+
+        for c in 0..channels.len() {
+            let mut data = ChannelData::new(channels[c], samples);
+            match format {
+                SampleFormat::S16LE => for i in 0..samples {
+                    data.pcm[i] = read_sample_s16le(&buffer[i * bytes_per_sample + c * 2..]);
+                },
+                SampleFormat::S24LE3 => for i in 0..samples {
+                    data.pcm[i] = read_sample_s24le3(&buffer[i * bytes_per_sample + c * 3..]);
+                },
+                SampleFormat::S24LE4 => for i in 0..samples {
+                    data.pcm[i] = read_sample_s24le4(&buffer[i * bytes_per_sample + c * 4..]);
+                },
+                SampleFormat::S32LE => for i in 0..samples {
+                    data.pcm[i] = read_sample_s32le(&buffer[i * bytes_per_sample + c * 4..]);
+                },
+            }
+            frame.channels.push(data)
         }
 
         frame
+    }
+
+    pub fn is_stereo(&self) -> bool {
+        self.channels.len() == 2 && self.channels[0].pos == ChannelPos::FL &&
+            self.channels[1].pos == ChannelPos::FR
     }
 }
 
@@ -326,13 +358,22 @@ pub struct DeviceSpec {
     pub name: String,
     pub id: String,
     pub sample_rate: Option<usize>,
-    pub channels: usize,
+    pub channels: Vec<ChannelPos>,
 }
 
 impl DeviceSpec {
     pub fn parse(spec_str: &str) -> Result<DeviceSpec> {
         let re = regex::Regex::new(
-            r"^((?P<name>[^@]+)@)?(?P<device_id>[^@#]+)(#(?P<sample_rate>\d+)?(.(?P<channels>\d+))?)?$",
+            r"(?x)^
+            ((?P<name>[^@]+)@)?
+            (?P<device_id>[^@\#]+)
+            (\#
+              (?P<sample_rate>\d+)?
+              (\.(
+                (?P<chmap>([a-zA-Z_]{1,5})(\s[a-zA-Z_]{1,5})+)|
+                (?P<num_channels>\d+)
+              ))?
+            )?$",
         ).unwrap();
         let m = match re.captures(spec_str) {
             Some(m) => m,
@@ -355,17 +396,41 @@ impl DeviceSpec {
             },
         };
 
-        let channels = match m.name("channels") {
-            None => 2,
-            Some(v) => match v.as_str().parse::<usize>() {
-                Ok(c) if c > 0 && c <= 8 => c,
+        let channels = match (m.name("chmap"), m.name("num_channels")) {
+            (Some(chmap), None) => {
+                chmap.as_str().split_whitespace().map(|c|
+                    match c.to_uppercase().as_str() {
+                        "L" | "FL" | "LEFT" => ChannelPos::FL,
+                        "R" | "FR" | "RIGHT" => ChannelPos::FR,
+                        "S" | "SUB" | "LFE" => ChannelPos::Sub,
+                        "_" => ChannelPos::Other,
+                        _ => {
+                            println!("WARNING: Unrecognized channel name {}", c);
+                            ChannelPos::Other
+                        }
+                    }
+                ).collect()
+            },
+            (None, Some(num_channels)) => match num_channels.as_str().parse::<usize>() {
+                Ok(c) if c > 1 && c <= 8 =>  {
+                    let mut channels = vec![ChannelPos::Other; c];
+                    channels[0] = ChannelPos::FL;
+                    channels[1] = ChannelPos::FR;
+                    if c > 3 {
+                        channels[3] = ChannelPos::Sub;
+                    } else if c == 3 {
+                        channels[2] = ChannelPos::Sub;
+                    }
+                    channels
+                },
                 _ => {
                     return Err(Error::new(&format!(
                         "Invalid number of channels in device spec: {}",
-                        v.as_str()
+                        num_channels.as_str()
                     )))
                 }
             },
+            _ => vec![ChannelPos::FL, ChannelPos::FR],
         };
 
         Ok(DeviceSpec {

@@ -245,28 +245,32 @@ impl FilterPairConfig for LoudnessFilterPairConfig {
 pub type LoudnessFilter = FilterPair<LoudnessFilterPairConfig>;
 
 pub struct MultichannelFilter<T: AudioFilter<T>> {
+    params: T::Params,
     filters: Vec<T>,
 }
 
 impl<T: AudioFilter<T>> MultichannelFilter<T> {
-    pub fn new(params: T::Params, channels: usize) -> MultichannelFilter<T> {
-        let mut filters: Vec<T> = Vec::<T>::with_capacity(channels);
-        for _ in 0..channels {
-            filters.push(T::new(params.clone()));
-        }
+    pub fn new(params: T::Params) -> MultichannelFilter<T> {
 
-        MultichannelFilter { filters: filters }
+        MultichannelFilter {
+            params: params,
+            filters: Vec::new(),
+        }
     }
 
     pub fn set_params(&mut self, params: T::Params) {
         for i in 0..self.filters.len() {
             self.filters[i].set_params(params.clone());
         }
+        self.params = params
     }
 
     pub fn apply(&mut self, frame: &mut Frame) {
-        for i in 0..self.filters.len() {
-            self.filters[i].apply_multi(&mut frame.data[i][..]);
+        for i in 0..frame.channels.len() {
+            if self.filters.len() <= i {
+                self.filters.push(T::new(self.params.clone()));
+            }
+            self.filters[i].apply_multi(&mut frame.channels[i].pcm[..]);
         }
     }
 }
@@ -325,7 +329,7 @@ impl MultichannelFirFilter {
             let (s, r) = mpsc::channel::<Vec<f32>>();
             recv_channels.push(r);
             let mut v = vec![0f32; 0];
-            mem::swap(&mut v, &mut frame.data[i + 1]);
+            mem::swap(&mut v, &mut frame.channels[i + 1].pcm);
             self.threads[i]
                 .send(FilterJob {
                     data: v,
@@ -336,11 +340,11 @@ impl MultichannelFirFilter {
         }
 
         self.channel0.window_size = self.channel0.buffer.len() * self.size_multiplier / 256;
-        self.channel0.apply_multi(&mut frame.data[0][..]);
+        self.channel0.apply_multi(&mut frame.channels[0].pcm[..]);
 
         for i in 0..self.threads.len() {
             let mut v = recv_channels[i].recv().expect("Failed to apply filter");
-            mem::swap(&mut v, &mut frame.data[i + 1]);
+            mem::swap(&mut v, &mut frame.channels[i + 1].pcm);
         }
 
         let now = time::Time::now();
@@ -548,17 +552,12 @@ impl CrossfeedFilter {
     }
 
     pub fn apply(&mut self, frame: Frame) -> Frame {
-        assert!(frame.channel_layout == ChannelLayout::Stereo);
+        assert!(frame.is_stereo());
 
         if self.level == 0.0 {
             return frame;
         }
-        let mut out = Frame::new(
-            frame.sample_rate,
-            ChannelLayout::Stereo,
-            frame.timestamp,
-            frame.len(),
-        );
+        let mut out = Frame::new_stereo(frame.sample_rate, frame.timestamp, frame.len());
 
         let delay = (self.delay_ms * frame.sample_rate as f32 / 1000.0) as usize;
         assert!(delay < out.len());
@@ -567,23 +566,28 @@ impl CrossfeedFilter {
             Some(ref p) => {
                 let s = p.len() - delay;
                 for i in 0..delay {
-                    out.data[0][i] = self.left_straigh_filter.apply_one(frame.data[0][i]) +
-                        self.left_cross_filter.apply_one(p.data[0][s + i]) * self.level;
-                    out.data[1][i] = self.right_straight_filter.apply_one(frame.data[1][i]) +
-                        self.right_cross_filter.apply_one(p.data[1][s + i]) * self.level;
+                    out.channels[0].pcm[i] = self.left_straigh_filter
+                        .apply_one(frame.channels[0].pcm[i]) +
+                        self.left_cross_filter.apply_one(p.channels[0].pcm[s + i]) * self.level;
+                    out.channels[1].pcm[i] = self.right_straight_filter
+                        .apply_one(frame.channels[1].pcm[i]) +
+                        self.right_cross_filter.apply_one(p.channels[1].pcm[s + i]) * self.level;
                 }
             }
             None => for i in 0..delay {
-                out.data[0][i] = frame.data[0][i];
-                out.data[1][i] = frame.data[1][i];
+                out.channels[0].pcm[i] = frame.channels[0].pcm[i];
+                out.channels[1].pcm[i] = frame.channels[1].pcm[i];
             },
         }
 
         for i in delay..out.len() {
-            out.data[0][i] = self.left_straigh_filter.apply_one(frame.data[0][i]) +
-                self.left_cross_filter.apply_one(frame.data[1][i - delay]) * self.level;
-            out.data[1][i] = self.right_straight_filter.apply_one(frame.data[1][i]) +
-                self.right_cross_filter.apply_one(frame.data[0][i - delay]) * self.level;
+            out.channels[0].pcm[i] = self.left_straigh_filter.apply_one(frame.channels[0].pcm[i]) +
+                self.left_cross_filter
+                    .apply_one(frame.channels[1].pcm[i - delay]) * self.level;
+            out.channels[1].pcm[i] = self.right_straight_filter
+                .apply_one(frame.channels[1].pcm[i]) +
+                self.right_cross_filter
+                    .apply_one(frame.channels[0].pcm[i - delay]) * self.level;
         }
 
         self.previous = Some(frame);
@@ -621,21 +625,20 @@ pub fn draw_filter_graph<T: AudioFilter<T>>(sample_rate: usize, params: T::Param
 fn get_crossfeed_response(sample_rate: FCoef, freq: FCoef) -> FCoef {
     let mut f = CrossfeedFilter::new(sample_rate as usize);
     f.set_params(0.3, 0.3);
-    let mut test_signal = Frame::new(
+    let mut test_signal = Frame::new_stereo(
         sample_rate as usize,
-        ChannelLayout::Stereo,
         time::Time::now(),
         (sample_rate as usize) * 2,
     );
     for i in 0..test_signal.len() {
-        test_signal.data[0][i] = (i as FCoef / sample_rate * freq * 2.0 * PI).sin() as f32;
-        test_signal.data[1][i] = (i as FCoef / sample_rate * freq * 2.0 * PI).sin() as f32;
+        test_signal.channels[0].pcm[i] = (i as FCoef / sample_rate * freq * 2.0 * PI).sin() as f32;
+        test_signal.channels[1].pcm[i] = (i as FCoef / sample_rate * freq * 2.0 * PI).sin() as f32;
     }
     let response = f.apply(test_signal);
 
     let mut p_sum = 0.0;
     for i in 0..response.len() {
-        p_sum += (response.data[0][i] as FCoef).powi(2);
+        p_sum += (response.channels[0].pcm[i] as FCoef).powi(2);
     }
 
     ((p_sum / (response.len() as FCoef)) * 2.0).log(10.0) * 10.0

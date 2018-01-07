@@ -81,7 +81,7 @@ pub struct AlsaOutput {
     sample_rate: usize,
     period_size: usize,
     format: SampleFormat,
-    channels: usize,
+    channels: Vec<ChannelPos>,
     rate_detector: RateDetector,
     measured_sample_rate: f64,
 }
@@ -99,7 +99,7 @@ impl AlsaOutput {
         let format;
         {
             let hwp = try!(alsa::pcm::HwParams::any(&pcm));
-            try!(hwp.set_channels(spec.channels as u32));
+            try!(hwp.set_channels(spec.channels.len() as u32));
 
             try!(hwp.set_access(alsa::pcm::Access::RWInterleaved));
             try!(hwp.set_rate_resample(false));
@@ -162,14 +162,15 @@ impl AlsaOutput {
             };
 
             println!(
-                "INFO: Opened {} ({}). Buffer size: {}x{}. {} {} {}ch.",
+                "INFO: Opened {} ({}). Buffer size: {}x{}. {} {} {}ch. Chmap: {}",
                 spec.name,
                 spec.id,
                 period_size,
                 try!(hwp.get_periods()),
                 sample_rate,
                 format,
-                spec.channels
+                spec.channels.len(),
+                try!(pcm.get_chmap())
             );
         }
 
@@ -196,11 +197,11 @@ impl Output for AlsaOutput {
             return Ok(());
         }
 
-        let buf = frame.to_buffer_with_channels(self.format, self.channels);
+        let buf = frame.to_buffer_with_channel_map(self.format, self.channels.as_slice());
         let mut pos: usize = 0;
 
         while pos < frame.len() {
-            let start = pos * self.format.bytes_per_sample() * self.channels;
+            let start = pos * self.format.bytes_per_sample() * self.channels.len();
             let r = self.pcm.io().writei(&buf[start..]);
             match r {
                 Ok(l) => pos += l,
@@ -210,7 +211,7 @@ impl Output for AlsaOutput {
 
                     let zero_buf = vec![
                         0u8;
-                        self.period_size * self.channels *
+                        self.period_size * self.channels.len() *
                             self.format.bytes_per_sample()
                     ];
                     try!(self.pcm.io().writei(&zero_buf[..]));
@@ -378,7 +379,7 @@ impl Output for ResamplingOutput {
             self.resampler.set_output_sample_rate(out_sample_rate);
         }
 
-        match self.resampler.resample(&frame) {
+        match self.resampler.resample(frame) {
             None => Ok(()),
             Some(frame) => self.output.write(frame),
         }
@@ -446,7 +447,7 @@ impl Output for FineResamplingOutput {
             self.last_rate_update = now;
         }
 
-        match self.resampler.resample(&frame) {
+        match self.resampler.resample(frame) {
             None => Ok(()),
             Some(frame) => self.output.write(frame),
         }

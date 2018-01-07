@@ -7,9 +7,6 @@ use std::cmp;
 use output;
 use ui;
 
-// Currently mixing handles only 2 channels.
-const CHANNEL_LAYOUT: ChannelLayout = ChannelLayout::Stereo;
-
 struct InputMixer {
     input: AsyncInput,
     current_frame: Frame,
@@ -23,7 +20,7 @@ impl InputMixer {
     fn new(input: AsyncInput) -> InputMixer {
         let mut r = InputMixer {
             input: input,
-            current_frame: Frame::new(1, CHANNEL_LAYOUT, Time::zero(), 0),
+            current_frame: Frame::new_stereo(1, Time::zero(), 0),
             current_frame_pos: 0,
             volume: ui::Gain { db: -20.0 },
             gain: ui::Gain { db: 0.0 },
@@ -64,13 +61,27 @@ impl InputMixer {
                 }
             }
 
-            for i in 0..cmp::min(mixed_frame.channels(), self.current_frame.channels()) {
-                mixed_frame.data[i][pos] +=
-                    self.multiplier * self.current_frame.data[i][self.current_frame_pos];
+            let samples = cmp::min(
+                self.current_frame.len() - self.current_frame_pos,
+                mixed_frame.len() - pos,
+            );
+
+            for mut channel in &mut mixed_frame.channels {
+                let src = match self.current_frame
+                    .channels
+                    .iter()
+                    .find(|c| c.pos == channel.pos)
+                {
+                    Some(c) => c,
+                    None => continue,
+                };
+                for i in 0..samples {
+                    channel.pcm[pos + i] += self.multiplier * src.pcm[self.current_frame_pos + i];
+                }
             }
 
-            self.current_frame_pos += 1;
-            pos += 1;
+            self.current_frame_pos += samples;
+            pos += samples;
         }
 
         Ok(true)
@@ -153,7 +164,7 @@ pub fn run_mixer_loop(
     let mut selected_output = 0;
 
     let mut loudness_filter =
-        MultichannelFilter::<LoudnessFilter>::new(SimpleFilterParams::new(sample_rate, 10.0), 2);
+        MultichannelFilter::<LoudnessFilter>::new(SimpleFilterParams::new(sample_rate, 10.0));
     let mut crossfeed_filter = CrossfeedFilter::new(sample_rate);
 
     let mut exclusive_mux_mode = true;
@@ -168,7 +179,7 @@ pub fn run_mixer_loop(
 
     loop {
         let frame_timestamp = get_sample_timestamp(stream_start_time, sample_rate, stream_pos);
-        let mut frame = Frame::new(sample_rate, CHANNEL_LAYOUT, frame_timestamp, period_size);
+        let mut frame = Frame::new_stereo(sample_rate, frame_timestamp, period_size);
         stream_pos += frame.len() as i64;
 
         let mut have_data = false;

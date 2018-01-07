@@ -13,9 +13,9 @@ use super::input::*;
 
 const FORMAT: SampleFormat = SampleFormat::S32LE;
 const SAMPLE_RATE: usize = 44100;
-const CHANNEL_LAYOUT: ChannelLayout = ChannelLayout::Stereo;
+const CHANNELS: usize = 2;
 const FILE_REOPEN_FREQUENCY_SECS: i64 = 3;
-const BYTES_PER_SAMPLE: usize = 4 * 2; // FORMAT.bytes_per_sample() * CHANNEL_LAYOUT.channels();
+const BYTES_PER_SAMPLE: usize = 4 * CHANNELS; // FORMAT.bytes_per_sample() * CHANNELS;
 
 pub struct PipeInput {
     filename: String,
@@ -107,10 +107,9 @@ impl Input for PipeInput {
             }
         };
 
-        let mut frame = Frame::from_buffer(
+        let mut frame = Frame::from_buffer_stereo(
             FORMAT,
             SAMPLE_RATE,
-            CHANNEL_LAYOUT,
             &buffer[0..bytes_read],
             get_sample_timestamp(self.reference_time, SAMPLE_RATE, self.pos),
         );

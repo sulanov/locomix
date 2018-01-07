@@ -58,37 +58,22 @@ fn get_impulse_response(
 
     // Silence for 100 ms.
     for _ in 0..10 {
-        let zero = base::Frame::new(
-            output.sample_rate(),
-            base::ChannelLayout::Stereo,
-            pos,
-            frame_size,
-        );
+        let zero = base::Frame::new_stereo(output.sample_rate(), pos, frame_size);
         pos += frame_duration;
         try!(output.write(zero));
     }
 
     // Impulse at -6db.
-    let mut impulse = base::Frame::new(
-        output.sample_rate(),
-        base::ChannelLayout::Stereo,
-        pos,
-        frame_size,
-    );
+    let mut impulse = base::Frame::new_stereo(output.sample_rate(), pos, frame_size);
     pos += frame_duration;
-    impulse.data[0][0] = 0.5;
-    impulse.data[1][0] = 0.5;
+    impulse.channels[0].pcm[0] = 0.5;
+    impulse.channels[1].pcm[0] = 0.5;
     try!(output.write(impulse));
 
     // Silence for 500 ms.
     for _ in 0..50 {
         let frame_size = output.sample_rate() / 100;
-        let zero = base::Frame::new(
-            output.sample_rate(),
-            base::ChannelLayout::Stereo,
-            pos,
-            frame_size,
-        );
+        let zero = base::Frame::new_stereo(output.sample_rate(), pos, frame_size);
         pos += frame_duration;
         try!(output.write(zero));
     }
@@ -97,7 +82,7 @@ fn get_impulse_response(
     loop {
         match try!(input.read(TimeDelta::zero())) {
             None => return Ok(result),
-            Some(s) => result.extend_from_slice(&s.data[0]),
+            Some(s) => result.extend_from_slice(&s.channels[0].pcm),
         };
     }
 }
@@ -264,7 +249,7 @@ fn run() -> Result<(), RunError> {
 
     for o in matches.opt_strs("o") {
         let spec = try!(base::DeviceSpec::parse(&o));
-        let with_subwoofer = spec.channels > 2;
+        let with_subwoofer = spec.channels.iter().any(|c| *c == base::ChannelPos::Sub);
         let out = output::AsyncOutput::new(output::ResilientAlsaOutput::new(spec, period_duration));
         let out = if with_subwoofer {
             crossover::SubwooferCrossoverOutput::new(out, &shared_state)

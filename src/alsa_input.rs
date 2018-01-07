@@ -10,7 +10,7 @@ use base::*;
 
 use super::input::*;
 
-const CHANNEL_LAYOUT: ChannelLayout = ChannelLayout::Stereo;
+const CHANNELS: usize = 2;
 
 const ACCEPTED_RATES: [usize; 6] = [44100, 48000, 88200, 96000, 176400, 192000];
 
@@ -93,7 +93,7 @@ impl AlsaInput {
         let format;
         {
             let hwp = try!(alsa::pcm::HwParams::any(&pcm));
-            try!(hwp.set_channels(CHANNEL_LAYOUT.channels() as u32));
+            try!(hwp.set_channels(CHANNELS as u32));
             try!(hwp.set_rate(sample_rate as u32, alsa::ValueOr::Nearest));
 
             for fmt in [
@@ -158,11 +158,7 @@ impl AlsaInput {
 
 impl Input for AlsaInput {
     fn read(&mut self) -> Result<Option<Frame>> {
-        let mut buf = vec![
-            0u8;
-            self.period_size * CHANNEL_LAYOUT.channels() *
-                self.format.bytes_per_sample()
-        ];
+        let mut buf = vec![0u8; self.period_size * CHANNELS * self.format.bytes_per_sample()];
         let read_result = self.pcm.io().readi(&mut buf[..]);
         let samples = match read_result {
             Ok(0) => return Ok(None),
@@ -195,7 +191,7 @@ impl Input for AlsaInput {
             }
         }
 
-        let bytes = samples * CHANNEL_LAYOUT.channels() * self.format.bytes_per_sample();
+        let bytes = samples * CHANNELS * self.format.bytes_per_sample();
 
         let mut all_zeros = true;
         for i in 0..bytes {
@@ -225,10 +221,9 @@ impl Input for AlsaInput {
             _ => (),
         }
 
-        Ok(Some(Frame::from_buffer(
+        Ok(Some(Frame::from_buffer_stereo(
             self.format,
             self.sample_rate,
-            CHANNEL_LAYOUT,
             &buf[0..bytes],
             Time::now(),
         )))

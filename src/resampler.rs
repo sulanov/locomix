@@ -382,7 +382,7 @@ impl StreamResampler {
         self.resamplers.clear();
     }
 
-    pub fn resample(&mut self, frame: &base::Frame) -> Option<base::Frame> {
+    pub fn resample(&mut self, mut frame: base::Frame) -> Option<base::Frame> {
         if self.input_sample_rate != frame.sample_rate {
             self.resamplers.clear();
             self.input_sample_rate = frame.sample_rate;
@@ -395,23 +395,17 @@ impl StreamResampler {
             );
         }
 
-        let mut resampled = Vec::with_capacity(frame.channels());
-        for i in 0..self.resamplers.len() {
-            resampled.push(self.resamplers[i].resample(&frame.data[i]));
+        for i in 0..frame.channels.len() {
+            frame.channels[i].pcm = self.resamplers[i].resample(&frame.channels[i].pcm);
         }
 
         let delay =
             (TimeDelta::seconds(1) * self.window_size as i64) / self.input_sample_rate as i64;
+        frame.timestamp -= delay;
+        frame.sample_rate = self.output_sample_rate;
 
-        let result = base::Frame {
-            sample_rate: self.output_sample_rate,
-            channel_layout: frame.channel_layout,
-            timestamp: frame.timestamp - delay,
-            data: resampled,
-        };
-
-        if result.len() > 0 {
-            Some(result)
+        if frame.len() > 0 {
+            Some(frame)
         } else {
             None
         }
@@ -460,7 +454,7 @@ impl FineStreamResampler {
     }
 
 
-    pub fn resample(&mut self, frame: &base::Frame) -> Option<base::Frame> {
+    pub fn resample(&mut self, mut frame: base::Frame) -> Option<base::Frame> {
         if self.input_sample_rate != frame.sample_rate {
             self.input_sample_rate = frame.sample_rate;
             self.resamplers = [
@@ -469,23 +463,17 @@ impl FineStreamResampler {
             ];
         }
 
-        let mut resampled = Vec::with_capacity(frame.channels());
-        for i in 0..self.resamplers.len() {
-            resampled.push(self.resamplers[i].resample(&frame.data[i]));
+        for i in 0..frame.channels.len() {
+            frame.channels[i].pcm = self.resamplers[i].resample(&frame.channels[i].pcm);
         }
 
         let delay =
             (TimeDelta::seconds(1) * self.window_size as i64) / self.input_sample_rate as i64;
+        frame.timestamp -= delay;
+        frame.sample_rate = self.reported_output_sample_rate;
 
-        let result = base::Frame {
-            sample_rate: self.reported_output_sample_rate,
-            channel_layout: frame.channel_layout,
-            timestamp: frame.timestamp - delay,
-            data: resampled,
-        };
-
-        if result.len() > 0 {
-            Some(result)
+        if frame.len() > 0 {
+            Some(frame)
         } else {
             None
         }
