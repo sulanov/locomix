@@ -1,5 +1,8 @@
-extern crate locomix;
 extern crate getopts;
+extern crate locomix;
+#[macro_use]
+extern crate serde_derive;
+extern crate toml;
 
 use getopts::Options;
 use locomix::alsa_input;
@@ -10,14 +13,17 @@ use locomix::crossover;
 use locomix::filters;
 use locomix::input;
 use locomix::light;
+use locomix::mixer;
 use locomix::output;
 use locomix::pipe_input;
 use locomix::state_script;
-use locomix::time::{Time, TimeDelta};
-use locomix::mixer;
+use locomix::time::TimeDelta;
 use locomix::ui;
 use locomix::web_ui;
 use std::env;
+use std::fs;
+use std::io;
+use std::io::Read;
 
 struct RunError {
     msg: String,
@@ -28,6 +34,18 @@ impl RunError {
         RunError {
             msg: String::from(msg),
         }
+    }
+}
+
+impl From<io::Error> for RunError {
+    fn from(e: io::Error) -> RunError {
+        RunError { msg: e.to_string() }
+    }
+}
+
+impl From<toml::de::Error> for RunError {
+    fn from(e: toml::de::Error) -> RunError {
+        RunError { msg: e.to_string() }
     }
 }
 
@@ -43,278 +61,255 @@ impl From<base::Error> for RunError {
     }
 }
 
-fn print_usage(program: &str, opts: Options) {
-    let brief = format!("Usage: {} [options]", program);
-    print!("{}", opts.usage(&brief));
+#[derive(Deserialize)]
+struct InputConfig {
+    name: Option<String>,
+    #[serde(rename = "type")]
+    type_: Option<String>,
+    device: String,
+    sample_rate: Option<usize>,
+    resampler_window: Option<usize>,
 }
 
-fn get_impulse_response(
-    output: &mut output::Output,
-    input: &mut async_input::AsyncInput,
-) -> Result<Vec<f32>, RunError> {
-    let frame_duration = TimeDelta::milliseconds(10);
-    let frame_size = output.sample_rate() / 100;
-    let mut pos = Time::now();
+#[derive(Deserialize)]
+struct OutputConfig {
+    name: Option<String>,
+    device: String,
+    resampler_window: Option<usize>,
+    dynamic_resampling: Option<bool>,
+    sample_rate: Option<usize>,
+    channel_map: Option<String>,
+    fir_filters: Option<Vec<String>>,
+    fir_length: Option<usize>,
+}
 
-    // Silence for 100 ms.
-    for _ in 0..10 {
-        let zero = base::Frame::new_stereo(output.sample_rate(), pos, frame_size);
-        pos += frame_duration;
-        try!(output.write(zero));
-    }
+#[derive(Deserialize)]
+struct ControlDeviceConfig {
+    #[serde(rename = "type")]
+    type_: String,
+    device: String,
+}
 
-    // Impulse at -6db.
-    let mut impulse = base::Frame::new_stereo(output.sample_rate(), pos, frame_size);
-    pos += frame_duration;
-    impulse.channels[0].pcm[0] = 0.5;
-    impulse.channels[1].pcm[0] = 0.5;
-    try!(output.write(impulse));
+#[derive(Deserialize)]
+struct Config {
+    sample_rate: Option<usize>,
+    web_address: Option<String>,
+    period_duration: Option<usize>,
+    state_script: Option<String>,
 
-    // Silence for 500 ms.
-    for _ in 0..50 {
-        let frame_size = output.sample_rate() / 100;
-        let zero = base::Frame::new_stereo(output.sample_rate(), pos, frame_size);
-        pos += frame_duration;
-        try!(output.write(zero));
-    }
+    input: Vec<InputConfig>,
+    output: Vec<OutputConfig>,
+    control_device: Option<Vec<ControlDeviceConfig>>,
+}
 
-    let mut result = Vec::<f32>::new();
-    loop {
-        match try!(input.read(TimeDelta::zero())) {
-            None => return Ok(result),
-            Some(s) => result.extend_from_slice(&s.channels[0].pcm),
-        };
+fn get_resampler_window(value: Option<usize>, dynamic: bool) -> Result<usize, RunError> {
+    match (value, dynamic) {
+        (None, false) => Ok(100),
+        (None, true) => Ok(25),
+        (Some(w), _) if w >= 2 && w < 2000 => Ok(w),
+        (Some(w), _) => Err(RunError::new(
+            format!("Invalid resampler_window: {}", w).as_str(),
+        )),
     }
 }
+
+fn parse_channel_map(map_str: &str) -> Result<Vec<base::ChannelPos>, RunError> {
+    let mut unrecognized = 0;
+    let result: Vec<base::ChannelPos> = map_str
+        .split_whitespace()
+        .map(|c| match c.to_uppercase().as_str() {
+            "L" | "FL" | "LEFT" => base::ChannelPos::FL,
+            "R" | "FR" | "RIGHT" => base::ChannelPos::FR,
+            "S" | "SUB" | "LFE" => base::ChannelPos::Sub,
+            "_" => base::ChannelPos::Other,
+            _ => {
+                unrecognized += 1;
+                println!("WARNING: Unrecognized channel name {}", c);
+                base::ChannelPos::Other
+            }
+        })
+        .collect();
+
+    if result.len() < 2 || unrecognized == result.len() {
+        return Err(RunError::new(
+            format!("Invalid channel map: {}", map_str).as_str(),
+        ));
+    }
+
+    Ok(result)
+}
+
 
 fn run() -> Result<(), RunError> {
     let args: Vec<String> = env::args().collect();
-    let program = args[0].clone();
 
     let mut opts = Options::new();
-    opts.optmulti("i", "input", "Audio input device name", "INPUT");
-    opts.optmulti("p", "input-pipe", "Input pipe name", "PIPE");
-    opts.optmulti("o", "output", "Output device name", "OUTPUT");
-    opts.optopt("r", "sample-rate", "Internal sample rate", "RATE");
-    opts.optopt(
-        "R",
-        "resampler-window",
-        "Resampler window size",
-        "WINDOW_SIZE",
-    );
-    opts.optopt("P", "period-duration", "Period duration, ms", "RATE");
-    opts.optopt("w", "web-address", "Address:port for web UI", "ADDRESS");
-    opts.optopt(
-        "s",
-        "state-script",
-        "Script to run on state change",
-        "SCRIPT",
-    );
-    opts.optmulti("c", "control-device", "Control input device", "INPUT_DEV");
-    opts.optmulti("l", "light-device", "Light device", "LIGHT_DEV");
-    opts.optmulti("F", "filter", "FIR filter file", "FIR_FILTER");
-    opts.optopt(
-        "L",
-        "filter-length",
-        "Length for FIR filter (1000 by default)",
-        "FILTER_LENGTH",
-    );
-    opts.optflag(
-        "D",
-        "dynamic-resampling",
-        "Enable dynamic stream resampling to match sample rate.",
-    );
-    opts.optflag(
-        "g",
-        "frequency-response",
-        "Print out frequency response for all filters",
-    );
-    opts.optflag("m", "impulse-response", "Measure impulse response");
+    opts.optmulti("c", "config", "Config file", "CONFIG_FILE");
     opts.optflag("h", "help", "Print this help menu");
 
     let matches = try!(opts.parse(&args[1..]));
 
     if matches.opt_present("h") {
-        print_usage(&program, opts);
+        print!("Usage: {} --config <CONFIG_FILE>\n", args[0]);
         return Ok(());
     }
 
-    let sample_rate = match matches.opt_str("r").map(|x| x.parse::<usize>()) {
-        None => 48000,
-        Some(Ok(rate)) => rate,
-        Some(Err(_)) => return Err(RunError::new("Cannot parse sample-rate parameter.")),
+    let config_filename = match matches.opt_str("c") {
+        None => return Err(RunError::new("--config is not specified.")),
+        Some(c) => c,
     };
 
-    let resampler_window = match matches.opt_str("R").map(|x| x.parse::<usize>()) {
-        None => 100,
-        Some(Ok(window)) if window > 0 && window <= 1000 => window,
-        _ => return Err(RunError::new("Cannot parse resampler-window parameter.")),
-    };
+    let mut file = try!(fs::File::open(config_filename));
+    let mut config_content = String::new();
+    try!(file.read_to_string(&mut config_content));
 
-    let period_duration = match matches.opt_str("P").map(|x| x.parse::<usize>()) {
-        None => TimeDelta::milliseconds(5),
-        Some(Ok(d)) if d > 0 && d <= 100 => TimeDelta::milliseconds(d as i64),
-        _ => return Err(RunError::new("Cannot parse period-duration parameter.")),
-    };
+    let config: Config = try!(toml::from_str(config_content.as_str()));
 
-    let filter_length = match matches.opt_str("L").map(|x| x.parse::<usize>()) {
-        None => 1000,
-        Some(Ok(length)) => length,
-        Some(Err(_)) => return Err(RunError::new("Cannot parse filter length.")),
-    };
-
-    let mut fir_filters = Vec::new();
-    for filename in matches.opt_strs("F") {
-        let params = try!(filters::FirFilterParams::new(&filename));
-        fir_filters.push(params);
-    }
-
-    if matches.opt_present("g") {
-        println!("Crossfeed filter");
-        filters::draw_crossfeed_graph(sample_rate);
-
-        println!("Loudness filter");
-        filters::draw_filter_graph::<filters::LoudnessFilter>(
-            sample_rate,
-            filters::SimpleFilterParams::new(sample_rate, 10.0),
-        );
-
-        for i in 0..fir_filters.len() {
-            println!("FIR filter {}", i);
-            filters::draw_filter_graph::<filters::FirFilter>(
-                sample_rate,
-                filters::reduce_fir(fir_filters[i].clone(), filter_length),
-            );
-        }
-
-        return Ok(());
-    }
-
-    if matches.opt_present("m") {
-        let mut output = try!(output::AlsaOutput::open(
-            try!(base::DeviceSpec::parse(&matches.opt_strs("o")[0])),
-            period_duration
+    let sample_rate = config.sample_rate.unwrap_or(48000);
+    if sample_rate < 8000 || sample_rate > 192000 {
+        return Err(RunError::new(
+            format!("Invalid sample_rate: {}", sample_rate).as_str(),
         ));
+    }
 
-        let mut input = async_input::AsyncInput::new(try!(alsa_input::AlsaInput::open(
-            try!(base::DeviceSpec::parse(&matches.opt_strs("i")[0])),
-            period_duration,
-            false
+    let period_duration = TimeDelta::milliseconds(config.period_duration.unwrap_or(100) as i64);
+    if period_duration < TimeDelta::milliseconds(1) || period_duration > TimeDelta::seconds(1) {
+        return Err(RunError::new(
+            format!(
+                "Invalid period_duration: {}",
+                config.period_duration.unwrap()
+            ).as_str(),
+        ));
+    }
+
+    let shared_state = ui::SharedState::new();
+
+    let mut inputs = Vec::<async_input::AsyncInput>::new();
+    for input in config.input {
+        let name = input.name.unwrap_or(input.device.clone());
+        shared_state
+            .lock()
+            .add_input(ui::InputState::new(name.as_str()));
+
+        let type_ = input.type_.unwrap_or("alsa".to_string());
+        let device: Box<input::Input> = match type_.as_str() {
+            "pipe" => pipe_input::PipeInput::open(input.device.as_str(), period_duration),
+            "alsa" => alsa_input::ResilientAlsaInput::new(
+                base::DeviceSpec {
+                    name: name,
+                    id: input.device,
+                    sample_rate: input.sample_rate,
+                    channels: vec![],
+                },
+                period_duration,
+            ),
+            _ => {
+                return Err(RunError::new(
+                    format!("Unknown input type: {}", type_).as_str(),
+                ))
+            }
+        };
+
+        let async_resampled = async_input::AsyncInput::new(Box::new(input::InputResampler::new(
+            device,
+            sample_rate,
+            try!(get_resampler_window(input.resampler_window, false)),
         )));
 
-        let r = try!(get_impulse_response(&mut output, &mut input));
-        let mut s = 0;
-        for i in 100..r.len() {
-            if r[i].abs() > 0.02 {
-                s = i - 100;
-                break;
-            }
-        }
-
-        for i in s..r.len() {
-            println!("{} {}", i, r[i]);
-        }
-        return Ok(());
-    }
-
-    let mut output_states = Vec::<ui::OutputState>::new();
-    for o in matches.opt_strs("o") {
-        let spec = try!(base::DeviceSpec::parse(&o));
-        output_states.push(ui::OutputState::new(&spec.name));
-    }
-
-    let mut inputs = Vec::<Box<input::Input>>::new();
-    let mut input_states = Vec::<ui::InputState>::new();
-
-    for p in matches.opt_strs("p") {
-        inputs.push(pipe_input::PipeInput::open(&p, period_duration));
-        input_states.push(ui::InputState::new(&p));
-    }
-
-    for i in matches.opt_strs("i") {
-        let spec = try!(base::DeviceSpec::parse(&i));
-        input_states.push(ui::InputState::new(&spec.name));
-        inputs.push(alsa_input::ResilientAlsaInput::new(spec, period_duration));
+        inputs.push(async_resampled);
     }
 
     if inputs.is_empty() {
         return Err(RunError::new("No inputs specified."));
     }
 
-    let shared_state = ui::SharedState::new(input_states, output_states);
-
     let mut outputs = Vec::<Box<output::Output>>::new();
 
-    let dynamic_resampling = matches.opt_present("D");
+    for output in config.output {
+        let name = output.name.unwrap_or(output.device.clone());
+        shared_state
+            .lock()
+            .add_output(ui::OutputState::new(name.as_str()));
 
-    for o in matches.opt_strs("o") {
-        let spec = try!(base::DeviceSpec::parse(&o));
+        let channel_map = match output.channel_map {
+            Some(map) => try!(parse_channel_map(map.as_str())),
+            None => vec![base::ChannelPos::FL, base::ChannelPos::FR],
+        };
+        let spec = base::DeviceSpec {
+            name: name,
+            id: output.device,
+            sample_rate: output.sample_rate,
+            channels: channel_map,
+        };
         let with_subwoofer = spec.channels.iter().any(|c| *c == base::ChannelPos::Sub);
         let out = output::AsyncOutput::new(output::ResilientAlsaOutput::new(spec, period_duration));
+
+        let dynamic_resampling = output.dynamic_resampling.unwrap_or(false);
+        let resampler_window = try!(get_resampler_window(
+            output.resampler_window,
+            dynamic_resampling
+        ));
+        let out = if dynamic_resampling {
+            output::FineResamplingOutput::new(out, resampler_window)
+        } else {
+            output::ResamplingOutput::new(out, resampler_window)
+        };
+
         let out = if with_subwoofer {
             crossover::SubwooferCrossoverOutput::new(out, &shared_state)
         } else {
             out
         };
-        let resampled_out = if dynamic_resampling {
-            output::FineResamplingOutput::new(out, resampler_window)
-        } else {
-            output::ResamplingOutput::new(out, resampler_window)
+
+        let out = match output.fir_filters.as_ref() {
+            None => out,
+            Some(files) if files.len() == 2 => {
+                let filter_length = output.fir_length.unwrap_or(5000);
+                let left = try!(filters::FirFilterParams::new(&files[0]));
+                let right = try!(filters::FirFilterParams::new(&files[1]));
+                let (left, right) = filters::reduce_fir_pair(left, right, filter_length);
+                output::AsyncOutput::new(mixer::FilteredOutput::new(
+                    out,
+                    filters::MultichannelFirFilter::new_pair(left, right),
+                    &shared_state,
+                ))
+            }
+            _ => return Err(RunError::new("fir_filters must contain 2 elements.")),
         };
-        outputs.push(output::AsyncOutput::new(resampled_out));
+
+        outputs.push(output::AsyncOutput::new(out));
     }
 
-    let web_addr = match matches.opt_str("w") {
-        Some(addr) => addr,
-        None => String::from("127.0.0.1:8000"),
-    };
+    if config.control_device.is_some() {
+        for device in config.control_device.unwrap() {
+            match device.type_.as_str() {
+                "input" => {
+                    control::start_input_handler(&device.device, shared_state.clone());
+                }
+                "griffin_powermate" => {
+                    control::start_input_handler(&device.device, shared_state.clone());
+                    light::start_light_controller(&device.device, shared_state.clone());
+                }
+                c => {
+                    println!("WARNING: Unrecognized control device type {}", c);
+                }
+            }
+        }
+    }
+
+    let web_addr = config.web_address.unwrap_or("0.0.0.0:8000".to_string());
     web_ui::start_web(&web_addr, shared_state.clone());
 
-    for c in matches.opt_strs("c") {
-        control::start_input_handler(&c, shared_state.clone());
+    match config.state_script {
+        Some(s) => state_script::start_state_script_contoller(&s, shared_state.clone()),
+        None => (),
     }
-
-    for l in matches.opt_strs("l") {
-        light::start_light_controller(&l, shared_state.clone());
-    }
-
-    for s in matches.opt_strs("s") {
-        state_script::start_state_script_contoller(&s, shared_state.clone());
-    }
-
-    if fir_filters.len() == 2 {
-        let (left, right) = filters::reduce_fir_pair(
-            fir_filters[0].clone(),
-            fir_filters[1].clone(),
-            filter_length,
-        );
-        let filtered_output = output::AsyncOutput::new(mixer::FilteredOutput::new(
-            outputs.remove(0),
-            filters::MultichannelFirFilter::new_pair(left, right),
-            &shared_state,
-        ));
-        outputs.insert(0, filtered_output);
-    } else if fir_filters.len() != 0 {
-        return Err(RunError::new("Expected 0 or 2 FIR filters"));
-    }
-
-    let wrapped_inputs = inputs
-        .drain(..)
-        .map(|input| {
-            async_input::AsyncInput::new(Box::new(input::InputResampler::new(
-                input,
-                sample_rate,
-                resampler_window,
-            )))
-        })
-        .collect();
 
     Ok(try!(mixer::run_mixer_loop(
-        wrapped_inputs,
+        inputs,
         outputs,
         sample_rate,
         period_duration,
-        resampler_window,
         shared_state,
     )))
 }

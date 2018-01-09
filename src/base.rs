@@ -1,6 +1,5 @@
 extern crate alsa;
 extern crate simd;
-extern crate regex;
 
 use self::simd::f32x4;
 use std::error;
@@ -145,10 +144,12 @@ pub fn convolve(v1: &[f32], v2: &[f32]) -> f32 {
         sum2.extract(0) + sum2.extract(1) + sum2.extract(2) + sum2.extract(3) + sum_end
 }
 
+pub fn samples_to_timedelta(sample_rate: usize, samples: i64) -> TimeDelta {
+    (TimeDelta::seconds(1) * samples) / sample_rate as i64
+}
+
 pub fn get_sample_timestamp(start: Time, sample_rate: usize, sample: i64) -> Time {
-    start +
-        (TimeDelta::seconds(1) * sample + TimeDelta::nanoseconds(sample_rate as i64 / 2)) /
-            sample_rate as i64
+    start + samples_to_timedelta(sample_rate, sample)
 }
 
 pub struct ChannelData {
@@ -359,87 +360,6 @@ pub struct DeviceSpec {
     pub id: String,
     pub sample_rate: Option<usize>,
     pub channels: Vec<ChannelPos>,
-}
-
-impl DeviceSpec {
-    pub fn parse(spec_str: &str) -> Result<DeviceSpec> {
-        let re = regex::Regex::new(
-            r"(?x)^
-            ((?P<name>[^@]+)@)?
-            (?P<device_id>[^@\#]+)
-            (\#
-              (?P<sample_rate>\d+)?
-              (\.(
-                (?P<chmap>([a-zA-Z_]{1,5})(\s[a-zA-Z_]{1,5})+)|
-                (?P<num_channels>\d+)
-              ))?
-            )?$",
-        ).unwrap();
-        let m = match re.captures(spec_str) {
-            Some(m) => m,
-            None => {
-                return Err(Error::new(&format!("Invalid device spec: {}", spec_str)));
-            }
-        };
-
-        let id = m.name("device_id").unwrap().as_str();
-        let name = m.name("name").map(|m| m.as_str()).unwrap_or(id);
-        let sample_rate = match m.name("sample_rate") {
-            None => None,
-            Some(v) => match v.as_str().parse::<usize>() {
-                Ok(r) if r > 0 && r < 200000 => Some(r),
-                _ => {
-                    return Err(Error::new(
-                        &format!("Failed to parse sample rate: {}", v.as_str()),
-                    ))
-                }
-            },
-        };
-
-        let channels = match (m.name("chmap"), m.name("num_channels")) {
-            (Some(chmap), None) => {
-                chmap.as_str().split_whitespace().map(|c|
-                    match c.to_uppercase().as_str() {
-                        "L" | "FL" | "LEFT" => ChannelPos::FL,
-                        "R" | "FR" | "RIGHT" => ChannelPos::FR,
-                        "S" | "SUB" | "LFE" => ChannelPos::Sub,
-                        "_" => ChannelPos::Other,
-                        _ => {
-                            println!("WARNING: Unrecognized channel name {}", c);
-                            ChannelPos::Other
-                        }
-                    }
-                ).collect()
-            },
-            (None, Some(num_channels)) => match num_channels.as_str().parse::<usize>() {
-                Ok(c) if c > 1 && c <= 8 =>  {
-                    let mut channels = vec![ChannelPos::Other; c];
-                    channels[0] = ChannelPos::FL;
-                    channels[1] = ChannelPos::FR;
-                    if c > 3 {
-                        channels[3] = ChannelPos::Sub;
-                    } else if c == 3 {
-                        channels[2] = ChannelPos::Sub;
-                    }
-                    channels
-                },
-                _ => {
-                    return Err(Error::new(&format!(
-                        "Invalid number of channels in device spec: {}",
-                        num_channels.as_str()
-                    )))
-                }
-            },
-            _ => vec![ChannelPos::FL, ChannelPos::FR],
-        };
-
-        Ok(DeviceSpec {
-            name: name.to_string(),
-            id: id.to_string(),
-            sample_rate: sample_rate,
-            channels: channels,
-        })
-    }
 }
 
 #[cfg(test)]

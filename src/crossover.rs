@@ -1,6 +1,7 @@
 use base::*;
 use filters::*;
 use output;
+use time;
 use ui;
 
 struct ChannelCrossover {
@@ -118,8 +119,8 @@ impl output::Output for SubwooferCrossoverOutput {
         self.output.sample_rate()
     }
 
-    fn period_size(&self) -> usize {
-        self.output.sample_rate()
+    fn min_delay(&self) -> time::TimeDelta {
+        self.output.min_delay()
     }
 
     fn measured_sample_rate(&self) -> f64 {

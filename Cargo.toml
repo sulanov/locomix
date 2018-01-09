@@ -5,15 +5,21 @@ authors = ["Sergey Ulanov <sulanov@gmail.com>"]
 
 [dependencies]
 alsa = "0.1.4"
-libc = "0.2.21"
+byteorder = "1.1.0"
 getopts = "0.2"
-regex = "0.2"
+libc = "0.2.21"
+nix = "0.8.0"
 rouille = "1.0.1"
 rustc-serialize = "0.3.22"
-nix = "0.8.0"
+serde = "1.0.27"
+serde_derive = "1.0.27"
 simd = "0.2.0"
-byteorder = "1.1.0"
+toml = "0.4.5"
 
 [[bin]]
 name = "locomix"
 path = "src/locomix.rs"
+
+[[bin]]
+name = "test_filters"
+path = "src/test_filters.rs"

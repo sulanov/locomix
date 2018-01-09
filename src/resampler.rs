@@ -399,9 +399,8 @@ impl StreamResampler {
             frame.channels[i].pcm = self.resamplers[i].resample(&frame.channels[i].pcm);
         }
 
-        let delay =
-            (TimeDelta::seconds(1) * self.window_size as i64) / self.input_sample_rate as i64;
-        frame.timestamp -= delay;
+        frame.timestamp -=
+            base::samples_to_timedelta(self.input_sample_rate, self.window_size as i64);
         frame.sample_rate = self.output_sample_rate;
 
         if frame.len() > 0 {

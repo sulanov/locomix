@@ -11,11 +11,14 @@ enum PipeMessage {
 
 pub struct AsyncInput {
     receiver: mpsc::Receiver<PipeMessage>,
+    delay: TimeDelta,
 }
 
 impl AsyncInput {
     pub fn new(mut input: Box<input::Input>) -> AsyncInput {
         let (sender, receiver) = mpsc::channel();
+
+        let delay = input.min_delay();
 
         thread::spawn(move || loop {
             match input.read() {
@@ -31,7 +34,10 @@ impl AsyncInput {
             }
         });
 
-        AsyncInput { receiver: receiver }
+        AsyncInput {
+            receiver: receiver,
+            delay: delay,
+        }
     }
 
     pub fn read(&mut self, timeout: TimeDelta) -> base::Result<Option<base::Frame>> {
@@ -41,5 +47,9 @@ impl AsyncInput {
             Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
             Err(mpsc::RecvTimeoutError::Disconnected) => Err(base::Error::new("Channel closed")),
         }
+    }
+
+    pub fn min_delay(&self) -> TimeDelta {
+        self.delay
     }
 }

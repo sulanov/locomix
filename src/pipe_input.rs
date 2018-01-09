@@ -131,4 +131,8 @@ impl Input for PipeInput {
 
         Ok(Some(frame))
     }
+
+    fn min_delay(&self) -> TimeDelta {
+        self.period_duration
+    }
 }

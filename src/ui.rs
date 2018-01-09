@@ -179,11 +179,11 @@ pub struct StateController {
 }
 
 impl StateController {
-    pub fn new(inputs: Vec<InputState>, outputs: Vec<OutputState>) -> StateController {
+    pub fn new() -> StateController {
         StateController {
             state: State {
-                inputs: inputs,
-                outputs: outputs,
+                inputs: Vec::new(),
+                outputs: Vec::new(),
                 output: 0,
                 mux_mode: MuxMode::Exclusive,
                 loudness: LoudnessConfig::default(),
@@ -198,6 +198,14 @@ impl StateController {
 
     pub fn state(&self) -> &State {
         &self.state
+    }
+
+    pub fn add_input(&mut self, state: InputState) {
+        self.state.inputs.push(state);
+    }
+
+    pub fn add_output(&mut self, state: OutputState) {
+        self.state.outputs.push(state);
     }
 
     pub fn current_output(&self) -> &OutputState {
@@ -329,9 +337,9 @@ fn limit(min: f32, max: f32, v: f32) -> f32 {
 }
 
 impl SharedState {
-    pub fn new(inputs: Vec<InputState>, outputs: Vec<OutputState>) -> SharedState {
+    pub fn new() -> SharedState {
         SharedState {
-            state: Arc::new(Mutex::new(StateController::new(inputs, outputs))),
+            state: Arc::new(Mutex::new(StateController::new())),
         }
     }
 

@@ -12,12 +12,13 @@ pub trait Output: Send {
     fn write(&mut self, frame: Frame) -> Result<()>;
     fn deactivate(&mut self);
     fn sample_rate(&self) -> usize;
-    fn period_size(&self) -> usize;
+    fn min_delay(&self) -> TimeDelta;
     fn measured_sample_rate(&self) -> f64;
 }
 
 const RATE_DETECTION_PERIOD_MS: i64 = 30000;
 const RATE_DETECTION_MIN_PERIOD_MS: i64 = 10000;
+const BUFFER_PERIODS: usize = 3;
 
 struct HistoryItem {
     time: Time,
@@ -80,6 +81,7 @@ pub struct AlsaOutput {
     pcm: alsa::PCM,
     sample_rate: usize,
     period_size: usize,
+    period_duration: TimeDelta,
     format: SampleFormat,
     channels: Vec<ChannelPos>,
     rate_detector: RateDetector,
@@ -95,8 +97,8 @@ impl AlsaOutput {
         ));
 
         let sample_rate;
-        let period_size;
         let format;
+        let period_size;
         {
             let hwp = try!(alsa::pcm::HwParams::any(&pcm));
             try!(hwp.set_channels(spec.channels.len() as u32));
@@ -149,7 +151,10 @@ impl AlsaOutput {
                 target_period_size as alsa::pcm::Frames,
                 alsa::ValueOr::Nearest
             ));
-            try!(hwp.set_periods(3, alsa::ValueOr::Nearest));
+            try!(hwp.set_periods(
+                BUFFER_PERIODS as u32,
+                alsa::ValueOr::Nearest
+            ));
             try!(pcm.hw_params(&hwp));
 
             period_size = try!(hwp.get_period_size()) as usize;
@@ -179,6 +184,7 @@ impl AlsaOutput {
             sample_rate: sample_rate,
             channels: spec.channels,
             period_size: period_size,
+            period_duration: period_duration,
             format: format,
             rate_detector: RateDetector::new(sample_rate as f64),
             measured_sample_rate: sample_rate as f64,
@@ -234,12 +240,15 @@ impl Output for AlsaOutput {
     }
 
     fn deactivate(&mut self) {}
+
     fn sample_rate(&self) -> usize {
         self.sample_rate
     }
-    fn period_size(&self) -> usize {
-        self.period_size
+
+    fn min_delay(&self) -> TimeDelta {
+        self.period_duration * BUFFER_PERIODS as i64
     }
+
     fn measured_sample_rate(&self) -> f64 {
         self.measured_sample_rate
     }
@@ -253,23 +262,18 @@ pub struct ResilientAlsaOutput {
     period_duration: TimeDelta,
     last_open_attempt: Time,
     sample_rate: usize,
-    period_size: usize,
 }
 
 impl ResilientAlsaOutput {
     pub fn new(spec: DeviceSpec, period_duration: TimeDelta) -> Box<Output> {
         let sample_rate;
-        let period_size;
         let device = match AlsaOutput::open(spec.clone(), period_duration) {
             Ok(device) => {
                 sample_rate = device.sample_rate();
-                period_size = device.period_size();
                 Some(device)
             }
             Err(e) => {
                 sample_rate = spec.sample_rate.unwrap_or(48000);
-                period_size =
-                    (period_duration * sample_rate as i64 / TimeDelta::seconds(1)) as usize;
                 println!("WARNING: failed to open {} ({}): {}", spec.name, spec.id, e);
                 None
             }
@@ -280,7 +284,6 @@ impl ResilientAlsaOutput {
             period_duration: period_duration,
             last_open_attempt: Time::now(),
             sample_rate: sample_rate,
-            period_size: period_size,
         })
     }
 
@@ -291,7 +294,6 @@ impl ResilientAlsaOutput {
             match AlsaOutput::open(self.spec.clone(), self.period_duration) {
                 Ok(output) => {
                     self.sample_rate = output.sample_rate();
-                    self.period_size = output.period_size();
                     self.output = Some(output);
                 }
                 Err(_) => println!(
@@ -342,8 +344,8 @@ impl Output for ResilientAlsaOutput {
     fn sample_rate(&self) -> usize {
         self.sample_rate
     }
-    fn period_size(&self) -> usize {
-        self.period_size
+    fn min_delay(&self) -> TimeDelta {
+        self.period_duration * BUFFER_PERIODS as i64
     }
     fn measured_sample_rate(&self) -> f64 {
         match self.output.as_ref() {
@@ -356,14 +358,17 @@ impl Output for ResilientAlsaOutput {
 pub struct ResamplingOutput {
     output: Box<Output>,
     resampler: resampler::StreamResampler,
+    delay: TimeDelta,
 }
 
 impl ResamplingOutput {
     pub fn new(output: Box<Output>, window_size: usize) -> Box<Output> {
         let resampler = resampler::StreamResampler::new(output.sample_rate(), window_size);
+        let delay = samples_to_timedelta(output.sample_rate(), window_size as i64);
         Box::new(ResamplingOutput {
             output: output,
             resampler: resampler,
+            delay: delay,
         })
     }
 }
@@ -394,9 +399,8 @@ impl Output for ResamplingOutput {
         self.output.sample_rate()
     }
 
-    fn period_size(&self) -> usize {
-        // FIXME
-        256
+    fn min_delay(&self) -> TimeDelta {
+        self.output.min_delay() + self.delay
     }
 
     fn measured_sample_rate(&self) -> f64 {
@@ -411,6 +415,7 @@ pub struct FineResamplingOutput {
     output: Box<Output>,
     resampler: resampler::FineStreamResampler,
     last_rate_update: Time,
+    delay: TimeDelta,
 }
 
 impl FineResamplingOutput {
@@ -420,10 +425,12 @@ impl FineResamplingOutput {
             output.sample_rate(),
             window_size,
         );
+        let delay = samples_to_timedelta(output.sample_rate(), window_size as i64);
         Box::new(FineResamplingOutput {
             output: output,
             resampler: resampler,
             last_rate_update: Time::now(),
+            delay: delay,
         })
     }
 }
@@ -462,9 +469,8 @@ impl Output for FineResamplingOutput {
         self.output.sample_rate()
     }
 
-    fn period_size(&self) -> usize {
-        // FIXME
-        256
+    fn min_delay(&self) -> TimeDelta {
+        self.output.min_delay() + self.delay
     }
 
     fn measured_sample_rate(&self) -> f64 {
@@ -479,10 +485,7 @@ enum PipeMessage {
 }
 
 enum FeedbackMessage {
-    NewConfig {
-        sample_rate: usize,
-        period_size: usize,
-    },
+    NewConfig { sample_rate: usize },
     MeasuredSampleRate(f64),
 }
 
@@ -490,7 +493,7 @@ pub struct AsyncOutput {
     sender: mpsc::Sender<PipeMessage>,
     feedback_receiver: mpsc::Receiver<FeedbackMessage>,
     sample_rate: usize,
-    period_size: usize,
+    min_delay: TimeDelta,
     measured_sample_rate: f64,
 }
 
@@ -503,23 +506,18 @@ impl AsyncOutput {
             sender: sender,
             feedback_receiver: feedback_receiver,
             sample_rate: output.sample_rate(),
-            period_size: output.period_size(),
+            min_delay: output.min_delay() + TimeDelta::milliseconds(2),
             measured_sample_rate: output.measured_sample_rate(),
         };
 
         thread::spawn(move || {
             let mut sample_rate = 0;
-            let mut period_size = 0;
             let mut measured_sample_rate = 0f64;
             loop {
-                if sample_rate != output.sample_rate() || period_size != output.period_size() {
+                if sample_rate != output.sample_rate() {
                     sample_rate = output.sample_rate();
-                    period_size = output.period_size();
                     feedback_sender
-                        .send(FeedbackMessage::NewConfig {
-                            sample_rate,
-                            period_size,
-                        })
+                        .send(FeedbackMessage::NewConfig { sample_rate })
                         .expect("Failed to send feedback message.");
                 }
 
@@ -564,12 +562,8 @@ impl Output for AsyncOutput {
     fn write(&mut self, frame: Frame) -> Result<()> {
         for msg in self.feedback_receiver.try_iter() {
             match msg {
-                FeedbackMessage::NewConfig {
-                    sample_rate,
-                    period_size,
-                } => {
+                FeedbackMessage::NewConfig { sample_rate } => {
                     self.sample_rate = sample_rate;
-                    self.period_size = period_size;
                 }
                 FeedbackMessage::MeasuredSampleRate(value) => {
                     self.measured_sample_rate = value;
@@ -594,8 +588,8 @@ impl Output for AsyncOutput {
         self.sample_rate
     }
 
-    fn period_size(&self) -> usize {
-        self.period_size
+    fn min_delay(&self) -> TimeDelta {
+        self.min_delay
     }
 
     fn measured_sample_rate(&self) -> f64 {

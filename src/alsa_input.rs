@@ -221,12 +221,15 @@ impl Input for AlsaInput {
             _ => (),
         }
 
-        Ok(Some(Frame::from_buffer_stereo(
-            self.format,
-            self.sample_rate,
-            &buf[0..bytes],
-            Time::now(),
-        )))
+        let mut frame =
+            Frame::from_buffer_stereo(self.format, self.sample_rate, &buf[0..bytes], Time::now());
+        frame.timestamp -= frame.duration();
+
+        Ok(Some(frame))
+    }
+
+    fn min_delay(&self) -> TimeDelta {
+        samples_to_timedelta(self.sample_rate, self.period_size as i64)
     }
 }
 
@@ -311,5 +314,12 @@ impl Input for ResilientAlsaInput {
         }
 
         Ok(result)
+    }
+
+    fn min_delay(&self) -> TimeDelta {
+        match self.input.as_ref() {
+            Some(input) => input.min_delay(),
+            None => self.period_duration,
+        }
     }
 }

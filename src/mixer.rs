@@ -132,8 +132,8 @@ impl output::Output for FilteredOutput {
         self.output.sample_rate()
     }
 
-    fn period_size(&self) -> usize {
-        self.output.sample_rate()
+    fn min_delay(&self) -> TimeDelta {
+        self.output.min_delay()
     }
 
     fn measured_sample_rate(&self) -> f64 {
@@ -149,7 +149,6 @@ pub fn run_mixer_loop(
     mut outputs: Vec<Box<output::Output>>,
     sample_rate: usize,
     period_duration: TimeDelta,
-    resampler_window: usize,
     shared_state: ui::SharedState,
 ) -> Result<()> {
     let ui_channel = shared_state.lock().add_observer();
@@ -169,10 +168,12 @@ pub fn run_mixer_loop(
 
     let mut exclusive_mux_mode = true;
 
+    let min_input_delay = inputs
+        .iter()
+        .fold(TimeDelta::zero(), |max, i| cmp::max(max, i.min_delay()));
+    let mix_delay = min_input_delay + period_duration;
+
     let period_size = (period_duration * sample_rate as i64 / TimeDelta::seconds(1)) as usize;
-    let resampler_delay = TimeDelta::seconds(1) * resampler_window as i64 / sample_rate as i64;
-    let mix_delay = period_duration * 2 + resampler_delay;
-    let target_output_delay = mix_delay + period_duration * 2 + resampler_delay;
 
     let mut stream_start_time = Time::now() - mix_delay;
     let mut stream_pos: i64 = 0;
@@ -228,7 +229,7 @@ pub fn run_mixer_loop(
             loudness_filter.apply(&mut frame);
             frame = crossfeed_filter.apply(frame);
 
-            frame.timestamp += target_output_delay;
+            frame.timestamp += mix_delay + period_duration + outputs[selected_output].min_delay();
             try!(outputs[selected_output].write(frame));
         } else {
             std::thread::sleep(TimeDelta::milliseconds(500).as_duration());
