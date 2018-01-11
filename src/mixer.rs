@@ -171,7 +171,7 @@ pub fn run_mixer_loop(
     let min_input_delay = inputs
         .iter()
         .fold(TimeDelta::zero(), |max, i| cmp::max(max, i.min_delay()));
-    let mix_delay = min_input_delay + period_duration;
+    let mix_delay = min_input_delay + period_duration * 2;
 
     let period_size = (period_duration * sample_rate as i64 / TimeDelta::seconds(1)) as usize;
 

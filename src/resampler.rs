@@ -383,7 +383,7 @@ impl StreamResampler {
     }
 
     pub fn resample(&mut self, mut frame: base::Frame) -> Option<base::Frame> {
-        if self.input_sample_rate != frame.sample_rate {
+        if self.input_sample_rate != frame.sample_rate || self.resamplers.len() != frame.channels() {
             self.resamplers.clear();
             self.input_sample_rate = frame.sample_rate;
         }

@@ -8,7 +8,7 @@ use std::io;
 use std::result;
 use time::{Time, TimeDelta};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum SampleFormat {
     S16LE,
     S24LE3,
@@ -36,7 +36,7 @@ impl SampleFormat {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ChannelPos {
     FL,
     FR,
