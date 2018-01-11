@@ -541,11 +541,11 @@ impl AsyncOutput {
                     }
                 };
 
-                let now = Time::now();
-                if frame.timestamp < now {
+                let deadline = Time::now() + output.min_delay();
+                if frame.timestamp < deadline {
                     println!(
                         "ERROR: Dropping frame: Missed target output time. {:?}",
-                        now - frame.timestamp
+                        deadline - frame.timestamp
                     );
                     continue;
                 }

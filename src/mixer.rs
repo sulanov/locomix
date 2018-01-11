@@ -229,7 +229,7 @@ pub fn run_mixer_loop(
             loudness_filter.apply(&mut frame);
             frame = crossfeed_filter.apply(frame);
 
-            frame.timestamp += mix_delay + period_duration + outputs[selected_output].min_delay();
+            frame.timestamp += mix_delay + period_duration * 2 + outputs[selected_output].min_delay();
             try!(outputs[selected_output].write(frame));
         } else {
             std::thread::sleep(TimeDelta::milliseconds(500).as_duration());
