@@ -69,6 +69,7 @@ struct InputConfig {
     device: String,
     sample_rate: Option<usize>,
     resampler_window: Option<usize>,
+    default_gain: Option<f32>,
 }
 
 #[derive(Deserialize)]
@@ -139,7 +140,6 @@ fn parse_channel_map(map_str: &str) -> Result<Vec<base::ChannelPos>, RunError> {
     Ok(result)
 }
 
-
 fn run() -> Result<(), RunError> {
     let args: Vec<String> = env::args().collect();
 
@@ -187,9 +187,11 @@ fn run() -> Result<(), RunError> {
     let mut inputs = Vec::<async_input::AsyncInput>::new();
     for input in config.input {
         let name = input.name.unwrap_or(input.device.clone());
-        shared_state
-            .lock()
-            .add_input(ui::InputState::new(name.as_str()));
+        let default_gain = input.default_gain.unwrap_or(0.0);
+        shared_state.lock().add_input(ui::InputState {
+            name: name.clone(),
+            gain: ui::Gain { db: default_gain },
+        });
 
         let type_ = input.type_.unwrap_or("alsa".to_string());
         let device: Box<input::Input> = match type_.as_str() {

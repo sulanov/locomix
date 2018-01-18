@@ -41,5 +41,7 @@ impl StateScript {
 
 pub fn start_state_script_contoller(script_path: &str, shared_state: SharedState) {
     let mut c = StateScript::new(script_path, shared_state);
-    std::thread::spawn(move || { c.run(); });
+    std::thread::spawn(move || {
+        c.run();
+    });
 }

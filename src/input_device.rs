@@ -76,9 +76,10 @@ impl InputDevice {
             };
             let r = libc::ioctl(self.dev.as_raw_fd(), EVIOCSREP, &r);
             if r != 0 {
-                return Err(Error::new(
-                    &format!("ioclt(EVIOCSREP) failed, result={}", r),
-                ));
+                return Err(Error::new(&format!(
+                    "ioclt(EVIOCSREP) failed, result={}",
+                    r
+                )));
             }
         }
         Ok(())

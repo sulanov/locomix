@@ -26,8 +26,8 @@ impl LightController {
     }
 
     fn try_open(&mut self, log_error: bool) {
-        if self.dev.is_some() ||
-            Time::now() - self.last_open_attempt < TimeDelta::seconds(REOPEN_PERIOD_SECONDS)
+        if self.dev.is_some()
+            || Time::now() - self.last_open_attempt < TimeDelta::seconds(REOPEN_PERIOD_SECONDS)
         {
             return;
         }
@@ -57,8 +57,7 @@ impl LightController {
                     Err(e) => {
                         println!(
                             "WARNING: failed to write input event to {}: {}",
-                            self.device_path,
-                            e
+                            self.device_path, e
                         );
                         reset = true;
                     }
@@ -71,7 +70,6 @@ impl LightController {
         if reset {
             self.dev = None;
         }
-
     }
 
     fn run(&mut self) {
@@ -98,5 +96,7 @@ impl LightController {
 
 pub fn start_light_controller(device_path: &str, shared_state: SharedState) {
     let mut c = LightController::new(device_path, shared_state);
-    std::thread::spawn(move || { c.run(); });
+    std::thread::spawn(move || {
+        c.run();
+    });
 }

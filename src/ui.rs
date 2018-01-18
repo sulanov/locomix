@@ -25,15 +25,6 @@ pub struct InputState {
     pub gain: Gain,
 }
 
-impl InputState {
-    pub fn new(name: &str) -> InputState {
-        InputState {
-            name: String::from(name),
-            gain: Gain { db: 0.0 },
-        }
-    }
-}
-
 #[derive(RustcEncodable)]
 pub struct OutputState {
     pub name: String,

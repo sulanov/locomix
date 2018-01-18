@@ -91,8 +91,8 @@ impl PipeInput {
 impl Input for PipeInput {
     fn read(&mut self) -> Result<Option<Frame>> {
         self.try_reopen();
-        let size = (self.period_duration * SAMPLE_RATE as i64 / TimeDelta::seconds(1) *
-            BYTES_PER_SAMPLE as i64) as usize / 2;
+        let size = (self.period_duration * SAMPLE_RATE as i64 / TimeDelta::seconds(1)
+            * BYTES_PER_SAMPLE as i64) as usize / 2;
         let mut buffer = vec![0u8; size];
         let bytes_read = match self.file.as_mut().map(|f| f.read(&mut buffer)) {
             None | Some(Ok(0)) => {

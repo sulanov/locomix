@@ -146,8 +146,8 @@ impl AudioFilter<BiquadFilter> for BiquadFilter {
     }
 
     fn apply_one(&mut self, x0: FCoef) -> FCoef {
-        let z0 = self.p.b0 * x0 + self.p.b1 * self.x1 + self.p.b2 * self.x2 -
-            self.p.a1 * self.z1 - self.p.a2 * self.z2;
+        let z0 = self.p.b0 * x0 + self.p.b1 * self.x1 + self.p.b2 * self.x2 - self.p.a1 * self.z1
+            - self.p.a2 * self.z2;
         self.z2 = self.z1;
         self.z1 = z0;
         self.x2 = self.x1;
@@ -251,7 +251,6 @@ pub struct MultichannelFilter<T: AudioFilter<T>> {
 
 impl<T: AudioFilter<T>> MultichannelFilter<T> {
     pub fn new(params: T::Params) -> MultichannelFilter<T> {
-
         MultichannelFilter {
             params: params,
             filters: Vec::new(),
@@ -496,8 +495,8 @@ impl AudioFilter<FirFilter> for FirFilter {
             convolve(
                 &self.buffer[self.buffer_pos..],
                 &self.params.coefficients[0..p1_size],
-            ) +
-                convolve(
+            )
+                + convolve(
                     &self.buffer[0..(self.window_size - p1_size)],
                     &self.params.coefficients[p1_size..self.window_size],
                 )
@@ -567,11 +566,11 @@ impl CrossfeedFilter {
                 let s = p.len() - delay;
                 for i in 0..delay {
                     out.channels[0].pcm[i] = self.left_straigh_filter
-                        .apply_one(frame.channels[0].pcm[i]) +
-                        self.left_cross_filter.apply_one(p.channels[0].pcm[s + i]) * self.level;
+                        .apply_one(frame.channels[0].pcm[i])
+                        + self.left_cross_filter.apply_one(p.channels[0].pcm[s + i]) * self.level;
                     out.channels[1].pcm[i] = self.right_straight_filter
-                        .apply_one(frame.channels[1].pcm[i]) +
-                        self.right_cross_filter.apply_one(p.channels[1].pcm[s + i]) * self.level;
+                        .apply_one(frame.channels[1].pcm[i])
+                        + self.right_cross_filter.apply_one(p.channels[1].pcm[s + i]) * self.level;
                 }
             }
             None => for i in 0..delay {
@@ -581,12 +580,12 @@ impl CrossfeedFilter {
         }
 
         for i in delay..out.len() {
-            out.channels[0].pcm[i] = self.left_straigh_filter.apply_one(frame.channels[0].pcm[i]) +
-                self.left_cross_filter
+            out.channels[0].pcm[i] = self.left_straigh_filter.apply_one(frame.channels[0].pcm[i])
+                + self.left_cross_filter
                     .apply_one(frame.channels[1].pcm[i - delay]) * self.level;
             out.channels[1].pcm[i] = self.right_straight_filter
-                .apply_one(frame.channels[1].pcm[i]) +
-                self.right_cross_filter
+                .apply_one(frame.channels[1].pcm[i])
+                + self.right_cross_filter
                     .apply_one(frame.channels[0].pcm[i - delay]) * self.level;
         }
 
@@ -620,7 +619,6 @@ pub fn draw_filter_graph<T: AudioFilter<T>>(sample_rate: usize, params: T::Param
         freq = freq * (2.0 as FCoef).powf(0.125);
     }
 }
-
 
 fn get_crossfeed_response(sample_rate: FCoef, freq: FCoef) -> FCoef {
     let mut f = CrossfeedFilter::new(sample_rate as usize);

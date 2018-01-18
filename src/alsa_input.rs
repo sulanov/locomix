@@ -34,8 +34,8 @@ impl RateDetector {
         let now = Time::now();
         self.sum += samples;
         self.history.push_back((now, samples));
-        while self.history.len() > 0 &&
-            now - self.history[0].0 >= TimeDelta::milliseconds(RATE_DETECTION_PERIOD_MS)
+        while self.history.len() > 0
+            && now - self.history[0].0 >= TimeDelta::milliseconds(RATE_DETECTION_PERIOD_MS)
         {
             self.sum -= self.history.pop_front().unwrap().1;
         }
@@ -182,8 +182,7 @@ impl Input for AlsaInput {
                 Some(rate) => if rate != self.sample_rate {
                     println!(
                         "INFO: rate changed for input device {}: {}",
-                        &self.spec.name,
-                        rate
+                        &self.spec.name, rate
                     );
                     self.sample_rate = rate;
                 },

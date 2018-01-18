@@ -29,7 +29,6 @@ impl AsyncInput {
                 Ok(None) => (),
                 Ok(Some(frame)) => {
                     sender.send(PipeMessage::Frame(frame)).unwrap();
-
                 }
             }
         });

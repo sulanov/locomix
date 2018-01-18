@@ -1,5 +1,5 @@
-extern crate locomix;
 extern crate getopts;
+extern crate locomix;
 
 use getopts::Options;
 use locomix::filters;

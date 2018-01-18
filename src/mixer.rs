@@ -11,40 +11,34 @@ struct InputMixer {
     input: AsyncInput,
     current_frame: Frame,
     current_frame_pos: usize,
-    volume: ui::Gain,
     gain: ui::Gain,
-    multiplier: f32,
+}
+
+fn get_multiplier(input_gain: ui::Gain, output_gain: ui::Gain) -> f32 {
+    10f32.powf((input_gain.db + output_gain.db) / 20.0)
 }
 
 impl InputMixer {
-    fn new(input: AsyncInput) -> InputMixer {
-        let mut r = InputMixer {
+    fn new(input: AsyncInput, gain: ui::Gain) -> InputMixer {
+        InputMixer {
             input: input,
             current_frame: Frame::new_stereo(1, Time::zero(), 0),
             current_frame_pos: 0,
-            volume: ui::Gain { db: -20.0 },
-            gain: ui::Gain { db: 0.0 },
-            multiplier: 1.0,
-        };
-        r.update_multiplier();
-        r
+            gain: gain,
+        }
     }
 
-    fn set_input_gain(&mut self, input_gain: ui::Gain) {
-        self.gain = input_gain;
-        self.update_multiplier();
+    fn set_gain(&mut self, gain: ui::Gain) {
+        self.gain = gain;
     }
 
-    fn set_master_volume(&mut self, volume: ui::Gain) {
-        self.volume = volume;
-        self.update_multiplier();
-    }
-
-    fn update_multiplier(&mut self) {
-        self.multiplier = 10f32.powf((self.volume.db + self.gain.db) / 20.0);
-    }
-
-    fn mix_into(&mut self, mixed_frame: &mut Frame, deadline: Time) -> Result<bool> {
+    fn mix_into(
+        &mut self,
+        mixed_frame: &mut Frame,
+        deadline: Time,
+        out_gain: ui::Gain,
+    ) -> Result<bool> {
+        let multiplier = get_multiplier(self.gain, out_gain);
         let mut pos = 0;
         while pos < mixed_frame.len() {
             if self.current_frame_pos >= self.current_frame.len() {
@@ -66,7 +60,7 @@ impl InputMixer {
                 mixed_frame.len() - pos,
             );
 
-            for mut channel in &mut mixed_frame.channels {
+            for channel in &mut mixed_frame.channels {
                 let src = match self.current_frame
                     .channels
                     .iter()
@@ -76,7 +70,7 @@ impl InputMixer {
                     None => continue,
                 };
                 for i in 0..samples {
-                    channel.pcm[pos + i] += self.multiplier * src.pcm[self.current_frame_pos + i];
+                    channel.pcm[pos + i] += multiplier * src.pcm[self.current_frame_pos + i];
                 }
             }
 
@@ -153,10 +147,20 @@ pub fn run_mixer_loop(
 ) -> Result<()> {
     let ui_channel = shared_state.lock().add_observer();
 
-    let mut mixers: Vec<Box<InputMixer>> = inputs
-        .drain(..)
-        .map(|i| Box::new(InputMixer::new(i)))
-        .collect();
+    let mut mixers: Vec<Box<InputMixer>> = {
+        let mut pos = 0;
+        let state = shared_state.lock();
+        inputs
+            .drain(..)
+            .map(|i| {
+                let gain = state.state().inputs[pos].gain;
+                pos += 1;
+                Box::new(InputMixer::new(i, gain))
+            })
+            .collect()
+    };
+
+    let mut output_gain = shared_state.lock().volume();
 
     let mut last_data_time = Time::now();
     let mut state = ui::StreamState::Active;
@@ -198,7 +202,7 @@ pub fn run_mixer_loop(
         }
 
         for m in mixers.iter_mut() {
-            have_data |= try!(m.mix_into(&mut frame, mix_deadline));
+            have_data |= try!(m.mix_into(&mut frame, mix_deadline, output_gain));
             if have_data && exclusive_mux_mode {
                 break;
             }
@@ -229,7 +233,8 @@ pub fn run_mixer_loop(
             loudness_filter.apply(&mut frame);
             frame = crossfeed_filter.apply(frame);
 
-            frame.timestamp += mix_delay + period_duration * 2 + outputs[selected_output].min_delay();
+            frame.timestamp +=
+                mix_delay + period_duration * 2 + outputs[selected_output].min_delay();
             try!(outputs[selected_output].write(frame));
         } else {
             std::thread::sleep(TimeDelta::milliseconds(500).as_duration());
@@ -244,13 +249,11 @@ pub fn run_mixer_loop(
                     selected_output = output;
                 }
                 ui::UiMessage::SetMasterVolume { volume, loudness } => {
-                    for i in mixers.iter_mut() {
-                        i.set_master_volume(volume)
-                    }
+                    output_gain = volume;
                     loudness_filter.set_params(SimpleFilterParams::new(sample_rate, loudness.db));
                 }
                 ui::UiMessage::SetInputGain { device, gain } => {
-                    mixers[device as usize].set_input_gain(gain);
+                    mixers[device as usize].set_gain(gain);
                 }
                 ui::UiMessage::SetEnableDrc { enable: _ } => (),
                 ui::UiMessage::SetSubwooferConfig { config: _ } => (),

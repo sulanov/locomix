@@ -90,24 +90,23 @@ fn write_sample_s32le(val: f32, buf: &mut [u8]) {
 }
 
 fn read_sample_s16le(buf: &[u8]) -> f32 {
-    (((((buf[0] as u32) << 16) | ((buf[1] as u32) << 24)) as i32 as f64 + 32767.5) /
-        2147483648f64) as f32
+    (((((buf[0] as u32) << 16) | ((buf[1] as u32) << 24)) as i32 as f64 + 32767.5) / 2147483648f64)
+        as f32
 }
 
 fn read_sample_s24le3(buf: &[u8]) -> f32 {
-    (((((buf[0] as u32) << 8) | ((buf[1] as u32) << 16) |
-        ((buf[2] as u32) << 24)) as i32 as f64 + 127.5) / 2147483648f64) as f32
+    (((((buf[0] as u32) << 8) | ((buf[1] as u32) << 16) | ((buf[2] as u32) << 24)) as i32 as f64
+        + 127.5) / 2147483648f64) as f32
 }
 
 fn read_sample_s24le4(buf: &[u8]) -> f32 {
-    (((((buf[0] as u32) << 8) | ((buf[1] as u32) << 16) |
-        ((buf[2] as u32) << 24)) as i32 as f64 + 127.5) / 2147483648f64) as f32
+    (((((buf[0] as u32) << 8) | ((buf[1] as u32) << 16) | ((buf[2] as u32) << 24)) as i32 as f64
+        + 127.5) / 2147483648f64) as f32
 }
 
 fn read_sample_s32le(buf: &[u8]) -> f32 {
-    (((((buf[0] as u32) << 0) | ((buf[1] as u32) << 8) | ((buf[2] as u32) << 16) |
-        ((buf[3] as u32) << 24)) as i32 as f64 + 0.5) /
-        2147483648f64) as f32
+    (((((buf[0] as u32) << 0) | ((buf[1] as u32) << 8) | ((buf[2] as u32) << 16)
+        | ((buf[3] as u32) << 24)) as i32 as f64 + 0.5) / 2147483648f64) as f32
 }
 
 // Fast SIMD-optimized convolution. Optimized for NEON on Raspberry PI 3.
@@ -140,8 +139,8 @@ pub fn convolve(v1: &[f32], v2: &[f32]) -> f32 {
         pos += 1;
     }
 
-    sum1.extract(0) + sum1.extract(1) + sum1.extract(2) + sum1.extract(3) +
-        sum2.extract(0) + sum2.extract(1) + sum2.extract(2) + sum2.extract(3) + sum_end
+    sum1.extract(0) + sum1.extract(1) + sum1.extract(2) + sum1.extract(3) + sum2.extract(0)
+        + sum2.extract(1) + sum2.extract(2) + sum2.extract(3) + sum_end
 }
 
 pub fn samples_to_timedelta(sample_rate: usize, samples: i64) -> TimeDelta {
@@ -306,8 +305,8 @@ impl Frame {
     }
 
     pub fn is_stereo(&self) -> bool {
-        self.channels.len() == 2 && self.channels[0].pos == ChannelPos::FL &&
-            self.channels[1].pos == ChannelPos::FR
+        self.channels.len() == 2 && self.channels[0].pos == ChannelPos::FL
+            && self.channels[1].pos == ChannelPos::FR
     }
 }
 
@@ -346,7 +345,6 @@ impl From<alsa::Error> for Error {
         Error::from_string(format!("Alsa error: {}", e))
     }
 }
-
 
 impl From<io::Error> for Error {
     fn from(e: io::Error) -> Error {

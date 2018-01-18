@@ -91,9 +91,8 @@ impl Resampler {
     }
 
     pub fn resample(&mut self, input: &[f32]) -> Vec<f32> {
-        let mut output = Vec::with_capacity(
-            (input.len() as f64 * self.o_freq / self.i_freq) as usize + 1,
-        );
+        let mut output =
+            Vec::with_capacity((input.len() as f64 * self.o_freq / self.i_freq) as usize + 1);
 
         let mut o_pos = self.o_pos;
         let freq_ratio = self.i_freq / self.o_freq;
@@ -206,9 +205,7 @@ impl ResamplerTable {
             let mut row = Vec::with_capacity(config.size + 1);
             for i in 0..(config.size * 2) {
                 let x = config.size as f64 - i as f64 + n as f64 / config.freq_denom as f64;
-                row.push(
-                    (sinc64(PI64 * x) * sinc64(PI64 * x / config.size as f64)) as f32,
-                );
+                row.push((sinc64(PI64 * x) * sinc64(PI64 * x / config.size as f64)) as f32);
             }
             kernel.push(row);
         }
@@ -285,7 +282,6 @@ impl FastResampler {
                     &kernel[k_pos..(k_pos + len)],
                 );
             };
-
 
             output.push(result);
 
@@ -383,7 +379,8 @@ impl StreamResampler {
     }
 
     pub fn resample(&mut self, mut frame: base::Frame) -> Option<base::Frame> {
-        if self.input_sample_rate != frame.sample_rate || self.resamplers.len() != frame.channels() {
+        if self.input_sample_rate != frame.sample_rate || self.resamplers.len() != frame.channels()
+        {
             self.resamplers.clear();
             self.input_sample_rate = frame.sample_rate;
         }
@@ -451,7 +448,6 @@ impl FineStreamResampler {
         self.resamplers[0].set_frequencies(self.input_sample_rate as f64, self.output_sample_rate);
         self.resamplers[1].set_frequencies(self.input_sample_rate as f64, self.output_sample_rate);
     }
-
 
     pub fn resample(&mut self, mut frame: base::Frame) -> Option<base::Frame> {
         if self.input_sample_rate != frame.sample_rate {

@@ -9,8 +9,7 @@ fn try_open(device_path: &str, log_error: bool) -> Option<InputDevice> {
             match d.set_repeat_rate(200, 100) {
                 Err(e) => println!(
                     "WARNING: Failed to set repeat rate for {}: {}",
-                    device_path,
-                    e
+                    device_path, e
                 ),
                 Ok(_) => (),
             }
@@ -100,8 +99,7 @@ fn handle_input_device(device_path: &str, mut shared_state: SharedState) {
                 Err(e) => {
                     println!(
                         "WARNING: failed to read input event from {}: {}",
-                        device_path,
-                        e
+                        device_path, e
                     );
                     reopen = true;
                 }
@@ -117,7 +115,6 @@ fn handle_input_device(device_path: &str, mut shared_state: SharedState) {
             }
         }
     }
-
 }
 
 pub fn start_input_handler(device_path: &str, shared_state: SharedState) {

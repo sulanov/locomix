@@ -124,7 +124,6 @@ impl Div<TimeDelta> for TimeDelta {
     }
 }
 
-
 impl Sum for TimeDelta {
     fn sum<I: Iterator<Item = TimeDelta>>(iter: I) -> TimeDelta {
         iter.fold(TimeDelta::zero(), |a, b| a + b)

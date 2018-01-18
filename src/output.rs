@@ -54,8 +54,8 @@ impl RateDetector {
             size: samples,
             avail: avail,
         });
-        while self.history.len() > 0 &&
-            (now - self.history[0].time).in_seconds() >= RATE_DETECTION_PERIOD_MS as i64
+        while self.history.len() > 0
+            && (now - self.history[0].time).in_seconds() >= RATE_DETECTION_PERIOD_MS as i64
         {
             self.sum -= self.history.pop_front().unwrap().size;
         }
@@ -138,8 +138,7 @@ impl AlsaOutput {
                     if selected == 0 {
                         return Err(Error::new(&format!(
                             "Can't find appropriate sample rate for {} ({})",
-                            &spec.name,
-                            &spec.id
+                            &spec.name, &spec.id
                         )));
                     }
                     selected
@@ -151,10 +150,7 @@ impl AlsaOutput {
                 target_period_size as alsa::pcm::Frames,
                 alsa::ValueOr::Nearest
             ));
-            try!(hwp.set_periods(
-                BUFFER_PERIODS as u32,
-                alsa::ValueOr::Nearest
-            ));
+            try!(hwp.set_periods(BUFFER_PERIODS as u32, alsa::ValueOr::Nearest));
             try!(pcm.hw_params(&hwp));
 
             period_size = try!(hwp.get_period_size()) as usize;
@@ -197,8 +193,7 @@ impl Output for AlsaOutput {
         if self.sample_rate != frame.sample_rate {
             println!(
                 "WARNING: different sample rate, expected {}, received {}",
-                self.sample_rate,
-                frame.sample_rate
+                self.sample_rate, frame.sample_rate
             );
             return Ok(());
         }
@@ -217,8 +212,8 @@ impl Output for AlsaOutput {
 
                     let zero_buf = vec![
                         0u8;
-                        self.period_size * self.channels.len() *
-                            self.format.bytes_per_sample()
+                        self.period_size * self.channels.len()
+                            * self.format.bytes_per_sample()
                     ];
                     try!(self.pcm.io().writei(&zero_buf[..]));
                     try!(self.pcm.io().writei(&zero_buf[..]));
@@ -298,8 +293,7 @@ impl ResilientAlsaOutput {
                 }
                 Err(_) => println!(
                     "INFO: Failed to reopen {} ({})",
-                    &self.spec.name,
-                    self.spec.id
+                    &self.spec.name, self.spec.id
                 ),
             }
         }
@@ -324,8 +318,7 @@ impl Output for ResilientAlsaOutput {
                 Err(_) => {
                     println!(
                         "WARNING: Write to {} ({}) failed",
-                        &self.spec.name,
-                        &self.spec.id
+                        &self.spec.name, &self.spec.id
                     );
                     reset = true;
                 }
@@ -445,8 +438,8 @@ impl Output for FineResamplingOutput {
         let now = Time::now();
         let current_rate = self.resampler.get_output_sample_rate();
         let new_rate = self.output.measured_sample_rate();
-        if (current_rate - new_rate).abs() / current_rate > 0.05 ||
-            now - self.last_rate_update >= TimeDelta::milliseconds(RATE_UPDATE_PERIOD_MS)
+        if (current_rate - new_rate).abs() / current_rate > 0.05
+            || now - self.last_rate_update >= TimeDelta::milliseconds(RATE_UPDATE_PERIOD_MS)
         {
             println!("Output rate: {}", new_rate);
             self.resampler
@@ -568,7 +561,6 @@ impl Output for AsyncOutput {
                 FeedbackMessage::MeasuredSampleRate(value) => {
                     self.measured_sample_rate = value;
                 }
-
             }
         }
 
