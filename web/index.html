@@ -43,18 +43,15 @@
     <label><input type="checkbox" id="enable_drc_checkbox"></input>Room correction</label>
   </div>
 
+  <div class="subwoofer_box">
+    <label><input type="checkbox" id="enable_subwoofer_checkbox"></input>Subwoofer</label>
+  </div>
+
   <div class="loudness_box">
     <label><input id="enable" type="checkbox"></input>Loudness</label>
     <label><input id="auto" type="checkbox"></input>Auto</label>
     </br>
     <input class="slider" type="range" min="0" max="1.0" step="0.05"></input>
-    <value></value>
-  </div>
-
-  <div class="subwoofer_box">
-    <label><input id="enable" type="checkbox"></input>Subwoofer</label>
-    </br>
-    <input class="slider" type="range" min="40" max="160" step="5"></input>
     <value></value>
   </div>
 
@@ -216,7 +213,17 @@ function postState(params) {
     method: "POST",
     url: "/api/state",
     params: params
-  })  
+  })
+}
+
+function feature_checkbox(name, state) {
+    let checkbox = document.querySelector('#' + name + '_checkbox');
+    checkbox.checked = state[name];
+    checkbox.onchange = (event) => {
+      var state = {};
+      state[name] = checkbox.checked;
+      postState(state)
+    }
 }
 
 function slider_with_checkbox(container, state, name, slider_value) {
@@ -265,11 +272,8 @@ document.body.onload = () => {
       }
     }
 
-    let drc_box = document.querySelector("#enable_drc_checkbox");
-    drc_box.checked = state.enable_drc;
-    drc_box.onchange = (event) => {
-      postState({"enable_drc": drc_box.checked})
-    }
+    feature_checkbox('enable_drc', state);
+    feature_checkbox('enable_subwoofer', state);
 
     let loudness_box = document.querySelector(".loudness_box");
     slider_with_checkbox(loudness_box, state.loudness, "loudness", "level");
@@ -279,9 +283,6 @@ document.body.onload = () => {
     autoupdate_checkbox(auto_checkbox, (auto) => (
       postState({"loudness": {"auto": auto } })
     ));
-
-    slider_with_checkbox(document.querySelector(".subwoofer_box"),
-                         state.subwoofer, "subwoofer", "crossover_frequency");
 
     slider_with_checkbox(document.querySelector(".crossfeed_box"),
                          state.crossfeed, "crossfeed", "level");

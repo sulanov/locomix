@@ -1,8 +1,5 @@
 use base::*;
 use filters::*;
-use output;
-use time;
-use ui;
 
 struct ChannelCrossover {
     high_filter: BiquadFilter,
@@ -27,15 +24,13 @@ impl ChannelCrossover {
 }
 
 pub struct CrossoverFilter {
-    sample_rate: usize,
     frequency: f32,
     channels: Vec<ChannelCrossover>,
 }
 
 impl CrossoverFilter {
-    pub fn new(sample_rate: usize, frequency: f32) -> CrossoverFilter {
+    pub fn new(frequency: f32) -> CrossoverFilter {
         CrossoverFilter {
-            sample_rate: sample_rate,
             frequency: frequency,
             channels: Vec::new(),
         }
@@ -46,7 +41,7 @@ impl CrossoverFilter {
         for c in 0..frame.channels.len() {
             if self.channels.len() <= c {
                 self.channels
-                    .push(ChannelCrossover::new(self.sample_rate, self.frequency));
+                    .push(ChannelCrossover::new(frame.sample_rate, self.frequency));
             }
 
             let crossover = &mut self.channels[c];
@@ -66,64 +61,5 @@ impl CrossoverFilter {
         });
 
         frame
-    }
-}
-
-pub struct SubwooferCrossoverOutput {
-    output: Box<output::Output>,
-    crossover: Option<CrossoverFilter>,
-    ui_msg_receiver: ui::UiMessageReceiver,
-}
-
-impl SubwooferCrossoverOutput {
-    pub fn new(output: Box<output::Output>, shared_state: &ui::SharedState) -> Box<output::Output> {
-        Box::new(SubwooferCrossoverOutput {
-            output: output,
-            crossover: None,
-            ui_msg_receiver: shared_state.lock().add_observer(),
-        })
-    }
-}
-
-impl output::Output for SubwooferCrossoverOutput {
-    fn write(&mut self, frame: Frame) -> Result<()> {
-        for msg in self.ui_msg_receiver.try_iter() {
-            match msg {
-                ui::UiMessage::SetSubwooferConfig { config } => {
-                    self.crossover = if config.enabled {
-                        Some(CrossoverFilter::new(
-                            frame.sample_rate,
-                            config.crossover_frequency,
-                        ))
-                    } else {
-                        None
-                    }
-                }
-                _ => (),
-            }
-        }
-
-        let frame = match self.crossover.as_mut() {
-            Some(c) => c.apply(frame),
-            None => frame,
-        };
-
-        self.output.write(frame)
-    }
-
-    fn deactivate(&mut self) {
-        self.output.deactivate();
-    }
-
-    fn sample_rate(&self) -> usize {
-        self.output.sample_rate()
-    }
-
-    fn min_delay(&self) -> time::TimeDelta {
-        self.output.min_delay()
-    }
-
-    fn measured_sample_rate(&self) -> f64 {
-        self.output.measured_sample_rate()
     }
 }

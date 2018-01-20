@@ -1,9 +1,5 @@
-extern crate byteorder;
-
 use base::*;
-use self::byteorder::{NativeEndian, ReadBytesExt};
 use std::f32::consts::PI;
-use std::fs::File;
 use std::mem;
 use std::sync::Arc;
 use std::sync::mpsc;
@@ -319,7 +315,7 @@ impl MultichannelFirFilter {
         }
     }
 
-    pub fn apply(&mut self, frame: &mut Frame) {
+    pub fn apply(&mut self, mut frame: Frame) -> Frame {
         let start = time::Time::now();
 
         let mut recv_channels = vec![];
@@ -369,6 +365,8 @@ impl MultichannelFirFilter {
                 mean_delay
             );
         }
+
+        frame
     }
 }
 
@@ -377,32 +375,16 @@ pub struct FirFilterParams {
     coefficients: Arc<Vec<FCoef>>,
 }
 
-impl FirFilterParams {
-    pub fn new(filename: &str) -> Result<FirFilterParams> {
-        let mut file = try!(File::open(filename));
-        let mut result = Vec::<FCoef>::new();
-        loop {
-            match file.read_f32::<NativeEndian>() {
-                Ok(value) => result.push(value),
-                Err(_) => break,
-            }
-        }
-        Ok(FirFilterParams {
-            coefficients: Arc::new(result),
-        })
-    }
-}
-
-pub fn reduce_fir(fir: FirFilterParams, size: usize) -> FirFilterParams {
+pub fn reduce_fir(fir: Vec<f32>, size: usize) -> FirFilterParams {
     let mut start: usize = 0;
     let mut max_sum: f64 = 0.0;
     let mut sum: f64 = 0.0;
-    for i in 0..fir.coefficients.len() {
-        let l = fir.coefficients[i] as f64;
+    for i in 0..fir.len() {
+        let l = fir[i] as f64;
         sum += l * l;
 
         if i >= size {
-            let l = fir.coefficients[i - size] as f64;
+            let l = fir[i - size] as f64;
             sum -= l * l;
         }
         if sum > max_sum {
@@ -411,42 +393,38 @@ pub fn reduce_fir(fir: FirFilterParams, size: usize) -> FirFilterParams {
         }
     }
     FirFilterParams {
-        coefficients: Arc::new(fir.coefficients[start..(start + size)].to_vec()),
+        coefficients: Arc::new(fir[start..(start + size)].to_vec()),
     }
 }
 
-pub fn reduce_fir_pair(
-    left: FirFilterParams,
-    right: FirFilterParams,
-    size: usize,
-) -> (FirFilterParams, FirFilterParams) {
-    assert!(left.coefficients.len() == right.coefficients.len());
+pub fn reduce_fir_set(params: Vec<Vec<f32>>, size: usize) -> Vec<FirFilterParams> {
+    let length = params.iter().map(|p| p.len()).min().unwrap_or(0);
     let mut start: usize = 0;
     let mut max_sum: f64 = 0.0;
     let mut sum: f64 = 0.0;
-    for i in 0..left.coefficients.len() {
-        let l = left.coefficients[i] as f64;
-        let r = right.coefficients[i] as f64;
-        sum += l * l + r * r;
+    for i in 0..length {
+        for p in &params {
+            let v = p[i] as f64;
+            sum += v * v
+        }
 
         if i >= size {
-            let l = left.coefficients[i - size] as f64;
-            let r = right.coefficients[i - size] as f64;
-            sum -= l * l + r * r;
+            for p in &params {
+                let v = p[i] as f64;
+                sum -= v * v
+            }
         }
         if sum > max_sum {
             max_sum = sum;
             start = if i >= size { i - size + 1 } else { 0 }
         }
     }
-    (
-        FirFilterParams {
-            coefficients: Arc::new(left.coefficients[start..(start + size)].to_vec()),
-        },
-        FirFilterParams {
-            coefficients: Arc::new(right.coefficients[start..(start + size)].to_vec()),
-        },
-    )
+    params
+        .iter()
+        .map(|p| FirFilterParams {
+            coefficients: Arc::new(p[start..(start + size)].to_vec()),
+        })
+        .collect()
 }
 
 pub struct FirFilter {
@@ -594,4 +572,3 @@ impl CrossfeedFilter {
         out
     }
 }
-

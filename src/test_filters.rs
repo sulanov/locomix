@@ -1,12 +1,15 @@
+extern crate byteorder;
 extern crate getopts;
 extern crate locomix;
 
+use self::byteorder::{NativeEndian, ReadBytesExt};
 use getopts::Options;
 use locomix::base::*;
 use locomix::filters::*;
 use locomix::time;
 use std::f32::consts::PI;
 use std::env;
+use std::fs;
 
 fn get_filter_response<T: AudioFilter<T>>(p: T::Params, sample_rate: FCoef, freq: FCoef) -> FCoef {
     let mut f = T::new(p);
@@ -64,6 +67,18 @@ fn draw_crossfeed_graph(sample_rate: usize) {
     }
 }
 
+fn load_fir_params(filename: &str) -> Result<Vec<f32>> {
+    let mut file = try!(fs::File::open(filename));
+    let mut result = Vec::<f32>::new();
+    loop {
+        match file.read_f32::<NativeEndian>() {
+            Ok(value) => result.push(value),
+            Err(_) => break,
+        }
+    }
+    Ok(result)
+}
+
 fn print_usage(program: &str, opts: Options) {
     let brief = format!("Usage: {} [options]", program);
     print!("{}", opts.usage(&brief));
@@ -104,10 +119,7 @@ fn run() -> Result<()> {
     draw_crossfeed_graph(sample_rate);
 
     println!("Loudness filter");
-    draw_filter_graph::<LoudnessFilter>(
-        sample_rate,
-        SimpleFilterParams::new(sample_rate, 10.0),
-    );
+    draw_filter_graph::<LoudnessFilter>(sample_rate, SimpleFilterParams::new(sample_rate, 10.0));
 
     let filter_length = match matches.opt_str("L").map(|x| x.parse::<usize>()) {
         None => 5000,
@@ -117,19 +129,13 @@ fn run() -> Result<()> {
 
     let mut fir_filters = Vec::new();
     for filename in matches.opt_strs("F") {
-        let params = match FirFilterParams::new(&filename) {
-            Err(e) => return Err(Error::from_string(e.to_string())),
-            Ok(m) => m,
-        };
-        fir_filters.push(params);
+        let params = try!(load_fir_params(&filename));
+        fir_filters.push(reduce_fir(params, filter_length));
     }
 
     for i in 0..fir_filters.len() {
         println!("FIR filter {}", i);
-        draw_filter_graph::<FirFilter>(
-            sample_rate,
-            reduce_fir(fir_filters[i].clone(), filter_length),
-        );
+        draw_filter_graph::<FirFilter>(sample_rate, fir_filters[i].clone());
     }
 
     Ok(())

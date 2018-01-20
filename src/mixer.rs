@@ -1,5 +1,6 @@
 use async_input::AsyncInput;
 use base::*;
+use crossover;
 use time::*;
 use filters::*;
 use std;
@@ -84,37 +85,100 @@ impl InputMixer {
 
 pub struct FilteredOutput {
     output: Box<output::Output>,
-    filter: MultichannelFirFilter,
-    enabled: bool,
+    fir_params: Option<Vec<FirFilterParams>>,
+    fir_params_with_sub: Option<Vec<FirFilterParams>>,
+    subwoofer_config: Option<ui::SubwooferConfig>,
+
+    drc_enabled: bool,
+    subwoofer_enabled: bool,
+    filter: Option<MultichannelFirFilter>,
+    crossover: Option<crossover::CrossoverFilter>,
     ui_msg_receiver: ui::UiMessageReceiver,
 }
 
 impl FilteredOutput {
     pub fn new(
         output: Box<output::Output>,
-        filter: MultichannelFirFilter,
+        fir_params: Option<Vec<FirFilterParams>>,
+        fir_params_with_sub: Option<Vec<FirFilterParams>>,
+        subwoofer_config: Option<ui::SubwooferConfig>,
         shared_state: &ui::SharedState,
     ) -> Box<output::Output> {
-        Box::new(FilteredOutput {
+        let enable_drc = shared_state.lock().state().enable_drc;
+        let enable_subwoofer = shared_state.lock().state().enable_subwoofer;
+        let mut result = Box::new(FilteredOutput {
             output: output,
-            filter: filter,
-            enabled: true,
+            fir_params: fir_params,
+            fir_params_with_sub: fir_params_with_sub,
+            subwoofer_config: subwoofer_config,
+
+            drc_enabled: enable_drc,
+            subwoofer_enabled: enable_subwoofer,
+            filter: None,
+            crossover: None,
             ui_msg_receiver: shared_state.lock().add_observer(),
-        })
+        });
+        result.update();
+        result
+    }
+
+    fn update(&mut self) {
+        self.crossover = match (self.subwoofer_enabled, self.subwoofer_config) {
+            (false, _) => None,
+            (true, None) => None,
+            (
+                true,
+                Some(ui::SubwooferConfig {
+                    crossover_frequency,
+                }),
+            ) => Some(crossover::CrossoverFilter::new(crossover_frequency)),
+        };
+
+        self.filter = match (
+            self.drc_enabled,
+            self.fir_params.as_mut(),
+            self.fir_params_with_sub.as_mut(),
+            self.crossover.is_some(),
+        ) {
+            (true, Some(params), _, false) => Some(MultichannelFirFilter::new(params.clone())),
+            (true, _, Some(params), true) => Some(MultichannelFirFilter::new(params.clone())),
+            (true, Some(params), None, true) => Some(MultichannelFirFilter::new(params.clone())),
+            _ => None,
+        };
     }
 }
 
 impl output::Output for FilteredOutput {
-    fn write(&mut self, mut frame: Frame) -> Result<()> {
+    fn write(&mut self, frame: Frame) -> Result<()> {
+        let mut need_update = false;
         for msg in self.ui_msg_receiver.try_iter() {
             match msg {
-                ui::UiMessage::SetEnableDrc { enable } => self.enabled = enable,
+                ui::UiMessage::SetEnableDrc { enable } => {
+                    self.drc_enabled = enable;
+                    need_update = true;
+                }
+                ui::UiMessage::SetEnableSubwoofer { enable } => {
+                    self.subwoofer_enabled = enable;
+                    need_update = true;
+                }
                 _ => (),
             }
         }
-        if self.enabled {
-            self.filter.apply(&mut frame);
+
+        if need_update {
+            self.update();
         }
+
+        let frame = match self.filter.as_mut() {
+            Some(f) => f.apply(frame),
+            None => frame,
+        };
+
+        let frame = match self.crossover.as_mut() {
+            Some(c) => c.apply(frame),
+            None => frame,
+        };
+
         self.output.write(frame)
     }
 
@@ -256,19 +320,12 @@ pub fn run_mixer_loop(
                     mixers[device as usize].set_gain(gain);
                 }
                 ui::UiMessage::SetEnableDrc { enable: _ } => (),
-                ui::UiMessage::SetSubwooferConfig { config: _ } => (),
+                ui::UiMessage::SetEnableSubwoofer { enable: _ } => (),
                 ui::UiMessage::SetCrossfeed { level, delay_ms } => {
                     crossfeed_filter.set_params(level, delay_ms);
                 }
-                ui::UiMessage::SetMuxMode {
-                    mux_mode: ui::MuxMode::Exclusive,
-                } => {
-                    exclusive_mux_mode = true;
-                }
-                ui::UiMessage::SetMuxMode {
-                    mux_mode: ui::MuxMode::Mixer,
-                } => {
-                    exclusive_mux_mode = false;
+                ui::UiMessage::SetMuxMode { mux_mode } => {
+                    exclusive_mux_mode = mux_mode == ui::MuxMode::Exclusive;
                 }
             }
         }

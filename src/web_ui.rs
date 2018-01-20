@@ -41,12 +41,6 @@ fn serve_web(address: &str, shared_state: SharedState) {
                          }
 
                          #[derive(RustcDecodable)]
-                         struct SubwooferParams {
-                             enabled: Option<bool>,
-                             crossover_frequency: Option<f32>,
-                         }
-
-                         #[derive(RustcDecodable)]
                          struct CrossfeedParams {
                              enabled: Option<bool>,
                              level: Option<f32>,
@@ -59,8 +53,8 @@ fn serve_web(address: &str, shared_state: SharedState) {
                              output: Option<usize>,
                              mux_mode: Option<MuxMode>,
                              enable_drc: Option<bool>,
+                             enable_subwoofer: Option<bool>,
                              loudness: Option<LoudnessParams>,
-                             subwoofer: Option<SubwooferParams>,
                              crossfeed: Option<CrossfeedParams>,
                          }
 
@@ -86,8 +80,12 @@ fn serve_web(address: &str, shared_state: SharedState) {
                             state_controller.set_mux_mode(mux_mode);
                         });
 
-                        json.enable_drc.map( |enable_drc| {
-                            state_controller.set_enable_drc(enable_drc);
+                        json.enable_drc.map( |enable| {
+                            state_controller.set_enable_drc(enable);
+                        });
+
+                        json.enable_subwoofer.map( |enable| {
+                            state_controller.set_enable_subwoofer(enable);
                         });
 
                         json.loudness.map( |loudness| {
@@ -102,17 +100,6 @@ fn serve_web(address: &str, shared_state: SharedState) {
                                 loudness_config.level = level;
                             });
                             state_controller.set_loudness(loudness_config);
-                        });
-
-                        json.subwoofer.map( |subwoofer| {
-                            let mut subwoofer_config = state_controller.state().subwoofer.clone();
-                            subwoofer.enabled.map( |enabled| {
-                                subwoofer_config.enabled = enabled;
-                            });
-                            subwoofer.crossover_frequency.map( |crossover_frequency| {
-                                subwoofer_config.crossover_frequency = crossover_frequency;
-                            });
-                            state_controller.set_subwoofer(subwoofer_config);
                         });
 
                         json.crossfeed.map( |crossfeed| {

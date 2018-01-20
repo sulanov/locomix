@@ -1,15 +1,16 @@
+extern crate byteorder;
 extern crate getopts;
 extern crate locomix;
 #[macro_use]
 extern crate serde_derive;
 extern crate toml;
 
+use self::byteorder::{NativeEndian, ReadBytesExt};
 use getopts::Options;
 use locomix::alsa_input;
 use locomix::async_input;
 use locomix::base;
 use locomix::control;
-use locomix::crossover;
 use locomix::filters;
 use locomix::input;
 use locomix::light;
@@ -80,7 +81,10 @@ struct OutputConfig {
     dynamic_resampling: Option<bool>,
     sample_rate: Option<usize>,
     channel_map: Option<String>,
+    default_gain: Option<f32>,
+    subwoofer_crossover_frequency: Option<usize>,
     fir_filters: Option<Vec<String>>,
+    fir_filters_with_sub: Option<Vec<String>>,
     fir_length: Option<usize>,
 }
 
@@ -138,6 +142,39 @@ fn parse_channel_map(map_str: &str) -> Result<Vec<base::ChannelPos>, RunError> {
     }
 
     Ok(result)
+}
+
+fn load_fir_params(filename: &str) -> Result<Vec<f32>, RunError> {
+    let mut file = try!(fs::File::open(filename));
+    let mut result = Vec::<f32>::new();
+    loop {
+        match file.read_f32::<NativeEndian>() {
+            Ok(value) => result.push(value),
+            Err(_) => break,
+        }
+    }
+    Ok(result)
+}
+
+fn load_fir_set(
+    files: Option<Vec<String>>,
+    length: usize,
+) -> Result<Option<Vec<filters::FirFilterParams>>, RunError> {
+    if files.is_none() {
+        return Ok(None);
+    }
+
+    let files = files.unwrap();
+    if files.len() != 2 {
+        return Err(RunError::new("fir_filters must contain 2 elements."));
+    }
+
+    let mut filters = Vec::new();
+    for f in files {
+        filters.push(try!(load_fir_params(&f)));
+    }
+
+    Ok(Some(filters::reduce_fir_set(filters, length)))
 }
 
 fn run() -> Result<(), RunError> {
@@ -229,21 +266,49 @@ fn run() -> Result<(), RunError> {
 
     for output in config.output {
         let name = output.name.unwrap_or(output.device.clone());
-        shared_state
-            .lock()
-            .add_output(ui::OutputState::new(name.as_str()));
-
         let channel_map = match output.channel_map {
             Some(map) => try!(parse_channel_map(map.as_str())),
             None => vec![base::ChannelPos::FL, base::ChannelPos::FR],
         };
+        let have_subwoofer = channel_map.iter().any(|c| *c == base::ChannelPos::Sub);
+        let sub_config = match (have_subwoofer, output.subwoofer_crossover_frequency) {
+            (false, Some(_)) => {
+                return Err(RunError::new(
+                    format!(
+                "subwoofer_crossover_frequency is set for output {}, which doesn't have subwoofer.",
+                name
+            ).as_str(),
+                ))
+            }
+            (false, None) => None,
+            (true, None) => Some(ui::SubwooferConfig {
+                crossover_frequency: 80.0,
+            }),
+            (true, Some(f)) if f > 20 && f < 1000 => Some(ui::SubwooferConfig {
+                crossover_frequency: 80.0,
+            }),
+            (true, Some(f)) => {
+                return Err(RunError::new(
+                    format!("Invalid subwoofer_crossover_frequency: {}", f).as_str(),
+                ))
+            }
+        };
+
+        let default_gain = output
+            .default_gain
+            .unwrap_or((ui::VOLUME_MIN + ui::VOLUME_MAX) / 2.0);
+        shared_state.lock().add_output(ui::OutputState {
+            name: name.clone(),
+            gain: ui::Gain { db: default_gain },
+            subwoofer: sub_config,
+        });
+
         let spec = base::DeviceSpec {
             name: name,
             id: output.device,
             sample_rate: output.sample_rate,
             channels: channel_map,
         };
-        let with_subwoofer = spec.channels.iter().any(|c| *c == base::ChannelPos::Sub);
         let out = output::AsyncOutput::new(output::ResilientAlsaOutput::new(spec, period_duration));
 
         let dynamic_resampling = output.dynamic_resampling.unwrap_or(false);
@@ -257,29 +322,19 @@ fn run() -> Result<(), RunError> {
             output::ResamplingOutput::new(out, resampler_window)
         };
 
-        let out = if with_subwoofer {
-            crossover::SubwooferCrossoverOutput::new(out, &shared_state)
-        } else {
-            out
-        };
+        let fir_length = output.fir_length.unwrap_or(5000);
+        let fir_filters = try!(load_fir_set(output.fir_filters, fir_length));
+        let fir_filters_with_sub = try!(load_fir_set(output.fir_filters_with_sub, fir_length));
 
-        let out = match output.fir_filters.as_ref() {
-            None => out,
-            Some(files) if files.len() == 2 => {
-                let filter_length = output.fir_length.unwrap_or(5000);
-                let left = try!(filters::FirFilterParams::new(&files[0]));
-                let right = try!(filters::FirFilterParams::new(&files[1]));
-                let (left, right) = filters::reduce_fir_pair(left, right, filter_length);
-                output::AsyncOutput::new(mixer::FilteredOutput::new(
-                    out,
-                    filters::MultichannelFirFilter::new_pair(left, right),
-                    &shared_state,
-                ))
-            }
-            _ => return Err(RunError::new("fir_filters must contain 2 elements.")),
-        };
+        let out = output::AsyncOutput::new(mixer::FilteredOutput::new(
+            output::AsyncOutput::new(out),
+            fir_filters,
+            fir_filters_with_sub,
+            sub_config,
+            &shared_state,
+        ));
 
-        outputs.push(output::AsyncOutput::new(out));
+        outputs.push(out);
     }
 
     if config.control_device.is_some() {
@@ -298,6 +353,7 @@ fn run() -> Result<(), RunError> {
             }
         }
     }
+
 
     let web_addr = config.web_address.unwrap_or("0.0.0.0:8000".to_string());
     web_ui::start_web(&web_addr, shared_state.clone());

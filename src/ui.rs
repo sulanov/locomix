@@ -3,7 +3,7 @@ use std::sync::{Mutex, MutexGuard};
 use rustc_serialize;
 use std::sync::mpsc;
 
-pub const VOLUME_MIN: f32 = -50.0;
+pub const VOLUME_MIN: f32 = -60.0;
 pub const VOLUME_MAX: f32 = 0.0;
 
 pub type DeviceId = usize;
@@ -25,21 +25,16 @@ pub struct InputState {
     pub gain: Gain,
 }
 
+#[derive(RustcEncodable, Copy, Clone)]
+pub struct SubwooferConfig {
+    pub crossover_frequency: f32,
+}
+
 #[derive(RustcEncodable)]
 pub struct OutputState {
     pub name: String,
     pub gain: Gain,
-}
-
-impl OutputState {
-    pub fn new(name: &str) -> OutputState {
-        OutputState {
-            name: String::from(name),
-            gain: Gain {
-                db: (VOLUME_MIN + VOLUME_MAX) / 2.0,
-            },
-        }
-    }
+    pub subwoofer: Option<SubwooferConfig>,
 }
 
 #[derive(RustcEncodable, Copy, Clone)]
@@ -74,21 +69,6 @@ impl LoudnessConfig {
 }
 
 #[derive(RustcEncodable, Copy, Clone)]
-pub struct SubwooferConfig {
-    pub enabled: bool,
-    pub crossover_frequency: f32,
-}
-
-impl SubwooferConfig {
-    pub fn default() -> SubwooferConfig {
-        SubwooferConfig {
-            enabled: false,
-            crossover_frequency: 80.0,
-        }
-    }
-}
-
-#[derive(RustcEncodable, Copy, Clone)]
 pub struct CrossfeedConfig {
     pub enabled: bool,
     pub level: f32,
@@ -113,7 +93,7 @@ impl CrossfeedConfig {
     }
 }
 
-#[derive(Copy, Clone, RustcEncodable, RustcDecodable)]
+#[derive(Copy, Clone, PartialEq, RustcEncodable, RustcDecodable)]
 pub enum MuxMode {
     Exclusive,
     Mixer,
@@ -127,7 +107,7 @@ pub struct State {
     pub mux_mode: MuxMode,
     pub loudness: LoudnessConfig,
     pub enable_drc: bool,
-    pub subwoofer: SubwooferConfig,
+    pub enable_subwoofer: bool,
     pub crossfeed: CrossfeedConfig,
 }
 
@@ -138,7 +118,7 @@ pub enum UiMessage {
     SetInputGain { device: DeviceId, gain: Gain },
     SetMuxMode { mux_mode: MuxMode },
     SetEnableDrc { enable: bool },
-    SetSubwooferConfig { config: SubwooferConfig },
+    SetEnableSubwoofer { enable: bool },
     SetCrossfeed { level: f32, delay_ms: f32 },
 }
 
@@ -179,7 +159,7 @@ impl StateController {
                 mux_mode: MuxMode::Exclusive,
                 loudness: LoudnessConfig::default(),
                 enable_drc: true,
-                subwoofer: SubwooferConfig::default(),
+                enable_subwoofer: true,
                 crossfeed: CrossfeedConfig::default(),
             },
             stream_observers: Vec::new(),
@@ -291,9 +271,9 @@ impl StateController {
         });
     }
 
-    pub fn set_subwoofer(&mut self, subwoofer: SubwooferConfig) {
-        self.state.subwoofer = subwoofer;
-        self.broadcast(UiMessage::SetSubwooferConfig { config: subwoofer });
+    pub fn set_enable_subwoofer(&mut self, enable: bool) {
+        self.state.enable_subwoofer = enable;
+        self.broadcast(UiMessage::SetEnableSubwoofer { enable });
     }
 
     pub fn set_crossfeed(&mut self, crossfeed: CrossfeedConfig) {
