@@ -1,4 +1,5 @@
 use base::*;
+use std::cmp;
 use std::f32::consts::PI;
 use std::mem;
 use std::sync::Arc;
@@ -379,6 +380,7 @@ pub fn reduce_fir(fir: Vec<f32>, size: usize) -> FirFilterParams {
     let mut start: usize = 0;
     let mut max_sum: f64 = 0.0;
     let mut sum: f64 = 0.0;
+    let size = cmp::min(size, fir.len());
     for i in 0..fir.len() {
         let l = fir[i] as f64;
         sum += l * l;
@@ -402,6 +404,7 @@ pub fn reduce_fir_set(params: Vec<Vec<f32>>, size: usize) -> Vec<FirFilterParams
     let mut start: usize = 0;
     let mut max_sum: f64 = 0.0;
     let mut sum: f64 = 0.0;
+    let size = cmp::min(size, length);
     for i in 0..length {
         for p in &params {
             let v = p[i] as f64;
@@ -448,15 +451,16 @@ impl AudioFilter<FirFilter> for FirFilter {
             params: params,
             buffer: vec![0.0; size],
             buffer_pos: 0,
-            window_size: 0,
+            window_size: size,
         }
     }
 
     fn set_params(&mut self, params: FirFilterParams) {
+        let size = params.coefficients.len();
         self.params = params;
-        self.buffer = vec![0.0; self.params.coefficients.len()];
+        self.buffer = vec![0.0; size];
         self.buffer_pos = 0;
-        self.window_size = self.buffer.len();
+        self.window_size = size;
     }
 
     fn apply_one(&mut self, x0: FCoef) -> FCoef {
