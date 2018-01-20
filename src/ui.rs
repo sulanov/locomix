@@ -35,6 +35,7 @@ pub struct OutputState {
     pub name: String,
     pub gain: Gain,
     pub subwoofer: Option<SubwooferConfig>,
+    pub drc_supported: bool,
 }
 
 #[derive(RustcEncodable, Copy, Clone)]
@@ -106,9 +107,9 @@ pub struct State {
     pub output: usize,
     pub mux_mode: MuxMode,
     pub loudness: LoudnessConfig,
-    pub enable_drc: bool,
-    pub enable_subwoofer: bool,
-    pub crossfeed: CrossfeedConfig,
+    pub enable_drc: Option<bool>,
+    pub enable_subwoofer: Option<bool>,
+    pub crossfeed: Option<CrossfeedConfig>,
 }
 
 #[derive(Copy, Clone)]
@@ -119,7 +120,7 @@ pub enum UiMessage {
     SetMuxMode { mux_mode: MuxMode },
     SetEnableDrc { enable: bool },
     SetEnableSubwoofer { enable: bool },
-    SetCrossfeed { level: f32, delay_ms: f32 },
+    SetCrossfeed { config: CrossfeedConfig },
 }
 
 pub type UiMessageReceiver = mpsc::Receiver<UiMessage>;
@@ -158,9 +159,9 @@ impl StateController {
                 output: 0,
                 mux_mode: MuxMode::Exclusive,
                 loudness: LoudnessConfig::default(),
-                enable_drc: true,
-                enable_subwoofer: true,
-                crossfeed: CrossfeedConfig::default(),
+                enable_drc: None,
+                enable_subwoofer: None,
+                crossfeed: None,
             },
             stream_observers: Vec::new(),
             observers: Vec::new(),
@@ -176,6 +177,12 @@ impl StateController {
     }
 
     pub fn add_output(&mut self, state: OutputState) {
+        if self.state.enable_drc.is_none() && state.drc_supported {
+            self.state.enable_drc = Some(true);
+        }
+        if self.state.enable_subwoofer.is_none() && state.subwoofer.is_some() {
+            self.state.enable_subwoofer = Some(true);
+        }
         self.state.outputs.push(state);
     }
 
@@ -253,9 +260,11 @@ impl StateController {
         self.broadcast(UiMessage::SetMuxMode { mux_mode: mux_mode });
     }
 
-    pub fn set_enable_drc(&mut self, enable_drc: bool) {
-        self.state.enable_drc = enable_drc;
-        self.broadcast(UiMessage::SetEnableDrc { enable: enable_drc });
+    pub fn set_enable_drc(&mut self, enable: bool) {
+        if self.state.enable_drc.is_some() {
+            self.state.enable_drc = Some(enable);
+            self.broadcast(UiMessage::SetEnableDrc { enable });
+        }
     }
 
     pub fn set_loudness(&mut self, loudness: LoudnessConfig) {
@@ -272,17 +281,15 @@ impl StateController {
     }
 
     pub fn set_enable_subwoofer(&mut self, enable: bool) {
-        self.state.enable_subwoofer = enable;
-        self.broadcast(UiMessage::SetEnableSubwoofer { enable });
+        if self.state.enable_subwoofer.is_some() {
+            self.state.enable_subwoofer = Some(enable);
+            self.broadcast(UiMessage::SetEnableSubwoofer { enable });
+        }
     }
 
     pub fn set_crossfeed(&mut self, crossfeed: CrossfeedConfig) {
-        self.state.crossfeed = crossfeed;
-        let msg = UiMessage::SetCrossfeed {
-            level: self.state.crossfeed.get_level(),
-            delay_ms: self.state.crossfeed.delay_ms,
-        };
-        self.broadcast(msg);
+        self.state.crossfeed = Some(crossfeed);
+        self.broadcast(UiMessage::SetCrossfeed { config: crossfeed });
     }
 
     pub fn on_stream_state(&self, state: StreamState) {

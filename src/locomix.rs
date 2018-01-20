@@ -101,6 +101,7 @@ struct Config {
     web_address: Option<String>,
     period_duration: Option<usize>,
     state_script: Option<String>,
+    enable_crossfeed: Option<bool>,
 
     input: Vec<InputConfig>,
     output: Vec<OutputConfig>,
@@ -294,12 +295,17 @@ fn run() -> Result<(), RunError> {
             }
         };
 
+        let fir_length = output.fir_length.unwrap_or(5000);
+        let fir_filters = try!(load_fir_set(output.fir_filters, fir_length));
+        let fir_filters_with_sub = try!(load_fir_set(output.fir_filters_with_sub, fir_length));
+
         let default_gain = output
             .default_gain
             .unwrap_or((ui::VOLUME_MIN + ui::VOLUME_MAX) / 2.0);
         shared_state.lock().add_output(ui::OutputState {
             name: name.clone(),
             gain: ui::Gain { db: default_gain },
+            drc_supported: fir_filters.is_some(),
             subwoofer: sub_config,
         });
 
@@ -321,10 +327,6 @@ fn run() -> Result<(), RunError> {
         } else {
             output::ResamplingOutput::new(out, resampler_window)
         };
-
-        let fir_length = output.fir_length.unwrap_or(5000);
-        let fir_filters = try!(load_fir_set(output.fir_filters, fir_length));
-        let fir_filters_with_sub = try!(load_fir_set(output.fir_filters_with_sub, fir_length));
 
         let out = output::AsyncOutput::new(mixer::FilteredOutput::new(
             output::AsyncOutput::new(out),
@@ -354,13 +356,16 @@ fn run() -> Result<(), RunError> {
         }
     }
 
-
     let web_addr = config.web_address.unwrap_or("0.0.0.0:8000".to_string());
     web_ui::start_web(&web_addr, shared_state.clone());
 
     match config.state_script {
         Some(s) => state_script::start_state_script_contoller(&s, shared_state.clone()),
         None => (),
+    }
+
+    if config.enable_crossfeed.unwrap_or(false) {
+        shared_state.lock().set_crossfeed(ui::CrossfeedConfig::default());
     }
 
     Ok(try!(mixer::run_mixer_loop(

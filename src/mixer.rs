@@ -104,8 +104,12 @@ impl FilteredOutput {
         subwoofer_config: Option<ui::SubwooferConfig>,
         shared_state: &ui::SharedState,
     ) -> Box<output::Output> {
-        let enable_drc = shared_state.lock().state().enable_drc;
-        let enable_subwoofer = shared_state.lock().state().enable_subwoofer;
+        let enable_drc = shared_state.lock().state().enable_drc.unwrap_or(false);
+        let enable_subwoofer = shared_state
+            .lock()
+            .state()
+            .enable_subwoofer
+            .unwrap_or(false);
         let mut result = Box::new(FilteredOutput {
             output: output,
             fir_params: fir_params,
@@ -321,8 +325,8 @@ pub fn run_mixer_loop(
                 }
                 ui::UiMessage::SetEnableDrc { enable: _ } => (),
                 ui::UiMessage::SetEnableSubwoofer { enable: _ } => (),
-                ui::UiMessage::SetCrossfeed { level, delay_ms } => {
-                    crossfeed_filter.set_params(level, delay_ms);
+                ui::UiMessage::SetCrossfeed { config } => {
+                    crossfeed_filter.set_params(config.get_level(), config.delay_ms);
                 }
                 ui::UiMessage::SetMuxMode { mux_mode } => {
                     exclusive_mux_mode = mux_mode == ui::MuxMode::Exclusive;

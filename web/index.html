@@ -17,12 +17,16 @@
     .slider {
       width: 250px;
     }
+    input {
+      margin: 0.5em;
+    }
   </style>
 </head>
 <body>
+<dev id="controls" hidden=false>
   <div class="master_volume_box">
     <header>Volume</header>
-    <input class="slider" type="range" min="-50" max="0" step="0.5"></input>
+    <input class="slider" type="range" min="-60" max="0" step="0.5"></input>
     <value></value> dB
   </div>
 
@@ -33,13 +37,7 @@
     </div>
   </div>
 
-  <div class="mode_selector">
-    <header>Mode</header>
-    <label><input type="radio" name="mux_mode" value="Exclusive"></input>Exclusive</label>
-    <label><input type="radio" name="mux_mode" value="Mixer"></input>Mixer</label>
-  </div>
-
-  <div class="enable_drc_box">
+  <div class="drc_box">
     <label><input type="checkbox" id="enable_drc_checkbox"></input>Room correction</label>
   </div>
 
@@ -74,6 +72,12 @@
     <value></value> dB
   </div>
 
+  <div class="mode_selector">
+    <header>Mode</header>
+    <label><input type="radio" name="mux_mode" value="Exclusive"></input>Exclusive</label>
+    <label><input type="radio" name="mux_mode" value="Mixer"></input>Mixer</label>
+  </div>
+</dev>
   <div>
     <a href="/status">Status</a>
   </div>
@@ -217,8 +221,13 @@ function postState(params) {
 }
 
 function feature_checkbox(name, state) {
+    let value = state[name];
     let checkbox = document.querySelector('#' + name + '_checkbox');
-    checkbox.checked = state[name];
+    if (value == null) {
+      checkbox.parentElement.hidden = true;
+      return;
+    }
+    checkbox.checked = value;
     checkbox.onchange = (event) => {
       var state = {};
       state[name] = checkbox.checked;
@@ -256,20 +265,28 @@ document.body.onload = () => {
     });
     update_volume_slider(state);
 
-    let template = document.querySelector(".output_selector .template")
-    for (var output_id in state.outputs) {
-      add_output(state, output_id, template);
+    if (state.outputs.length > 1) {
+      let template = document.querySelector(".output_selector .template")
+      for (var output_id in state.outputs) {
+        add_output(state, output_id, template);
+      }
+    } else {
+      document.querySelector(".output_selector").hidden = true;
     }
 
-    document.querySelector(
-        'input[value="' +  state.mux_mode +'"][name="mux_mode"]')
-      .checked = true;
-    for (var mode_radio of document.querySelectorAll('input[name="mux_mode"]')) {
-      mode_radio.onchange = (event) => {
-        if (event.target.checked) {
-          postState({"mux_mode": event.target.value});
+    if (state.inputs.length > 1) {
+      document.querySelector(
+          'input[value="' +  state.mux_mode +'"][name="mux_mode"]')
+        .checked = true;
+      for (var mode_radio of document.querySelectorAll('input[name="mux_mode"]')) {
+        mode_radio.onchange = (event) => {
+          if (event.target.checked) {
+            postState({"mux_mode": event.target.value});
+          }
         }
       }
+    } else {
+      document.querySelector('.mode_selector').hidden = true;
     }
 
     feature_checkbox('enable_drc', state);
@@ -284,20 +301,29 @@ document.body.onload = () => {
       postState({"loudness": {"auto": auto } })
     ));
 
-    slider_with_checkbox(document.querySelector(".crossfeed_box"),
-                         state.crossfeed, "crossfeed", "level");
+    if (state.crossfeed != null) {
+      slider_with_checkbox(document.querySelector(".crossfeed_box"),
+                           state.crossfeed, "crossfeed", "level");
 
-    let crossfeed_delay_box = document.querySelector(".crossfeed_delay_box");
-    crossfeed_delay_box.querySelector(".slider").value = state.crossfeed.delay_ms;
-    autoupdate_slider(crossfeed_delay_box, (delay_ms) => (
-      postState({"crossfeed": { "delay_ms": delay_ms} })
-    ));
-
-    let input_template = document.querySelector(".input.template")
-    var id = 0;
-    for (input of state.inputs) {
-      add_input(id++, input, input_template);
+      let crossfeed_delay_box = document.querySelector(".crossfeed_delay_box");
+      crossfeed_delay_box.querySelector(".slider").value = state.crossfeed.delay_ms;
+      autoupdate_slider(crossfeed_delay_box, (delay_ms) => (
+        postState({"crossfeed": { "delay_ms": delay_ms} })
+      ));
+    } else {
+      document.querySelector(".crossfeed_box").hidden = true;
+      document.querySelector(".crossfeed_delay_box").hidden = true;
     }
+
+    if (state.inputs.length > 1) {
+      let input_template = document.querySelector(".input.template")
+      var id = 0;
+      for (input of state.inputs) {
+        add_input(id++, input, input_template);
+      }
+    }
+
+    document.querySelector("#controls").hidden = false;
   })
 };
 

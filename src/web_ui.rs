@@ -103,7 +103,9 @@ fn serve_web(address: &str, shared_state: SharedState) {
                         });
 
                         json.crossfeed.map( |crossfeed| {
-                            let mut crossfeed_config = state_controller.state().crossfeed.clone();
+                            let mut crossfeed_config =
+                                state_controller.state().crossfeed.unwrap_or(
+                                    CrossfeedConfig::default()).clone();
                             crossfeed.enabled.map( |enabled| {
                                 crossfeed_config.enabled = enabled;
                             });
