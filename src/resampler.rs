@@ -7,6 +7,7 @@ use base;
 use base::convolve;
 use time::TimeDelta;
 
+#[derive(Clone)]
 struct QuadFunction {
     a: f32,
     b: f32,
@@ -79,6 +80,18 @@ impl Resampler {
                 .collect(),
             i_pos: 0.0,
             o_pos: 0.0,
+        }
+    }
+
+    pub fn clone_state(other: &Resampler) -> Resampler {
+        Resampler {
+            i_freq: other.i_freq,
+            o_freq: other.o_freq,
+            size: other.size,
+            queue: vec![0.0; other.queue.len()],
+            win: other.win.clone(),
+            i_pos: other.i_pos,
+            o_pos: other.o_pos,
         }
     }
 
@@ -237,6 +250,15 @@ impl FastResampler {
         }
     }
 
+    fn clone_state(other: &FastResampler) -> FastResampler {
+        FastResampler {
+            table: other.table.clone(),
+            queue: vec![0.0; other.queue.len()],
+            i_pos: other.i_pos,
+            i_pos_frac: other.i_pos_frac,
+        }
+    }
+
     pub fn resample(&mut self, input: &[f32]) -> Vec<f32> {
         let table = &self.table;
         let mut output = Vec::with_capacity(
@@ -385,11 +407,16 @@ impl StreamResampler {
             self.input_sample_rate = frame.sample_rate;
         }
 
-        while self.resamplers.len() < frame.channels() {
+        if self.resamplers.is_empty() {
             self.resamplers.push(
                 self.resampler_factory
                     .create_resampler(frame.sample_rate, self.output_sample_rate),
             );
+        }
+
+        while self.resamplers.len() < frame.channels() {
+            let new = FastResampler::clone_state(&self.resamplers[0]);
+            self.resamplers.push(new);
         }
 
         for i in 0..frame.channels.len() {
@@ -412,7 +439,7 @@ pub struct FineStreamResampler {
     input_sample_rate: usize,
     output_sample_rate: f64,
     reported_output_sample_rate: usize,
-    resamplers: [Resampler; 2],
+    resamplers: Vec<Resampler>,
     window_size: usize,
 }
 
@@ -426,10 +453,7 @@ impl FineStreamResampler {
             input_sample_rate: 48000,
             output_sample_rate: output_sample_rate,
             reported_output_sample_rate: reported_output_sample_rate,
-            resamplers: [
-                Resampler::new(48000.0, output_sample_rate, window_size),
-                Resampler::new(48000.0, output_sample_rate, window_size),
-            ],
+            resamplers: Vec::new(),
             window_size: window_size,
         }
     }
@@ -445,18 +469,29 @@ impl FineStreamResampler {
     ) {
         self.output_sample_rate = output_sample_rate;
         self.reported_output_sample_rate = reported_output_sample_rate;
-        self.resamplers[0].set_frequencies(self.input_sample_rate as f64, self.output_sample_rate);
-        self.resamplers[1].set_frequencies(self.input_sample_rate as f64, self.output_sample_rate);
+        for r in self.resamplers.as_mut_slice() {
+            r.set_frequencies(self.input_sample_rate as f64, self.output_sample_rate);
+        };
     }
 
     pub fn resample(&mut self, mut frame: base::Frame) -> Option<base::Frame> {
         if self.input_sample_rate != frame.sample_rate {
             self.input_sample_rate = frame.sample_rate;
-            self.resamplers = [
-                Resampler::new(frame.sample_rate as f64, self.output_sample_rate as f64, 20),
-                Resampler::new(frame.sample_rate as f64, self.output_sample_rate as f64, 20),
-            ];
+            for r in self.resamplers.as_mut_slice() {
+                r.set_frequencies(self.input_sample_rate as f64, self.output_sample_rate);
+            }
         }
+
+        if self.resamplers.is_empty() {
+            self.resamplers.push(Resampler::new(
+                self.input_sample_rate as f64, self.output_sample_rate, self.window_size));
+        }
+
+        while self.resamplers.len() < frame.channels() {
+            let new = Resampler::clone_state(&self.resamplers[0]);
+            self.resamplers.push(new);
+        }
+
 
         for i in 0..frame.channels.len() {
             frame.channels[i].pcm = self.resamplers[i].resample(&frame.channels[i].pcm);
