@@ -471,7 +471,7 @@ impl FineStreamResampler {
         self.reported_output_sample_rate = reported_output_sample_rate;
         for r in self.resamplers.as_mut_slice() {
             r.set_frequencies(self.input_sample_rate as f64, self.output_sample_rate);
-        };
+        }
     }
 
     pub fn resample(&mut self, mut frame: base::Frame) -> Option<base::Frame> {
@@ -484,14 +484,16 @@ impl FineStreamResampler {
 
         if self.resamplers.is_empty() {
             self.resamplers.push(Resampler::new(
-                self.input_sample_rate as f64, self.output_sample_rate, self.window_size));
+                self.input_sample_rate as f64,
+                self.output_sample_rate,
+                self.window_size,
+            ));
         }
 
         while self.resamplers.len() < frame.channels() {
             let new = Resampler::clone_state(&self.resamplers[0]);
             self.resamplers.push(new);
         }
-
 
         for i in 0..frame.channels.len() {
             frame.channels[i].pcm = self.resamplers[i].resample(&frame.channels[i].pcm);

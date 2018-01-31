@@ -365,7 +365,9 @@ fn run() -> Result<(), RunError> {
     }
 
     if config.enable_crossfeed.unwrap_or(false) {
-        shared_state.lock().set_crossfeed(ui::CrossfeedConfig::default());
+        shared_state
+            .lock()
+            .set_crossfeed(ui::CrossfeedConfig::default());
     }
 
     Ok(try!(mixer::run_mixer_loop(

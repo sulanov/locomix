@@ -1,5 +1,6 @@
 extern crate alsa;
 extern crate libc;
+extern crate nix;
 
 use std;
 use std::ffi::CString;
@@ -164,11 +165,13 @@ impl Input for AlsaInput {
             Ok(0) => return Ok(None),
             Ok(r) => r,
             Err(e) => {
-                if e.code() == -libc::EWOULDBLOCK {
+                if e.errno().unwrap_or(nix::Errno::UnknownErrno) == nix::errno::EWOULDBLOCK {
                     return Ok(None);
                 }
-                println!("Recovering AlsaInput {}: {}", &self.spec.name, e.code());
-                match self.pcm.recover(e.code(), true) {
+                println!("Recovering AlsaInput {}: {:?}", &self.spec.name, e.errno());
+                match self.pcm
+                    .recover(e.errno().unwrap_or(nix::Errno::UnknownErrno) as i32, true)
+                {
                     Ok(_) => return self.read(),
                     Err(_) => return Err(Error::new(error::Error::description(&e))),
                 }
