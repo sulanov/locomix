@@ -36,7 +36,7 @@ impl SampleFormat {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Ord, PartialOrd)]
 pub enum ChannelPos {
     FL,
     FR,
@@ -358,6 +358,7 @@ pub struct DeviceSpec {
     pub id: String,
     pub sample_rate: Option<usize>,
     pub channels: Vec<ChannelPos>,
+    pub delay: TimeDelta,
 }
 
 #[cfg(test)]

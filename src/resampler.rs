@@ -378,6 +378,7 @@ pub struct StreamResampler {
     resampler_factory: ResamplerFactory,
     resamplers: Vec<FastResampler>,
     window_size: usize,
+    delay: TimeDelta,
 }
 
 impl StreamResampler {
@@ -388,6 +389,7 @@ impl StreamResampler {
             resampler_factory: ResamplerFactory::new(window_size),
             resamplers: vec![],
             window_size: window_size,
+            delay: TimeDelta::zero(),
         }
     }
 
@@ -405,6 +407,7 @@ impl StreamResampler {
         {
             self.resamplers.clear();
             self.input_sample_rate = frame.sample_rate;
+            self.delay = base::samples_to_timedelta(self.input_sample_rate, self.window_size as i64);
         }
 
         if self.resamplers.is_empty() {
@@ -423,8 +426,7 @@ impl StreamResampler {
             frame.channels[i].pcm = self.resamplers[i].resample(&frame.channels[i].pcm);
         }
 
-        frame.timestamp -=
-            base::samples_to_timedelta(self.input_sample_rate, self.window_size as i64);
+        frame.timestamp -= self.delay;
         frame.sample_rate = self.output_sample_rate;
 
         if frame.len() > 0 {
@@ -432,6 +434,10 @@ impl StreamResampler {
         } else {
             None
         }
+    }
+
+    pub fn delay(&self) ->TimeDelta {
+        self.delay
     }
 }
 
@@ -441,6 +447,7 @@ pub struct FineStreamResampler {
     reported_output_sample_rate: usize,
     resamplers: Vec<Resampler>,
     window_size: usize,
+    delay: TimeDelta,
 }
 
 impl FineStreamResampler {
@@ -455,6 +462,7 @@ impl FineStreamResampler {
             reported_output_sample_rate: reported_output_sample_rate,
             resamplers: Vec::new(),
             window_size: window_size,
+            delay: TimeDelta::zero(),
         }
     }
 
@@ -480,6 +488,8 @@ impl FineStreamResampler {
             for r in self.resamplers.as_mut_slice() {
                 r.set_frequencies(self.input_sample_rate as f64, self.output_sample_rate);
             }
+            self.delay =
+                base::samples_to_timedelta(self.input_sample_rate, self.window_size as i64);
         }
 
         if self.resamplers.is_empty() {
@@ -499,9 +509,7 @@ impl FineStreamResampler {
             frame.channels[i].pcm = self.resamplers[i].resample(&frame.channels[i].pcm);
         }
 
-        let delay =
-            (TimeDelta::seconds(1) * self.window_size as i64) / self.input_sample_rate as i64;
-        frame.timestamp -= delay;
+        frame.timestamp -= self.delay;
         frame.sample_rate = self.reported_output_sample_rate;
 
         if frame.len() > 0 {
@@ -509,6 +517,10 @@ impl FineStreamResampler {
         } else {
             None
         }
+    }
+
+    pub fn delay(&self) -> TimeDelta {
+        self.delay
     }
 }
 

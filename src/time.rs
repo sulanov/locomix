@@ -8,6 +8,7 @@ use std::iter::Sum;
 
 const NANOS_PER_SEC: i64 = 1_000_000_000;
 const NANOS_PER_MILLI: i64 = 1_000_000;
+const NANOS_PER_MICRO: i64 = 1_000;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct TimeDelta(i64);
@@ -25,8 +26,16 @@ impl TimeDelta {
         TimeDelta(secs * NANOS_PER_SEC)
     }
 
-    pub fn milliseconds(millis: i64) -> TimeDelta {
-        TimeDelta(millis * NANOS_PER_MILLI)
+    pub fn milliseconds(ms: i64) -> TimeDelta {
+        TimeDelta(ms * NANOS_PER_MILLI)
+    }
+
+    pub fn milliseconds_f(ms: f32) -> TimeDelta {
+        TimeDelta((ms * NANOS_PER_MILLI as f32) as i64)
+    }
+
+    pub fn microseconds(us: i64) -> TimeDelta {
+        TimeDelta(us * NANOS_PER_MICRO)
     }
 
     pub fn as_duration(&self) -> std::time::Duration {
@@ -53,6 +62,10 @@ impl TimeDelta {
 
     pub fn in_milliseconds(&self) -> i64 {
         self.0 / NANOS_PER_MILLI
+    }
+
+    pub fn in_microseconds(&self) -> i64 {
+        self.0 / NANOS_PER_MICRO
     }
 
     pub fn abs(&self) -> TimeDelta {

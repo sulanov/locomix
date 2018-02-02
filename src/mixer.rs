@@ -302,7 +302,7 @@ pub fn run_mixer_loop(
             frame = crossfeed_filter.apply(frame);
 
             frame.timestamp +=
-                mix_delay + period_duration * 2 + outputs[selected_output].min_delay();
+                mix_delay + period_duration * 3 + outputs[selected_output].min_delay();
             try!(outputs[selected_output].write(frame));
         } else {
             std::thread::sleep(TimeDelta::milliseconds(500).as_duration());

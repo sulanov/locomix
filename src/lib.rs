@@ -1,3 +1,5 @@
+#![feature(duration_from_micros)]
+
 extern crate rustc_serialize;
 
 #[macro_use]

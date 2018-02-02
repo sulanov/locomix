@@ -74,13 +74,22 @@ struct InputConfig {
 }
 
 #[derive(Deserialize)]
-struct OutputConfig {
-    name: Option<String>,
+struct CompositeOutputEntry {
     device: String,
-    resampler_window: Option<usize>,
-    dynamic_resampling: Option<bool>,
     sample_rate: Option<usize>,
     channel_map: Option<String>,
+    delay: Option<f32>
+}
+
+#[derive(Deserialize)]
+struct OutputConfig {
+    name: Option<String>,
+    device: Option<String>,
+    devices: Option<Vec<CompositeOutputEntry>>,
+    channel_map: Option<String>,
+    sample_rate: Option<usize>,
+    resampler_window: Option<usize>,
+    dynamic_resampling: Option<bool>,
     default_gain: Option<f32>,
     subwoofer_crossover_frequency: Option<usize>,
     fir_filters: Option<Vec<String>>,
@@ -119,9 +128,11 @@ fn get_resampler_window(value: Option<usize>, dynamic: bool) -> Result<usize, Ru
     }
 }
 
-fn parse_channel_map(map_str: &str) -> Result<Vec<base::ChannelPos>, RunError> {
+fn parse_channel_map(map_str: Option<String>) -> Result<Vec<base::ChannelPos>, RunError> {
     let mut unrecognized = 0;
-    let result: Vec<base::ChannelPos> = map_str
+    let unwrapped = map_str.unwrap_or("L R".to_string());
+    let result: Vec<base::ChannelPos> = unwrapped
+        .as_str()
         .split_whitespace()
         .map(|c| match c.to_uppercase().as_str() {
             "L" | "FL" | "LEFT" => base::ChannelPos::FL,
@@ -138,7 +149,7 @@ fn parse_channel_map(map_str: &str) -> Result<Vec<base::ChannelPos>, RunError> {
 
     if result.len() < 2 || unrecognized == result.len() {
         return Err(RunError::new(
-            format!("Invalid channel map: {}", map_str).as_str(),
+            format!("Invalid channel map: {}", unwrapped).as_str(),
         ));
     }
 
@@ -240,6 +251,7 @@ fn run() -> Result<(), RunError> {
                     id: input.device,
                     sample_rate: input.sample_rate,
                     channels: vec![],
+                    delay: TimeDelta::zero()
                 },
                 period_duration,
             ),
@@ -264,14 +276,67 @@ fn run() -> Result<(), RunError> {
     }
 
     let mut outputs = Vec::<Box<output::Output>>::new();
-
+    let mut index = 0;
     for output in config.output {
-        let name = output.name.unwrap_or(output.device.clone());
-        let channel_map = match output.channel_map {
-            Some(map) => try!(parse_channel_map(map.as_str())),
-            None => vec![base::ChannelPos::FL, base::ChannelPos::FR],
+        index += 1;
+        let name = output.name.unwrap_or(format!("Output {}", index));
+
+        let dynamic_resampling = output.dynamic_resampling.unwrap_or(false);
+        let resampler_window = try!(get_resampler_window(
+            output.resampler_window,
+            dynamic_resampling
+        ));
+
+        let devices = match (output.device, output.channel_map, output.devices) {
+            (Some(device), channel_map, None) => vec![
+                base::DeviceSpec {
+                    name: name.clone(),
+                    id: device,
+                    sample_rate: output.sample_rate,
+                    channels: try!(parse_channel_map(channel_map)),
+                    delay: TimeDelta::zero()
+                },
+            ],
+            (None, None, Some(devices)) => {
+                let mut result = vec![];
+                for d in devices {
+                    result.push(base::DeviceSpec {
+                        name: "".to_string(),
+                        id: d.device,
+                        sample_rate: d.sample_rate.or(output.sample_rate),
+                        channels: try!(parse_channel_map(d.channel_map)),
+                        delay: TimeDelta::milliseconds_f(d.delay.unwrap_or(0.0)),
+                    });
+                }
+                result
+            }
+            (Some(_), _, Some(_)) => {
+                return Err(RunError::new(
+                    "device and devices fields cannot be specified together.",
+                ));
+            }
+            (_, Some(_), Some(_)) => {
+                return Err(RunError::new(
+                    "channel_map cannot be specified for a composite output device.",
+                ));
+            }
+            (None, _, None) => {
+                return Err(RunError::new(
+                    "Either device or devices must be specified for each output.",
+                ));
+            }
         };
-        let have_subwoofer = channel_map.iter().any(|c| *c == base::ChannelPos::Sub);
+
+        let have_subwoofer = devices.iter().any(
+            |d| d.channels.iter().any(|c| *c == base::ChannelPos::Sub));
+
+        let out = try!(output::CompositeOutput::new(
+            devices,
+            period_duration,
+            resampler_window,
+            dynamic_resampling,
+        ));
+
         let sub_config = match (have_subwoofer, output.subwoofer_crossover_frequency) {
             (false, Some(_)) => {
                 return Err(RunError::new(
@@ -308,25 +373,6 @@ fn run() -> Result<(), RunError> {
             drc_supported: fir_filters.is_some(),
             subwoofer: sub_config,
         });
-
-        let spec = base::DeviceSpec {
-            name: name,
-            id: output.device,
-            sample_rate: output.sample_rate,
-            channels: channel_map,
-        };
-        let out = output::AsyncOutput::new(output::ResilientAlsaOutput::new(spec, period_duration));
-
-        let dynamic_resampling = output.dynamic_resampling.unwrap_or(false);
-        let resampler_window = try!(get_resampler_window(
-            output.resampler_window,
-            dynamic_resampling
-        ));
-        let out = if dynamic_resampling {
-            output::FineResamplingOutput::new(out, resampler_window)
-        } else {
-            output::ResamplingOutput::new(out, resampler_window)
-        };
 
         let out = output::AsyncOutput::new(mixer::FilteredOutput::new(
             output::AsyncOutput::new(out),
