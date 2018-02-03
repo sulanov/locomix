@@ -183,12 +183,11 @@ impl AlsaWriteLoop {
             }
         }
 
-        let frames_written =
-            try!(self.pcm.io().writei(&self.buffer[self.buffer_pos..])) as usize;
+        let frames_written = try!(self.pcm.io().writei(&self.buffer[self.buffer_pos..])) as usize;
         self.buffer_pos += frames_written * self.bytes_per_frame;
 
         match self.rate_detector
-            .update(frames_written, avail - frames_written)
+            .update(frames_written, try!(self.pcm.avail_update()) as usize)
         {
             None => (),
             Some(rate) => match self.feedback_sender

@@ -407,7 +407,8 @@ impl StreamResampler {
         {
             self.resamplers.clear();
             self.input_sample_rate = frame.sample_rate;
-            self.delay = base::samples_to_timedelta(self.input_sample_rate, self.window_size as i64);
+            self.delay =
+                base::samples_to_timedelta(self.input_sample_rate, self.window_size as i64);
         }
 
         if self.resamplers.is_empty() {
@@ -436,7 +437,7 @@ impl StreamResampler {
         }
     }
 
-    pub fn delay(&self) ->TimeDelta {
+    pub fn delay(&self) -> TimeDelta {
         self.delay
     }
 }

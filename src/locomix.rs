@@ -78,7 +78,7 @@ struct CompositeOutputEntry {
     device: String,
     sample_rate: Option<usize>,
     channel_map: Option<String>,
-    delay: Option<f32>
+    delay: Option<f32>,
 }
 
 #[derive(Deserialize)]
@@ -251,7 +251,7 @@ fn run() -> Result<(), RunError> {
                     id: input.device,
                     sample_rate: input.sample_rate,
                     channels: vec![],
-                    delay: TimeDelta::zero()
+                    delay: TimeDelta::zero(),
                 },
                 period_duration,
             ),
@@ -294,7 +294,7 @@ fn run() -> Result<(), RunError> {
                     id: device,
                     sample_rate: output.sample_rate,
                     channels: try!(parse_channel_map(channel_map)),
-                    delay: TimeDelta::zero()
+                    delay: TimeDelta::zero(),
                 },
             ],
             (None, None, Some(devices)) => {
@@ -327,8 +327,9 @@ fn run() -> Result<(), RunError> {
             }
         };
 
-        let have_subwoofer = devices.iter().any(
-            |d| d.channels.iter().any(|c| *c == base::ChannelPos::Sub));
+        let have_subwoofer = devices
+            .iter()
+            .any(|d| d.channels.iter().any(|c| *c == base::ChannelPos::Sub));
 
         let out = try!(output::CompositeOutput::new(
             devices,
