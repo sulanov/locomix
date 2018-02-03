@@ -175,7 +175,8 @@ impl AlsaWriteLoop {
 
         if self.buffer_pos >= self.buffer.len() {
             let now = Time::now();
-            let time = now + samples_to_timedelta(self.sample_rate, delay) + self.extra_delay;
+            let time =
+                now + samples_to_timedelta(self.sample_rate, delay as i64) + self.extra_delay;
             let deadline =
                 now + samples_to_timedelta(self.sample_rate, (self.period_size - avail) as i64);
             if self.next_buffer(time, deadline) == LoopState::Stop {
@@ -321,7 +322,7 @@ impl AlsaOutput {
         }
 
         let (_, device_delay) = try!(pcm.avail_delay());
-        let min_delay = samples_to_timedelta(sample_rate, device_delay)
+        let min_delay = samples_to_timedelta(sample_rate, device_delay as i64)
             + period_duration * (BUFFER_PERIODS as i64 - 1) + spec.delay;
 
         let (sender, receiver) = mpsc::channel();

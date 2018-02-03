@@ -576,3 +576,28 @@ impl CrossfeedFilter {
         out
     }
 }
+
+pub struct CascadingFilter {
+    filter_1: BiquadFilter,
+    filter_2: BiquadFilter,
+}
+
+impl AudioFilter<CascadingFilter> for CascadingFilter {
+    type Params = BiquadParams;
+
+    fn new(params: BiquadParams) -> CascadingFilter {
+        CascadingFilter {
+            filter_1: BiquadFilter::new(params.clone()),
+            filter_2: BiquadFilter::new(params),
+        }
+    }
+
+    fn set_params(&mut self, params: Self::Params) {
+        self.filter_1.set_params(params.clone());
+        self.filter_2.set_params(params.clone());
+    }
+
+    fn apply_one(&mut self, sample: FCoef) -> FCoef {
+        self.filter_2.apply_one(self.filter_1.apply_one(sample))
+    }
+}
