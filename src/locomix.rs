@@ -10,6 +10,7 @@ use getopts::Options;
 use locomix::alsa_input;
 use locomix::async_input;
 use locomix::base;
+use locomix::brutefir;
 use locomix::control;
 use locomix::filters;
 use locomix::input;
@@ -95,6 +96,7 @@ struct OutputConfig {
     fir_filters: Option<Vec<String>>,
     fir_filters_with_sub: Option<Vec<String>>,
     fir_length: Option<usize>,
+    use_brutefir: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -171,7 +173,10 @@ fn load_fir_params(filename: &str) -> Result<Vec<f32>, RunError> {
 fn load_fir_set(
     files: Option<Vec<String>>,
     length: usize,
-) -> Result<Option<Vec<filters::FirFilterParams>>, RunError> {
+    sample_rate: usize,
+    period_duration: TimeDelta,
+    use_brutefir: bool,
+) -> Result<Option<Box<filters::StreamFilter>>, RunError> {
     if files.is_none() {
         return Ok(None);
     }
@@ -181,12 +186,22 @@ fn load_fir_set(
         return Err(RunError::new("fir_filters must contain 2 elements."));
     }
 
-    let mut filters = Vec::new();
-    for f in files {
-        filters.push(try!(load_fir_params(&f)));
+    if use_brutefir {
+        Ok(Some(Box::new(brutefir::BruteFir::new(
+            files,
+            sample_rate,
+            period_duration,
+            length,
+        )?)))
+    } else {
+        let mut filters = Vec::new();
+        for f in files {
+            filters.push(load_fir_params(&f)?);
+        }
+        Ok(Some(Box::new(filters::MultichannelFirFilter::new(
+            filters::reduce_fir_set(filters, length),
+        ))))
     }
-
-    Ok(Some(filters::reduce_fir_set(filters, length)))
 }
 
 fn run() -> Result<(), RunError> {
@@ -362,8 +377,21 @@ fn run() -> Result<(), RunError> {
         };
 
         let fir_length = output.fir_length.unwrap_or(5000);
-        let fir_filters = try!(load_fir_set(output.fir_filters, fir_length));
-        let fir_filters_with_sub = try!(load_fir_set(output.fir_filters_with_sub, fir_length));
+        let use_brutefir = output.use_brutefir.unwrap_or(false);
+        let fir_filters = load_fir_set(
+            output.fir_filters,
+            fir_length,
+            sample_rate,
+            period_duration,
+            use_brutefir,
+        )?;
+        let fir_filters_with_sub = load_fir_set(
+            output.fir_filters_with_sub,
+            fir_length,
+            sample_rate,
+            period_duration,
+            use_brutefir,
+        )?;
 
         let default_gain = output
             .default_gain

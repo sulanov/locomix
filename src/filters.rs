@@ -239,7 +239,13 @@ impl FilterPairConfig for LoudnessFilterPairConfig {
         )
     }
 }
+
 pub type LoudnessFilter = FilterPair<LoudnessFilterPairConfig>;
+
+pub trait StreamFilter: Send {
+    fn apply(&mut self, frame: Frame) -> Frame;
+    fn reset(&mut self);
+}
 
 pub struct MultichannelFilter<T: AudioFilter<T>> {
     params: T::Params,
@@ -260,21 +266,31 @@ impl<T: AudioFilter<T>> MultichannelFilter<T> {
         }
         self.params = params
     }
+}
 
-    pub fn apply(&mut self, frame: &mut Frame) {
+impl<T: AudioFilter<T> + Send> StreamFilter for MultichannelFilter<T> {
+    fn apply(&mut self, mut frame: Frame) -> Frame {
         for i in 0..frame.channels.len() {
             if self.filters.len() <= i {
                 self.filters.push(T::new(self.params.clone()));
             }
             self.filters[i].apply_multi(&mut frame.channels[i].pcm[..]);
         }
+        frame
+    }
+
+    fn reset(&mut self) {
+        self.filters.clear();
     }
 }
 
-struct FilterJob {
-    data: Vec<f32>,
-    size_multiplier: usize,
-    response_channel: mpsc::Sender<Vec<f32>>,
+enum FilterJob {
+    Apply {
+        data: Vec<f32>,
+        size_multiplier: usize,
+        response_channel: mpsc::Sender<Vec<f32>>,
+    },
+    Reset,
 }
 
 pub struct MultichannelFirFilter {
@@ -298,11 +314,20 @@ impl MultichannelFirFilter {
             thread::spawn(move || {
                 let mut filter = FirFilter::new(channel_params);
                 for mut job in job_receiver.iter() {
-                    let mut v = vec![0f32; 0];
-                    mem::swap(&mut v, &mut job.data);
-                    filter.window_size = filter.buffer.len() * job.size_multiplier / 256;
-                    filter.apply_multi(&mut v[..]);
-                    job.response_channel.send(v).expect("Failed to send");
+                    match job {
+                        FilterJob::Apply {
+                            mut data,
+                            size_multiplier,
+                            response_channel,
+                        } => {
+                            filter.window_size = filter.buffer.len() * size_multiplier / 256;
+                            filter.apply_multi(&mut data[..]);
+                            response_channel.send(data).expect("Failed to send");
+                        }
+                        FilterJob::Reset => {
+                            filter.reset();
+                        }
+                    }
                 }
             });
         }
@@ -315,8 +340,10 @@ impl MultichannelFirFilter {
             delay2: 0.0,
         }
     }
+}
 
-    pub fn apply(&mut self, mut frame: Frame) -> Frame {
+impl StreamFilter for MultichannelFirFilter {
+    fn apply(&mut self, mut frame: Frame) -> Frame {
         let start = time::Time::now();
 
         let mut recv_channels = vec![];
@@ -327,7 +354,7 @@ impl MultichannelFirFilter {
             let mut v = vec![0f32; 0];
             mem::swap(&mut v, &mut frame.channels[i + 1].pcm);
             self.threads[i]
-                .send(FilterJob {
+                .send(FilterJob::Apply {
                     data: v,
                     response_channel: s,
                     size_multiplier: self.size_multiplier,
@@ -368,6 +395,15 @@ impl MultichannelFirFilter {
         }
 
         frame
+    }
+
+    fn reset(&mut self) {
+        for i in 0..self.threads.len() {
+            self.threads[i]
+                .send(FilterJob::Reset)
+                .expect("Failed to send reset command");
+        }
+        self.channel0.reset();
     }
 }
 
@@ -440,6 +476,14 @@ pub struct FirFilter {
     buffer_pos: usize,
 
     window_size: usize,
+}
+
+impl FirFilter {
+    fn reset(&mut self) {
+        for v in &mut self.buffer {
+            *v = 0.0;
+        }
+    }
 }
 
 impl AudioFilter<FirFilter> for FirFilter {

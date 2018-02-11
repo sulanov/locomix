@@ -85,13 +85,12 @@ impl InputMixer {
 
 pub struct FilteredOutput {
     output: Box<output::Output>,
-    fir_params: Option<Vec<FirFilterParams>>,
-    fir_params_with_sub: Option<Vec<FirFilterParams>>,
+    fir_filter: Option<Box<StreamFilter>>,
+    fir_filter_with_sub: Option<Box<StreamFilter>>,
     subwoofer_config: Option<ui::SubwooferConfig>,
 
     drc_enabled: bool,
     subwoofer_enabled: bool,
-    filter: Option<MultichannelFirFilter>,
     crossover: Option<crossover::CrossoverFilter>,
     ui_msg_receiver: ui::UiMessageReceiver,
 }
@@ -99,8 +98,8 @@ pub struct FilteredOutput {
 impl FilteredOutput {
     pub fn new(
         output: Box<output::Output>,
-        fir_params: Option<Vec<FirFilterParams>>,
-        fir_params_with_sub: Option<Vec<FirFilterParams>>,
+        fir_filter: Option<Box<StreamFilter>>,
+        fir_filter_with_sub: Option<Box<StreamFilter>>,
         subwoofer_config: Option<ui::SubwooferConfig>,
         shared_state: &ui::SharedState,
     ) -> Box<output::Output> {
@@ -112,21 +111,20 @@ impl FilteredOutput {
             .unwrap_or(false);
         let mut result = Box::new(FilteredOutput {
             output: output,
-            fir_params: fir_params,
-            fir_params_with_sub: fir_params_with_sub,
+            fir_filter: fir_filter,
+            fir_filter_with_sub: fir_filter_with_sub,
             subwoofer_config: subwoofer_config,
 
             drc_enabled: enable_drc,
             subwoofer_enabled: enable_subwoofer,
-            filter: None,
             crossover: None,
             ui_msg_receiver: shared_state.lock().add_observer(),
         });
-        result.update();
+        result.update_crossover();
         result
     }
 
-    fn update(&mut self) {
+    fn update_crossover(&mut self) {
         self.crossover = match (self.subwoofer_enabled, self.subwoofer_config) {
             (false, _) => None,
             (true, None) => None,
@@ -137,45 +135,42 @@ impl FilteredOutput {
                 }),
             ) => Some(crossover::CrossoverFilter::new(crossover_frequency)),
         };
-
-        self.filter = match (
-            self.drc_enabled,
-            self.fir_params.as_mut(),
-            self.fir_params_with_sub.as_mut(),
-            self.crossover.is_some(),
-        ) {
-            (true, Some(params), _, false) => Some(MultichannelFirFilter::new(params.clone())),
-            (true, _, Some(params), true) => Some(MultichannelFirFilter::new(params.clone())),
-            (true, Some(params), None, true) => Some(MultichannelFirFilter::new(params.clone())),
-            _ => None,
-        };
     }
 }
 
 impl output::Output for FilteredOutput {
     fn write(&mut self, frame: Frame) -> Result<()> {
-        let mut need_update = false;
+        let mut need_reset = false;
         for msg in self.ui_msg_receiver.try_iter() {
             match msg {
                 ui::UiMessage::SetEnableDrc { enable } => {
                     self.drc_enabled = enable;
-                    need_update = true;
+                    need_reset = true;
                 }
                 ui::UiMessage::SetEnableSubwoofer { enable } => {
                     self.subwoofer_enabled = enable;
-                    need_update = true;
+                    need_reset = true;
                 }
                 _ => (),
             }
         }
 
-        if need_update {
-            self.update();
+        if need_reset {
+            self.update_crossover();
+            self.fir_filter.as_mut().map(|f| f.reset());
+            self.fir_filter_with_sub.as_mut().map(|f| f.reset());
         }
 
-        let frame = match self.filter.as_mut() {
-            Some(f) => f.apply(frame),
-            None => frame,
+        let frame = match (
+            self.drc_enabled,
+            self.crossover.is_some(),
+            self.fir_filter.as_mut(),
+            self.fir_filter_with_sub.as_mut(),
+        ) {
+            (true, false, Some(f), _) => f.apply(frame),
+            (true, true, _, Some(f)) => f.apply(frame),
+            (true, true, Some(f), None) => f.apply(frame),
+            _ => frame,
         };
 
         let frame = match self.crossover.as_mut() {
@@ -298,7 +293,7 @@ pub fn run_mixer_loop(
         }
 
         if state == ui::StreamState::Active {
-            loudness_filter.apply(&mut frame);
+            frame = loudness_filter.apply(frame);
             frame = crossfeed_filter.apply(frame);
 
             frame.timestamp +=

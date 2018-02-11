@@ -6,31 +6,36 @@ use self::byteorder::{NativeEndian, ReadBytesExt};
 use getopts::Options;
 use locomix::base::*;
 use locomix::filters::*;
+use locomix::brutefir::*;
 use locomix::time;
 use std::f32::consts::PI;
 use std::env;
 use std::fs;
 
-fn get_filter_response<T: AudioFilter<T>>(p: T::Params, sample_rate: FCoef, freq: FCoef) -> FCoef {
-    let mut f = T::new(p);
-    let mut test_signal = vec![0.0; 2 * sample_rate as usize];
+fn get_filter_response<F: StreamFilter>(f: &mut F, sample_rate: usize, freq: FCoef) -> FCoef {
+    let mut test_signal = Frame::new(sample_rate, time::Time::now());
+    test_signal
+        .channels
+        .push(ChannelData::new(ChannelPos::FL, 2 * sample_rate));
     for i in 0..test_signal.len() {
-        test_signal[i] = (i as FCoef / sample_rate * freq * 2.0 * PI).sin() as f32;
+        test_signal.channels[0].pcm[i] =
+            (i as FCoef / sample_rate as f32 * freq * 2.0 * PI).sin() as f32;
     }
-    f.apply_multi(&mut test_signal);
+    f.reset();
+    let response = f.apply(test_signal);
 
     let mut p_sum = 0.0;
-    for i in 0..test_signal.len() {
-        p_sum += (test_signal[i] as FCoef).powi(2);
+    for i in (response.len() / 2)..response.len() {
+        p_sum += (response.channels[0].pcm[i] as FCoef).powi(2);
     }
 
-    ((p_sum / (test_signal.len() as FCoef)) * 2.0).log(10.0) * 10.0
+    ((p_sum / ((response.len() / 2) as FCoef)) * 2.0).log(10.0) * 10.0
 }
 
-fn draw_filter_graph<T: AudioFilter<T>>(sample_rate: usize, params: T::Params) {
+fn draw_filter_graph<F: StreamFilter>(sample_rate: usize, mut f: F) {
     let mut freq: FCoef = 20.0;
     for _ in 0..82 {
-        let response = get_filter_response::<T>(params.clone(), sample_rate as FCoef, freq);
+        let response = get_filter_response(&mut f, sample_rate, freq);
         println!("{} {}", freq as usize, response);
         freq = freq * (2.0 as FCoef).powf(0.125);
     }
@@ -119,7 +124,10 @@ fn run() -> Result<()> {
     draw_crossfeed_graph(sample_rate);
 
     println!("Loudness filter");
-    draw_filter_graph::<LoudnessFilter>(sample_rate, SimpleFilterParams::new(sample_rate, 10.0));
+    draw_filter_graph(
+        sample_rate,
+        MultichannelFilter::<LoudnessFilter>::new(SimpleFilterParams::new(sample_rate, 10.0)),
+    );
 
     let filter_length = match matches.opt_str("L").map(|x| x.parse::<usize>()) {
         None => 5000,
@@ -127,15 +135,25 @@ fn run() -> Result<()> {
         Some(Err(_)) => return Err(Error::new("Cannot parse filter length.")),
     };
 
-    let mut fir_filters = Vec::new();
     for filename in matches.opt_strs("F") {
         let params = try!(load_fir_params(&filename));
-        fir_filters.push(reduce_fir(params, filter_length));
-    }
 
-    for i in 0..fir_filters.len() {
-        println!("FIR filter {}", i);
-        draw_filter_graph::<FirFilter>(sample_rate, fir_filters[i].clone());
+        println!("Brute FIR filter {}", filename);
+        draw_filter_graph(
+            48000,
+            BruteFir::new(
+                vec![filename.clone()],
+                48000,
+                time::TimeDelta::milliseconds(5),
+                filter_length,
+            )?,
+        );
+
+        println!("FIR filter {}", filename);
+        draw_filter_graph(
+            48000,
+            MultichannelFirFilter::new(vec![reduce_fir(params, filter_length)]),
+        );
     }
 
     Ok(())

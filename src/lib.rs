@@ -8,6 +8,7 @@ extern crate rouille;
 pub mod alsa_input;
 pub mod async_input;
 pub mod base;
+pub mod brutefir;
 pub mod control;
 pub mod crossover;
 pub mod filters;
