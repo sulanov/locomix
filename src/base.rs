@@ -378,7 +378,7 @@ mod tests {
             buf.push(((r & 0xff00) >> 8) as u8);
         }
 
-        let frame = Frame::from_buffer(SampleFormat::S16LE, 44100, &buf[..], Time::now());
+        let frame = Frame::from_buffer_stereo(SampleFormat::S16LE, 44100, &buf[..], Time::now());
         let buf2 = frame.to_buffer(SampleFormat::S16LE);
 
         assert_eq!(buf.len(), buf2.len());
@@ -389,9 +389,9 @@ mod tests {
 
     #[test]
     fn clamping() {
-        let mut frame = Frame::new(100, Time::now(), 1, 2);
-        frame.data[0][0] = 1.5;
-        frame.data[1][0] = -1.5;
+        let mut frame = Frame::new_stereo(100, Time::now(), 1);
+        frame.channels[0].pcm[0] = 1.5;
+        frame.channels[1].pcm[0] = -1.5;
 
         let buf16 = frame.to_buffer(SampleFormat::S16LE);
 

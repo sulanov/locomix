@@ -492,95 +492,49 @@ impl Output for ResilientAlsaOutput {
     }
 }
 
+const RATE_UPDATE_PERIOD_MS: i64 = 1000;
+
 pub struct ResamplingOutput {
     output: Box<Output>,
     resampler: resampler::StreamResampler,
+    last_rate_update: Time,
+    dynamic_resampling: bool,
 }
 
 impl ResamplingOutput {
-    pub fn new(output: Box<Output>, window_size: usize) -> Box<Output> {
-        let resampler = resampler::StreamResampler::new(output.sample_rate(), window_size);
+    pub fn new(output: Box<Output>, window_size: usize, dynamic_resampling: bool) -> Box<Output> {
+        let resampler = resampler::StreamResampler::new(
+            output.measured_sample_rate(),
+            output.sample_rate(),
+            window_size,
+        );
         Box::new(ResamplingOutput {
             output: output,
             resampler: resampler,
+            last_rate_update: Time::now(),
+            dynamic_resampling: dynamic_resampling,
         })
     }
 }
 
 impl Output for ResamplingOutput {
     fn write(&mut self, frame: Frame) -> Result<()> {
-        let out_sample_rate = self.output.sample_rate();
-        if out_sample_rate == 0 || out_sample_rate == frame.sample_rate {
+        if self.output.sample_rate() == 0 {
             return self.output.write(frame);
         }
 
-        if self.resampler.get_output_sample_rate() != out_sample_rate {
-            self.resampler.set_output_sample_rate(out_sample_rate);
-        }
-
-        match self.resampler.resample(frame) {
-            None => Ok(()),
-            Some(frame) => self.output.write(frame),
-        }
-    }
-
-    fn deactivate(&mut self) {
-        self.output.deactivate();
-    }
-
-    fn sample_rate(&self) -> usize {
-        0
-    }
-
-    fn min_delay(&self) -> TimeDelta {
-        self.output.min_delay() + self.resampler.delay()
-    }
-
-    fn measured_sample_rate(&self) -> f64 {
-        0.0
-    }
-}
-
-const RATE_UPDATE_PERIOD_MS: i64 = 1000;
-
-pub struct FineResamplingOutput {
-    output: Box<Output>,
-    resampler: resampler::FineStreamResampler,
-    last_rate_update: Time,
-}
-
-impl FineResamplingOutput {
-    pub fn new(output: Box<Output>, window_size: usize) -> Box<Output> {
-        let resampler = resampler::FineStreamResampler::new(
-            output.measured_sample_rate(),
-            output.sample_rate(),
-            window_size,
-        );
-        Box::new(FineResamplingOutput {
-            output: output,
-            resampler: resampler,
-            last_rate_update: Time::now(),
-        })
-    }
-}
-
-impl Output for FineResamplingOutput {
-    fn write(&mut self, frame: Frame) -> Result<()> {
-        let out_sample_rate = self.output.sample_rate();
-        if out_sample_rate == 0 {
-            return self.output.write(frame);
-        }
-
-        let now = Time::now();
-        let current_rate = self.resampler.get_output_sample_rate();
-        let new_rate = self.output.measured_sample_rate();
-        if (current_rate - new_rate).abs() / current_rate > 0.05
-            || now - self.last_rate_update >= TimeDelta::milliseconds(RATE_UPDATE_PERIOD_MS)
-        {
-            println!("Output rate: {}", new_rate);
-            self.resampler
-                .set_output_sample_rate(new_rate, self.output.sample_rate());
-            self.last_rate_update = now;
+        if self.dynamic_resampling {
+            let now = Time::now();
+            let current_rate = self.resampler.get_output_sample_rate();
+            let new_rate = self.output.measured_sample_rate();
+            if (current_rate - new_rate).abs() / current_rate > 0.05
+                || now - self.last_rate_update >= TimeDelta::milliseconds(RATE_UPDATE_PERIOD_MS)
+            {
+                println!("Output rate: {}", new_rate);
+                self.resampler
+                    .set_output_sample_rate(new_rate, self.output.sample_rate());
+                self.last_rate_update = now;
+            }
         }
 
         match self.resampler.resample(frame) {
@@ -759,11 +713,7 @@ impl CompositeOutput {
             }
 
             let out = ResilientAlsaOutput::new(d, period_duration);
-            let out = if dynamic_resampling {
-                FineResamplingOutput::new(out, resampler_window)
-            } else {
-                ResamplingOutput::new(out, resampler_window)
-            };
+            let out = ResamplingOutput::new(out, resampler_window, dynamic_resampling);
 
             result.outputs.push(out);
         }

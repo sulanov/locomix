@@ -1,18 +1,17 @@
 use std::cmp;
 use std::f32::consts::PI;
-use std::f64::consts::PI as PI64;
 use std::sync::Arc;
-use std::collections::HashMap;
 use base;
 use base::convolve;
 use time::TimeDelta;
+
+const NUM_SUB_INTERVALS: usize = 32;
 
 #[derive(Clone)]
 struct QuadFunction {
     a: f32,
     b: f32,
     c: f32,
-    mid: f32,
 }
 
 impl QuadFunction {
@@ -21,23 +20,28 @@ impl QuadFunction {
             a: 2.0 * at0 + 2.0 * at1 - 4.0 * athalf,
             b: -3.0 * at0 - at1 + 4.0 * athalf,
             c: at0,
-            mid: athalf,
         }
     }
-    // pub fn eval(&self, x: f32) -> f32 {
-    //  x * (x * self.a + self.b) + self.c
-    // }
-    pub fn eval2(&self, x2: f32, x: f32) -> f32 {
-        x2 * self.a + x * self.b + self.c
-    }
+}
+
+#[derive(Clone)]
+struct QuadSeries {
+    a: Vec<f32>,
+    b: Vec<f32>,
+    c: Vec<f32>,
+}
+
+struct ResamplerTable {
+    kernel: Vec<QuadSeries>,
+    size: usize,
 }
 
 pub struct Resampler {
     i_freq: f64,
     o_freq: f64,
-    size: usize,
     queue: Vec<f32>,
-    win: Vec<QuadFunction>,
+
+    table: Arc<ResamplerTable>,
 
     i_pos: f64,
     o_pos: f64,
@@ -50,35 +54,58 @@ fn sinc(x: f32) -> f32 {
     x.sin() / x
 }
 
-fn sinc64(x: f64) -> f64 {
-    if x == 0.0 {
-        return 1.0;
+fn window(x: f32) -> f32 {
+    // Lanczos window.
+    if x.abs() > 1.0 {
+        0.0
+    } else {
+        sinc(x * PI)
     }
-    x.sin() / x
+}
+
+fn kernel(x: f32, size: usize) -> f32 {
+    sinc(x * PI) * window(x / (size as f32))
+}
+
+impl ResamplerTable {
+    pub fn new(size: usize) -> ResamplerTable {
+        let mut k = Vec::with_capacity(NUM_SUB_INTERVALS);
+        for i in 0..NUM_SUB_INTERVALS {
+            let mut s = QuadSeries {
+                a: vec![0.0; size * 2],
+                b: vec![0.0; size * 2],
+                c: vec![0.0; size * 2],
+            };
+            for p in 0..(size * 2) {
+                let x = p as f32 - size as f32 + i as f32 / NUM_SUB_INTERVALS as f32;
+                let q = QuadFunction::new(
+                        kernel(x, size),
+                        kernel(x + 0.5 / NUM_SUB_INTERVALS as f32, size),
+                        kernel(x + 1.0 / NUM_SUB_INTERVALS as f32, size),
+                    );
+                s.a[p] = q.a;
+                s.b[p] = q.b;
+                s.c[p] = q.c;
+            }
+            k.push(s);
+        }
+
+        ResamplerTable {
+            kernel: k,
+            size: size,
+        }
+    }
 }
 
 impl Resampler {
-    pub fn new(i_freq: f64, o_freq: f64, size: usize) -> Resampler {
+    fn new(i_freq: f64, o_freq: f64, table: Arc<ResamplerTable>) -> Resampler {
+        let size = table.size;
         Resampler {
             i_freq: i_freq,
             o_freq: o_freq,
-            size: size,
-            queue: Vec::with_capacity(size * 2 + 1),
-            win: (-(size as i32 + 1)..(size as i32) + 1)
-                .map(|x| {
-                    let sign = (if x >= 0 {
-                        1 - 2 * (x % 2)
-                    } else {
-                        1 + 2 * (x % 2)
-                    }) as f32;
-                    QuadFunction::new(
-                        sign * sinc(x as f32 * PI / size as f32) / PI,
-                        sign * sinc((x as f32 + 0.5) * PI / size as f32) / PI,
-                        sign * sinc((x as f32 + 1.0) * PI / size as f32) / PI,
-                    )
-                })
-                .collect(),
-            i_pos: 0.0,
+            queue: vec![0.0; size],
+            table: table,
+            i_pos: -(size as f64),
             o_pos: 0.0,
         }
     }
@@ -87,9 +114,8 @@ impl Resampler {
         Resampler {
             i_freq: other.i_freq,
             o_freq: other.o_freq,
-            size: other.size,
             queue: vec![0.0; other.queue.len()],
-            win: other.win.clone(),
+            table: other.table.clone(),
             i_pos: other.i_pos,
             o_pos: other.o_pos,
         }
@@ -110,74 +136,57 @@ impl Resampler {
         let mut o_pos = self.o_pos;
         let freq_ratio = self.i_freq / self.o_freq;
         loop {
-            let o_pos_i_freq = (o_pos * freq_ratio - self.i_pos) as f32;
+            let o_pos_i_freq = o_pos * freq_ratio - self.i_pos;
             let i_mid = o_pos_i_freq.floor() as usize;
-            let i_shift = o_pos_i_freq.fract();
-            let i_shift_2 = i_shift * i_shift;
 
-            if i_mid + self.size >= self.queue.len() + input.len() {
+            if i_mid + self.table.size >= self.queue.len() + input.len() {
                 break;
             }
 
-            let result: f32;
-            if i_shift == 0.0 {
-                result = if i_mid < self.queue.len() {
+            let i_shift = o_pos_i_freq.fract();
+
+            let result = if i_shift == 0.0 {
+                if i_mid < self.queue.len() {
                     self.queue[i_mid]
                 } else {
                     input[i_mid - self.queue.len()]
                 }
             } else {
-                let mut start = if i_mid + 1 > self.size {
-                    i_mid - self.size + 1
-                } else {
-                    0
-                };
-                let sin_value = (i_shift * PI).sin();
+                let interval = ((1.0 - i_shift) * NUM_SUB_INTERVALS as f64).floor() as usize;
+                let interval_pos = ((1.0 - i_shift) * NUM_SUB_INTERVALS as f64).fract();
+                let seq = &(self.table.kernel[interval]);
+
+                let start = i_mid - self.table.size + 1;
+                let end = i_mid + self.table.size + 1;
                 let queue_len = self.queue.len();
-                let mut x = i_shift + i_mid as f32 - start as f32;
-                let mut win_pos = 1 + i_mid + self.size - start;
 
-                let mut sum = 0.0;
-                if i_shift == 0.5 {
-                    if start < queue_len {
-                        for i in start..queue_len {
-                            sum += self.queue[i] * self.win[win_pos].mid / x;
-                            x -= 1.0;
-                            win_pos -= 1;
-                        }
-                        start = queue_len;
-                    }
-
-                    for i in (start - queue_len)..(i_mid + self.size + 1 - queue_len) {
-                        sum += input[i] * self.win[win_pos].mid / x;
-                        x -= 1.0;
-                        win_pos -= 1;
-                    }
+                let mut a_sum = 0.0;
+                let mut b_sum = 0.0;
+                let mut c_sum = 0.0;
+                let mut pos;
+                let mut i_pos;
+                if start < queue_len {
+                    pos = queue_len - start;
+                    i_pos = 0;
+                    a_sum += convolve(&seq.a[0..pos], &self.queue[start..queue_len]);
+                    b_sum += convolve(&seq.b[0..pos], &self.queue[start..queue_len]);
+                    c_sum += convolve(&seq.c[0..pos], &self.queue[start..queue_len]);
                 } else {
-                    if start < queue_len {
-                        for i in start..queue_len {
-                            sum += self.queue[i] / x * self.win[win_pos].eval2(i_shift_2, i_shift);
-                            x -= 1.0;
-                            win_pos -= 1;
-                        }
-                        start = queue_len;
-                    }
-
-                    for i in (start - queue_len)..(i_mid + self.size + 1 - queue_len) {
-                        sum += input[i] / x * self.win[win_pos].eval2(i_shift_2, i_shift);
-                        x -= 1.0;
-                        win_pos -= 1;
-                    }
+                    pos = 0;
+                    i_pos = start - queue_len;
                 }
 
-                result = sin_value * sum
-            };
+                a_sum += convolve(&seq.a[pos..], &input[i_pos..(end - queue_len)]);
+                b_sum += convolve(&seq.b[pos..], &input[i_pos..(end - queue_len)]);
+                c_sum += convolve(&seq.c[pos..], &input[i_pos..(end - queue_len)]);
 
+                (a_sum as f64 * interval_pos * interval_pos + b_sum as f64 * interval_pos + c_sum as f64) as f32
+            };
             output.push(result);
             o_pos += 1.0;
         }
 
-        let samples_to_keep = cmp::min(self.size * 2 + 1, self.queue.len() + input.len());
+        let samples_to_keep = cmp::min(self.table.size * 2 + 1, self.queue.len() + input.len());
         let samples_to_remove = self.queue.len() + input.len() - samples_to_keep;
         if samples_to_remove > self.queue.len() {
             self.queue.clear();
@@ -199,271 +208,46 @@ impl Resampler {
     }
 }
 
-#[derive(Hash, Eq, PartialEq, Copy, Clone)]
-struct ResamplerConfig {
-    freq_num: usize,
-    freq_denom: usize,
-    size: usize,
-}
-
-struct ResamplerTable {
-    config: ResamplerConfig,
-    kernel: Vec<Vec<f32>>,
-}
-
-impl ResamplerTable {
-    pub fn new(config: ResamplerConfig) -> ResamplerTable {
-        let mut kernel = Vec::with_capacity((config.freq_denom + 1) / 2);
-        for n in 0..config.freq_denom {
-            let mut row = Vec::with_capacity(config.size + 1);
-            for i in 0..(config.size * 2) {
-                let x = config.size as f64 - i as f64 + n as f64 / config.freq_denom as f64;
-                row.push((sinc64(PI64 * x) * sinc64(PI64 * x / config.size as f64)) as f32);
-            }
-            kernel.push(row);
-        }
-
-        ResamplerTable {
-            config: config,
-            kernel: kernel,
-        }
-    }
-}
-
-pub struct FastResampler {
-    table: Arc<ResamplerTable>,
-    queue: Vec<f32>,
-
-    // Input position for the next output sample relative to the
-    // first sample in the queue.
-    i_pos: usize,
-    i_pos_frac: usize,
-}
-
-impl FastResampler {
-    fn new(table: Arc<ResamplerTable>) -> FastResampler {
-        FastResampler {
-            table: table,
-            queue: Vec::new(),
-            i_pos: 0,
-            i_pos_frac: 0,
-        }
-    }
-
-    fn clone_state(other: &FastResampler) -> FastResampler {
-        FastResampler {
-            table: other.table.clone(),
-            queue: vec![0.0; other.queue.len()],
-            i_pos: other.i_pos,
-            i_pos_frac: other.i_pos_frac,
-        }
-    }
-
-    pub fn resample(&mut self, input: &[f32]) -> Vec<f32> {
-        let table = &self.table;
-        let mut output = Vec::with_capacity(
-            (input.len() * table.config.freq_denom / table.config.freq_num) as usize + 1,
-        );
-
-        loop {
-            if self.i_pos + table.config.size >= self.queue.len() + input.len() {
-                break;
-            }
-
-            let mut result: f32 = 0.0;
-            let queue_len = self.queue.len();
-
-            if self.i_pos_frac == 0 {
-                result = if self.i_pos < queue_len {
-                    self.queue[self.i_pos]
-                } else {
-                    input[self.i_pos - queue_len]
-                }
-            } else {
-                let mut start = if self.i_pos + 1 > table.config.size {
-                    self.i_pos - table.config.size + 1
-                } else {
-                    0
-                };
-
-                let kernel = &self.table.kernel[self.i_pos_frac];
-                let mut k_pos = start + table.config.size - self.i_pos;
-
-                if start < queue_len {
-                    result += convolve(
-                        &self.queue[start..queue_len],
-                        &kernel[k_pos..(k_pos + queue_len - start)],
-                    );
-                    k_pos += queue_len - start;
-                    start = queue_len;
-                }
-
-                let len = self.i_pos + table.config.size - start;
-                result += convolve(
-                    &input[(start - queue_len)..(self.i_pos + table.config.size - queue_len)],
-                    &kernel[k_pos..(k_pos + len)],
-                );
-            };
-
-            output.push(result);
-
-            self.i_pos_frac += table.config.freq_num;
-            self.i_pos += self.i_pos_frac / table.config.freq_denom;
-            self.i_pos_frac = self.i_pos_frac % table.config.freq_denom;
-        }
-
-        let samples_to_keep = cmp::min(table.config.size * 2 + 1, self.queue.len() + input.len());
-        let samples_to_remove = self.queue.len() + input.len() - samples_to_keep;
-        if samples_to_remove > self.queue.len() {
-            self.queue.clear();
-            self.queue
-                .extend_from_slice(&input[(input.len() - samples_to_keep)..]);
-        } else {
-            self.queue.drain(0..samples_to_remove);
-            self.queue.extend_from_slice(input);
-        }
-
-        self.i_pos -= samples_to_remove;
-
-        output
-    }
-}
-
 pub struct ResamplerFactory {
-    table_cache: HashMap<ResamplerConfig, Arc<ResamplerTable>>,
-    window_size: usize,
-}
-
-fn get_greatest_common_divisor(mut a: usize, mut b: usize) -> usize {
-    // Euclid's algorithm.
-    while b > 0 {
-        let c = a % b;
-        a = b;
-        b = c;
-    }
-    return a;
+    table: Arc<ResamplerTable>,
 }
 
 impl ResamplerFactory {
     pub fn new(window_size: usize) -> ResamplerFactory {
         ResamplerFactory {
-            table_cache: HashMap::new(),
-            window_size: window_size,
+            table: Arc::new(ResamplerTable::new(window_size))
         }
     }
 
-    pub fn create_resampler(&mut self, i_freq: usize, o_freq: usize) -> FastResampler {
-        let gcd = get_greatest_common_divisor(i_freq, o_freq);
-        let freq_num = i_freq / gcd;
-        let freq_denom = o_freq / gcd;
-
-        let config = ResamplerConfig {
-            freq_num: freq_num,
-            freq_denom: freq_denom,
-            size: self.window_size,
-        };
-
-        let table = self.table_cache
-            .entry(config)
-            .or_insert_with(|| Arc::new(ResamplerTable::new(config)))
-            .clone();
-
-        FastResampler::new(table)
+    pub fn create_resampler(&mut self, i_freq: f64, o_freq: f64) -> Resampler {
+        Resampler::new(i_freq, o_freq, self.table.clone())
     }
 }
 
 pub struct StreamResampler {
     input_sample_rate: usize,
-    output_sample_rate: usize,
+    output_sample_rate: f64,
+    reported_output_sample_rate: usize,
     resampler_factory: ResamplerFactory,
-    resamplers: Vec<FastResampler>,
-    window_size: usize,
+    resamplers: Vec<Resampler>,
     delay: TimeDelta,
+    window_size: usize,
 }
 
 impl StreamResampler {
-    pub fn new(output_sample_rate: usize, window_size: usize) -> StreamResampler {
-        StreamResampler {
-            input_sample_rate: 0,
-            output_sample_rate: output_sample_rate,
-            resampler_factory: ResamplerFactory::new(window_size),
-            resamplers: vec![],
-            window_size: window_size,
-            delay: TimeDelta::zero(),
-        }
-    }
-
-    pub fn get_output_sample_rate(&self) -> usize {
-        self.output_sample_rate
-    }
-
-    pub fn set_output_sample_rate(&mut self, output_sample_rate: usize) {
-        self.output_sample_rate = output_sample_rate;
-        self.resamplers.clear();
-    }
-
-    pub fn resample(&mut self, mut frame: base::Frame) -> Option<base::Frame> {
-        if self.input_sample_rate != frame.sample_rate || self.resamplers.len() != frame.channels()
-        {
-            self.resamplers.clear();
-            self.input_sample_rate = frame.sample_rate;
-            self.delay =
-                base::samples_to_timedelta(self.input_sample_rate, self.window_size as i64);
-        }
-
-        if self.resamplers.is_empty() {
-            self.resamplers.push(
-                self.resampler_factory
-                    .create_resampler(frame.sample_rate, self.output_sample_rate),
-            );
-        }
-
-        while self.resamplers.len() < frame.channels() {
-            let new = FastResampler::clone_state(&self.resamplers[0]);
-            self.resamplers.push(new);
-        }
-
-        for i in 0..frame.channels.len() {
-            frame.channels[i].pcm = self.resamplers[i].resample(&frame.channels[i].pcm);
-        }
-
-        frame.timestamp -= self.delay;
-        frame.sample_rate = self.output_sample_rate;
-
-        if frame.len() > 0 {
-            Some(frame)
-        } else {
-            None
-        }
-    }
-
-    pub fn delay(&self) -> TimeDelta {
-        self.delay
-    }
-}
-
-pub struct FineStreamResampler {
-    input_sample_rate: usize,
-    output_sample_rate: f64,
-    reported_output_sample_rate: usize,
-    resamplers: Vec<Resampler>,
-    window_size: usize,
-    delay: TimeDelta,
-}
-
-impl FineStreamResampler {
     pub fn new(
         output_sample_rate: f64,
         reported_output_sample_rate: usize,
         window_size: usize,
-    ) -> FineStreamResampler {
-        FineStreamResampler {
+    ) -> StreamResampler {
+        StreamResampler {
             input_sample_rate: 48000,
             output_sample_rate: output_sample_rate,
             reported_output_sample_rate: reported_output_sample_rate,
+            resampler_factory: ResamplerFactory::new(window_size),
             resamplers: Vec::new(),
-            window_size: window_size,
             delay: TimeDelta::zero(),
+            window_size: window_size,
         }
     }
 
@@ -494,10 +278,9 @@ impl FineStreamResampler {
         }
 
         if self.resamplers.is_empty() {
-            self.resamplers.push(Resampler::new(
+            self.resamplers.push(self.resampler_factory.create_resampler(
                 self.input_sample_rate as f64,
                 self.output_sample_rate,
-                self.window_size,
             ));
         }
 
@@ -548,12 +331,12 @@ mod tests {
         let mut buf = Vec::<f32>::new();
         for i in 0..(irate * 2) {
             let v = val(i, irate, f);
-            buf.push(((v * 32767.0).round() / 32767.0) as f32);
-            // buf.push(v as f32);
+            // buf.push(((v * 32767.0).round() / 32767.0) as f32);
+            buf.push(v as f32);
         }
 
         let mut factory = resampler::ResamplerFactory::new(200);
-        let mut r = factory.create_resampler(irate, orate);
+        let mut r = factory.create_resampler(irate as f64, orate as f64);
         let mut out = Vec::new();
 
         let start = Instant::now();
@@ -583,7 +366,7 @@ mod tests {
             let nsr_db = 10.0 * nsr.log(10.0);
             println!("{} {} {} {}", signal, noise, 1.0 / nsr, nsr_db);
             // Target: -96
-            assert!(nsr_db < -95.0);
+            assert!(nsr_db < -96.0);
         }
     }
 }
