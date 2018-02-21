@@ -6,6 +6,7 @@ use std::error;
 use std::fmt;
 use std::io;
 use std::result;
+use std::collections::VecDeque;
 use time::{Time, TimeDelta};
 
 #[derive(Clone, Copy, Debug)]
@@ -360,6 +361,52 @@ pub struct DeviceSpec {
     pub channels: Vec<ChannelPos>,
     pub delay: TimeDelta,
 }
+
+const TIME_PRECISION_US: i64 = 1000;
+const MAX_SAMPLE_RATE: f32 = 96000.0;
+
+pub struct RateDetector {
+    history: VecDeque<(Time, usize)>,
+    window: TimeDelta,
+    sum: usize,
+}
+
+pub struct DetectedRate {
+    pub rate: f32,
+    pub error: f32,
+}
+
+impl RateDetector {
+    pub fn new(target_precision: f32) -> RateDetector {
+        return RateDetector {
+            history: VecDeque::new(),
+            window: TimeDelta::microseconds(TIME_PRECISION_US) * (2.0 * MAX_SAMPLE_RATE / target_precision),
+            sum: 0,
+        };
+    }
+
+    pub fn update(&mut self, samples: usize, t_end: Time) -> DetectedRate {
+        self.sum += samples;
+        self.history.push_back((t_end, samples));
+        while self.history.len() > 0
+            && t_end - self.history[0].0 >= self.window
+        {
+            self.sum -= self.history.pop_front().unwrap().1;
+        }
+
+        let period = t_end - self.history[0].0;
+        if period <= TimeDelta::zero() {
+            return DetectedRate { rate: MAX_SAMPLE_RATE / 2.0, error: MAX_SAMPLE_RATE / 2.0 };
+        }
+
+        let samples = (self.sum - self.history[0].1) as f64;
+        DetectedRate {
+            rate: (samples / period.in_seconds_f()) as f32,
+            error: (samples * TIME_PRECISION_US as f64 / period.in_microseconds_f()) as f32,
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod tests {

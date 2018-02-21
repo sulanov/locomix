@@ -6,58 +6,13 @@ use std;
 use std::ffi::CString;
 use std::error;
 use time::{Time, TimeDelta};
-use std::collections::VecDeque;
 use base::*;
 
 use super::input::*;
 
 const CHANNELS: usize = 2;
 
-const ACCEPTED_RATES: [usize; 6] = [44100, 48000, 88200, 96000, 176400, 192000];
-
-const RATE_DETECTION_PERIOD_MS: i64 = 1000;
-const RATE_DETECTION_MIN_PERIOD_MS: i64 = 950;
-
-struct RateDetector {
-    history: VecDeque<(Time, usize)>,
-    sum: usize,
-}
-
-impl RateDetector {
-    fn new() -> RateDetector {
-        return RateDetector {
-            history: VecDeque::new(),
-            sum: 0,
-        };
-    }
-
-    fn update(&mut self, samples: usize) -> Option<usize> {
-        let now = Time::now();
-        self.sum += samples;
-        self.history.push_back((now, samples));
-        while self.history.len() > 0
-            && now - self.history[0].0 >= TimeDelta::milliseconds(RATE_DETECTION_PERIOD_MS)
-        {
-            self.sum -= self.history.pop_front().unwrap().1;
-        }
-
-        let period = now - self.history[0].0;
-        if period < TimeDelta::milliseconds(RATE_DETECTION_MIN_PERIOD_MS) {
-            return None;
-        }
-
-        let current_rate =
-            (self.sum - self.history[0].1) as i64 * 1000_000_000 / period.in_nanoseconds();
-
-        for rate in ACCEPTED_RATES.iter() {
-            // Check if the current rate is within 5% of a known value
-            if ((*rate as i32 - current_rate as i32).abs() as usize) < *rate / 20 {
-                return Some(*rate);
-            }
-        }
-        None
-    }
-}
+const ACCEPTED_RATES: [usize; 4] = [44100, 48000, 88200, 96000];
 
 enum State {
     Inactive,
@@ -70,7 +25,7 @@ pub struct AlsaInput {
     sample_rate: usize,
     format: SampleFormat,
     period_size: usize,
-    rate_detector: Option<RateDetector>,
+    rate_detector: RateDetector,
     state: State,
 }
 
@@ -78,11 +33,7 @@ pub struct AlsaInput {
 const SILENCE_PERIOD_SECONDS: usize = 5;
 
 impl AlsaInput {
-    pub fn open(
-        spec: DeviceSpec,
-        period_duration: TimeDelta,
-        detect_rate: bool,
-    ) -> Result<Box<AlsaInput>> {
+    pub fn open(spec: DeviceSpec, period_duration: TimeDelta) -> Result<Box<AlsaInput>> {
         let pcm = try!(alsa::PCM::open(
             &*CString::new(&spec.id[..]).unwrap(),
             alsa::Direction::Capture,
@@ -147,11 +98,7 @@ impl AlsaInput {
             sample_rate: sample_rate,
             format: format,
             period_size: period_size,
-            rate_detector: if detect_rate {
-                Some(RateDetector::new())
-            } else {
-                None
-            },
+            rate_detector: RateDetector::new(1000.0),
             state: State::Inactive,
         }))
     }
@@ -180,16 +127,27 @@ impl Input for AlsaInput {
 
         assert!(samples > 0);
 
-        if self.rate_detector.is_some() {
-            match self.rate_detector.as_mut().unwrap().update(samples) {
-                Some(rate) => if rate != self.sample_rate {
-                    println!(
-                        "INFO: rate changed for input device {}: {}",
-                        &self.spec.name, rate
-                    );
-                    self.sample_rate = rate;
-                },
-                None => (),
+        let res = self.rate_detector.update(samples, Time::now());
+
+        if (self.sample_rate as f32 - res.rate).abs() > res.error && res.error < 1000.0{
+            let mut new_rate = 0;
+            for r in &ACCEPTED_RATES[..] {
+                if (res.rate - *r as f32).abs() < 1000.0 {
+                    new_rate = *r;
+                }
+            }
+
+            if new_rate > 0 {
+                println!(
+                    "INFO: rate changed for input device {}: {}",
+                    &self.spec.name, new_rate
+                );
+                self.sample_rate = new_rate;
+            } else if res.error < 100.0 {
+                println!(
+                    "WARNING: Unknown sample rate for {}: {}",
+                    &self.spec.name, res.rate
+                );
             }
         }
 
@@ -273,7 +231,7 @@ impl ResilientAlsaInput {
                 self.next_sample_rate_to_probe =
                     (self.next_sample_rate_to_probe + 1) % TARGET_SAMPLE_RATES.len();
             }
-            match AlsaInput::open(spec, self.period_duration, true) {
+            match AlsaInput::open(spec, self.period_duration) {
                 Ok(input) => {
                     self.input = Some(input);
                     self.last_active = now;
