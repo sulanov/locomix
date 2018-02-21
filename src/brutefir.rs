@@ -26,6 +26,7 @@ impl BruteFirChannel {
         config.write_fmt(format_args!(
             "sampling_rate: {};
 filter_length: {},{};
+show_progress: false;
 
 coeff 0 {{
 	filename: \"{}\";
