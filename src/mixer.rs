@@ -198,7 +198,7 @@ impl output::Output for FilteredOutput {
     }
 }
 
-const OUTPUT_SHUTDOWN_SECONDS: i64 = 30;
+const OUTPUT_SHUTDOWN_SECONDS: i64 = 1200;
 const STANDBY_SECONDS: i64 = 3600;
 
 pub fn run_mixer_loop(

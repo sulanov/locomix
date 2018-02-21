@@ -72,6 +72,10 @@ struct InputConfig {
     sample_rate: Option<usize>,
     resampler_window: Option<usize>,
     default_gain: Option<f32>,
+
+    // Enables sample rate probing. Useful for sound cards that don't
+    // detect input rate, e.g. Creative SB X-Fi HD.
+    probe_sample_rate: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -269,6 +273,7 @@ fn run() -> Result<(), RunError> {
                     delay: TimeDelta::zero(),
                 },
                 period_duration,
+                input.probe_sample_rate.unwrap_or(false),
             ),
             _ => {
                 return Err(RunError::new(

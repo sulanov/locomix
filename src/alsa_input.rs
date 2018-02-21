@@ -245,16 +245,18 @@ pub struct ResilientAlsaInput {
     period_duration: TimeDelta,
     input: Option<Box<AlsaInput>>,
     last_open_attempt: Time,
+    probe_sample_rate: bool,
     last_active: Time,
     next_sample_rate_to_probe: usize,
 }
 
 impl ResilientAlsaInput {
-    pub fn new(spec: DeviceSpec, period_duration: TimeDelta) -> Box<ResilientAlsaInput> {
+    pub fn new(spec: DeviceSpec, period_duration: TimeDelta, probe_sample_rate: bool) -> Box<ResilientAlsaInput> {
         Box::new(ResilientAlsaInput {
             spec: spec,
             period_duration: period_duration,
             input: None,
+            probe_sample_rate: probe_sample_rate,
             last_open_attempt: Time::now(),
             last_active: Time::now(),
             next_sample_rate_to_probe: 0,
@@ -295,7 +297,8 @@ impl Input for ResilientAlsaInput {
                     Some(frame)
                 }
                 Ok(None) => {
-                    if Time::now() - self.last_active > TimeDelta::milliseconds(PROBE_TIME_MS) {
+                    if self.probe_sample_rate &&
+                       Time::now() - self.last_active > TimeDelta::milliseconds(PROBE_TIME_MS) {
                         reset = true;
                     }
                     None
