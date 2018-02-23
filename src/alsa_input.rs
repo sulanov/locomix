@@ -123,6 +123,8 @@ impl Input for AlsaInput {
                     return Ok(None);
                 }
                 println!("Recovering AlsaInput {}: {:?}", &self.spec.name, e.errno());
+                self.rate_detector.reset();
+                self.exact_rate_detector.reset();
                 match self.pcm
                     .recover(e.errno().unwrap_or(nix::Errno::UnknownErrno) as i32, true)
                 {
