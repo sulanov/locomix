@@ -56,7 +56,7 @@ impl AlsaWriteLoop {
         loop {
             if self.cur_frame.is_none() {
                 let timeout = deadline - Time::now();
-                if timeout >= Time::zero() {
+                if timeout >= TimeDelta::zero() {
                     let timeout_duration =
                         std::time::Duration::from_micros(cmp::max(0, timeout.in_microseconds()) as u64);
                     self.cur_frame = match self.frame_receiver.recv_timeout(timeout_duration) {
