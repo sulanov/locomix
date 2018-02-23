@@ -176,9 +176,11 @@ impl Resampler {
                     i_pos = start - queue_len;
                 }
 
-                a_sum += convolve(&seq.a[pos..], &input[i_pos..(end - queue_len)]);
-                b_sum += convolve(&seq.b[pos..], &input[i_pos..(end - queue_len)]);
-                c_sum += convolve(&seq.c[pos..], &input[i_pos..(end - queue_len)]);
+                if end > queue_len {
+                    a_sum += convolve(&seq.a[pos..], &input[i_pos..(end - queue_len)]);
+                    b_sum += convolve(&seq.b[pos..], &input[i_pos..(end - queue_len)]);
+                    c_sum += convolve(&seq.c[pos..], &input[i_pos..(end - queue_len)]);
+                }
 
                 (a_sum as f64 * interval_pos * interval_pos + b_sum as f64 * interval_pos + c_sum as f64) as f32
             };
