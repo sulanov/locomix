@@ -162,7 +162,7 @@ impl Input for AlsaInput {
         }
 
         if self.spec.exact_sample_rate {
-            let rate = self.rate_detector.update(samples, now);
+            let rate = self.exact_rate_detector.update(samples, now);
 
             if (now - self.last_rate_update) > TimeDelta::milliseconds(500) {
                self.last_rate_update = now;
