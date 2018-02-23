@@ -155,8 +155,8 @@ impl BruteFir {
         let total_samples = input.len() + self.samples_buffered;
         let result_samples = (total_samples / self.part_length) * self.part_length;
         let mut result = Frame::new_stereo(
-            self.sample_rate,
-            input.timestamp - samples_to_timedelta(self.sample_rate, self.samples_buffered as i64),
+            self.sample_rate as f32,
+            input.timestamp - samples_to_timedelta(self.sample_rate as f32, self.samples_buffered as i64),
             result_samples,
         );
 

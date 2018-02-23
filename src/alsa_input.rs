@@ -13,6 +13,7 @@ use super::input::*;
 const CHANNELS: usize = 2;
 
 const ACCEPTED_RATES: [usize; 4] = [44100, 48000, 88200, 96000];
+const MAX_SAMPLE_RATE_ERROR: f32 = 1000.0;
 
 enum State {
     Inactive,
@@ -26,7 +27,10 @@ pub struct AlsaInput {
     format: SampleFormat,
     period_size: usize,
     rate_detector: RateDetector,
+    exact_rate_detector: RateDetector,
     state: State,
+    current_rate: DetectedRate,
+    last_rate_update: Time,
 }
 
 // Deactivate input after 5 seconds of silence.
@@ -98,8 +102,11 @@ impl AlsaInput {
             sample_rate: sample_rate,
             format: format,
             period_size: period_size,
-            rate_detector: RateDetector::new(1000.0),
+            rate_detector: RateDetector::new(MAX_SAMPLE_RATE_ERROR),
+            exact_rate_detector: RateDetector::new(1.0),
             state: State::Inactive,
+            current_rate: DetectedRate { rate: sample_rate as f32, error: sample_rate as f32 },
+            last_rate_update: Time::now(),
         }))
     }
 }
@@ -127,12 +134,13 @@ impl Input for AlsaInput {
 
         assert!(samples > 0);
 
-        let res = self.rate_detector.update(samples, Time::now());
-
-        if (self.sample_rate as f32 - res.rate).abs() > res.error && res.error < 1000.0{
+        let now = Time::now();
+        let rate = self.rate_detector.update(samples, now);
+        if (self.sample_rate as f32 - rate.rate).abs() > MAX_SAMPLE_RATE_ERROR &&
+           rate.error < MAX_SAMPLE_RATE_ERROR {
             let mut new_rate = 0;
             for r in &ACCEPTED_RATES[..] {
-                if (res.rate - *r as f32).abs() < 1000.0 {
+                if (rate.rate - *r as f32).abs() < MAX_SAMPLE_RATE_ERROR {
                     new_rate = *r;
                 }
             }
@@ -143,13 +151,27 @@ impl Input for AlsaInput {
                     &self.spec.name, new_rate
                 );
                 self.sample_rate = new_rate;
-            } else if res.error < 100.0 {
+                self.current_rate = DetectedRate { rate: new_rate as f32, error: MAX_SAMPLE_RATE_ERROR };
+                self.exact_rate_detector.reset();
+            } else if rate.error < 100.0 {
                 println!(
                     "WARNING: Unknown sample rate for {}: {}",
-                    &self.spec.name, res.rate
+                    &self.spec.name, rate.rate
                 );
             }
         }
+
+        if self.spec.exact_sample_rate {
+            let rate = self.rate_detector.update(samples, now);
+
+            if (now - self.last_rate_update) > TimeDelta::milliseconds(500) {
+               self.last_rate_update = now;
+               if rate.error < 10.0 {
+                    self.current_rate = rate;
+               }
+            }
+        }
+
 
         let bytes = samples * CHANNELS * self.format.bytes_per_sample();
 
@@ -181,15 +203,15 @@ impl Input for AlsaInput {
             _ => (),
         }
 
-        let mut frame =
-            Frame::from_buffer_stereo(self.format, self.sample_rate, &buf[0..bytes], Time::now());
+        let mut frame = Frame::from_buffer_stereo(
+            self.format, self.current_rate.rate, &buf[0..bytes], Time::now());
         frame.timestamp -= frame.duration();
 
         Ok(Some(frame))
     }
 
     fn min_delay(&self) -> TimeDelta {
-        samples_to_timedelta(self.sample_rate, self.period_size as i64)
+        samples_to_timedelta(self.sample_rate as f32, self.period_size as i64)
     }
 }
 

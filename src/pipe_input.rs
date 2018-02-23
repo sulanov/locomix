@@ -12,7 +12,7 @@ use self::nix::fcntl;
 use super::input::*;
 
 const FORMAT: SampleFormat = SampleFormat::S32LE;
-const SAMPLE_RATE: usize = 44100;
+const SAMPLE_RATE: f32 = 44100.0;
 const CHANNELS: usize = 2;
 const FILE_REOPEN_FREQUENCY_SECS: i64 = 3;
 const BYTES_PER_SAMPLE: usize = 4 * CHANNELS; // FORMAT.bytes_per_sample() * CHANNELS;

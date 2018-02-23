@@ -2,7 +2,6 @@ extern crate alsa;
 extern crate nix;
 
 use base::*;
-use std::collections::VecDeque;
 use std::collections::BTreeMap;
 use std::cmp;
 use std::ffi::CString;
@@ -15,90 +14,23 @@ use resampler;
 pub trait Output: Send {
     fn write(&mut self, frame: Frame) -> Result<()>;
     fn deactivate(&mut self);
-    fn sample_rate(&self) -> usize;
+    fn sample_rate(&self) -> f32;
     fn min_delay(&self) -> TimeDelta;
-    fn measured_sample_rate(&self) -> f64;
 }
 
-const RATE_DETECTION_PERIOD_MS: i64 = 30000;
-const RATE_DETECTION_MIN_PERIOD_MS: i64 = 10000;
-const RATE_DETECTION_UPDATE_PERIOD_MS: i64 = 500;
 const MAX_TIMESTAMP_DEVIATION_US: i64 = 500;
 const BUFFER_PERIODS: usize = 4;
-
-struct HistoryItem {
-    time: Time,
-    size: usize,
-    avail: usize,
-}
-
-struct RateDetector {
-    history: VecDeque<HistoryItem>,
-    sum: usize,
-    expected_rate: f64,
-    last_update: Time,
-}
-
-impl RateDetector {
-    fn new(expected_rate: f64) -> RateDetector {
-        return RateDetector {
-            history: VecDeque::new(),
-            sum: 0,
-            expected_rate: expected_rate,
-            last_update: Time::now(),
-        };
-    }
-
-    fn reset(&mut self) {
-        self.history.clear();
-        self.sum = 0;
-    }
-
-    fn update(&mut self, samples: usize, avail: usize) -> Option<f64> {
-        let now = Time::now();
-        self.sum += samples;
-        self.history.push_back(HistoryItem {
-            time: now,
-            size: samples,
-            avail: avail,
-        });
-        while self.history.len() > 0
-            && (now - self.history[0].time).in_seconds() >= RATE_DETECTION_PERIOD_MS as i64
-        {
-            self.sum -= self.history.pop_front().unwrap().size;
-        }
-
-        let period = now - self.history[0].time;
-        if period < TimeDelta::milliseconds(RATE_DETECTION_MIN_PERIOD_MS)
-            || (now - self.last_update) < TimeDelta::milliseconds(RATE_DETECTION_UPDATE_PERIOD_MS)
-        {
-            return None;
-        }
-
-        let samples_played = self.sum - self.history[0].size + avail - self.history[0].avail;
-        let current_rate = samples_played as f64 / period.in_seconds_f();
-
-        // Allow 2% deviation from the target.
-        if (current_rate - self.expected_rate).abs() / self.expected_rate < 0.02 {
-            self.last_update = now;
-            Some(current_rate)
-        } else {
-            None
-        }
-    }
-}
+const RATE_UPDATE_PERIOD_MS: i64 = 500;
 
 enum AlsaWriteLoopFeedback {
-    MeasuredSampleRate(f64),
+    CurrentRate(f32),
 }
 
 struct AlsaWriteLoop {
-    device_name: String,
+    spec: DeviceSpec,
     pcm: alsa::PCM,
     sample_rate: usize,
     format: SampleFormat,
-    channels: Vec<ChannelPos>,
-    extra_delay: TimeDelta,
     period_size: usize,
     bytes_per_frame: usize,
     rate_detector: RateDetector,
@@ -108,6 +40,7 @@ struct AlsaWriteLoop {
     cur_frame: Option<Frame>,
     buffer: Vec<u8>,
     buffer_pos: usize,
+    last_rate_update: Time,
 }
 
 #[derive(PartialEq)]
@@ -123,17 +56,18 @@ impl AlsaWriteLoop {
         loop {
             if self.cur_frame.is_none() {
                 let timeout = deadline - Time::now();
-                let timeout_duration =
-                    std::time::Duration::from_micros(cmp::max(0, timeout.in_microseconds()) as u64);
-                self.cur_frame = match self.frame_receiver.recv_timeout(timeout_duration) {
-                    Ok(frame) => Some(frame),
-                    Err(mpsc::RecvTimeoutError::Timeout) => None,
-                    Err(mpsc::RecvTimeoutError::Disconnected) => return LoopState::Stop,
-                };
+                if timeout >= Time::zero() {
+                    let timeout_duration =
+                        std::time::Duration::from_micros(cmp::max(0, timeout.in_microseconds()) as u64);
+                    self.cur_frame = match self.frame_receiver.recv_timeout(timeout_duration) {
+                        Ok(frame) => Some(frame),
+                        Err(mpsc::RecvTimeoutError::Timeout) => None,
+                        Err(mpsc::RecvTimeoutError::Disconnected) => return LoopState::Stop,
+                    };
+                }
             }
 
             if self.cur_frame.is_none() {
-                //println!("Empty {}", self.period_size);
                 self.buffer = vec![0u8; self.period_size as usize * self.bytes_per_frame];
                 break;
             }
@@ -156,12 +90,12 @@ impl AlsaWriteLoop {
                     continue;
                 } else {
                     self.buffer =
-                        frame.to_buffer_with_channel_map(self.format, self.channels.as_slice());
+                        frame.to_buffer_with_channel_map(self.format, self.spec.channels.as_slice());
                     self.buffer.drain(..samples_to_skip * self.bytes_per_frame);
                 }
             } else {
                 self.buffer =
-                    frame.to_buffer_with_channel_map(self.format, self.channels.as_slice());
+                    frame.to_buffer_with_channel_map(self.format, self.spec.channels.as_slice());
             }
             break;
         }
@@ -170,16 +104,17 @@ impl AlsaWriteLoop {
     }
 
     fn do_write(&mut self) -> alsa::Result<LoopState> {
+        let now = Time::now();
         let (avail, delay) = try!(self.pcm.avail_delay());
         let avail = avail as usize;
 
+        let stream_time =
+            now + samples_to_timedelta(self.sample_rate as f32, delay as i64) + self.spec.delay;
+
         if self.buffer_pos >= self.buffer.len() {
-            let now = Time::now();
-            let time =
-                now + samples_to_timedelta(self.sample_rate, delay as i64) + self.extra_delay;
             let deadline =
-                now + samples_to_timedelta(self.sample_rate, (self.period_size - avail) as i64);
-            if self.next_buffer(time, deadline) == LoopState::Stop {
+                now + samples_to_timedelta(self.sample_rate as f32, self.period_size as i64 - avail as i64);
+            if self.next_buffer(stream_time, deadline) == LoopState::Stop {
                 return Ok(LoopState::Stop);
             }
         }
@@ -187,16 +122,16 @@ impl AlsaWriteLoop {
         let frames_written = try!(self.pcm.io().writei(&self.buffer[self.buffer_pos..])) as usize;
         self.buffer_pos += frames_written * self.bytes_per_frame;
 
-        match self.rate_detector
-            .update(frames_written, try!(self.pcm.avail_update()) as usize)
-        {
-            None => (),
-            Some(rate) => match self.feedback_sender
-                .send(AlsaWriteLoopFeedback::MeasuredSampleRate(rate))
-            {
-                Err(e) => println!("WARNING: Failed to send feedback message {:?}", e),
-                _ => (),
-            },
+        if self.spec.exact_sample_rate {
+            let current_rate = self.rate_detector.update(
+                frames_written,
+                stream_time + samples_to_timedelta(self.sample_rate as f32, frames_written as i64));
+            if now - self.last_rate_update > TimeDelta::milliseconds(RATE_UPDATE_PERIOD_MS) {
+                self.last_rate_update = now;
+                self.feedback_sender.send(AlsaWriteLoopFeedback::CurrentRate(current_rate.rate))
+                    .expect("Failed to send rate update");
+
+            }
         }
 
         Ok(LoopState::Continue)
@@ -208,14 +143,14 @@ impl AlsaWriteLoop {
                 Ok(LoopState::Stop) => return,
                 Ok(LoopState::Continue) => continue,
                 Err(e) => {
-                    println!("Recovering output {} after error ({})", self.device_name, e);
+                    println!("Recovering output {} after error ({})", self.spec.name, e);
                     self.rate_detector.reset();
                     match self.pcm
                         .recover(e.errno().unwrap_or(nix::Errno::UnknownErrno) as i32, true)
                     {
                         Ok(()) => (),
                         Err(e) => {
-                            println!("snd_pcm_recover() failed for {}: {}", self.device_name, e);
+                            println!("snd_pcm_recover() failed for {}: {}", self.spec.name, e);
                             return;
                         }
                     }
@@ -226,9 +161,8 @@ impl AlsaWriteLoop {
 }
 
 pub struct AlsaOutput {
-    sample_rate: usize,
+    sample_rate: f32,
     min_delay: TimeDelta,
-    measured_sample_rate: f64,
 
     frame_sender: mpsc::Sender<Frame>,
     feedback_receiver: mpsc::Receiver<AlsaWriteLoopFeedback>,
@@ -322,28 +256,28 @@ impl AlsaOutput {
         }
 
         let (_, device_delay) = try!(pcm.avail_delay());
-        let min_delay = samples_to_timedelta(sample_rate, device_delay as i64)
+        let min_delay = samples_to_timedelta(sample_rate as f32, device_delay as i64)
             + period_duration * (BUFFER_PERIODS as i64 - 1) + spec.delay;
 
         let (sender, receiver) = mpsc::channel();
         let (feedback_sender, feedback_receiver) = mpsc::channel();
 
+        let num_channels = spec.channels.len();
         let mut loop_ = AlsaWriteLoop {
-            device_name: spec.id,
+            spec: spec,
             pcm: pcm,
             sample_rate: sample_rate,
             format: format,
-            bytes_per_frame: spec.channels.len() * format.bytes_per_sample(),
-            channels: spec.channels,
-            extra_delay: spec.delay,
+            bytes_per_frame: num_channels * format.bytes_per_sample(),
             period_size: period_size,
-            rate_detector: RateDetector::new(sample_rate as f64),
+            rate_detector: RateDetector::new(1.0),
 
             frame_receiver: receiver,
             feedback_sender: feedback_sender,
             cur_frame: None,
             buffer: vec![],
             buffer_pos: 0,
+            last_rate_update: Time::now(),
         };
 
         thread::spawn(move || {
@@ -351,9 +285,8 @@ impl AlsaOutput {
         });
 
         Ok(AlsaOutput {
-            sample_rate: sample_rate,
+            sample_rate: sample_rate as f32,
             min_delay: min_delay,
-            measured_sample_rate: sample_rate as f64,
             frame_sender: sender,
             feedback_receiver: feedback_receiver,
         })
@@ -362,14 +295,6 @@ impl AlsaOutput {
 
 impl Output for AlsaOutput {
     fn write(&mut self, frame: Frame) -> Result<()> {
-        if self.sample_rate != frame.sample_rate {
-            println!(
-                "WARNING: different sample rate, expected {}, received {}",
-                self.sample_rate, frame.sample_rate
-            );
-            return Ok(());
-        }
-
         match self.frame_sender.send(frame) {
             Ok(()) => (),
             Err(_) => return Err(Error::new("Output was closed.")),
@@ -377,8 +302,8 @@ impl Output for AlsaOutput {
 
         for msg in self.feedback_receiver.try_iter() {
             match msg {
-                AlsaWriteLoopFeedback::MeasuredSampleRate(value) => {
-                    self.measured_sample_rate = value;
+                AlsaWriteLoopFeedback::CurrentRate(value) => {
+                    self.sample_rate = value;
                 }
             }
         }
@@ -388,16 +313,12 @@ impl Output for AlsaOutput {
 
     fn deactivate(&mut self) {}
 
-    fn sample_rate(&self) -> usize {
+    fn sample_rate(&self) -> f32 {
         self.sample_rate
     }
 
     fn min_delay(&self) -> TimeDelta {
         self.min_delay
-    }
-
-    fn measured_sample_rate(&self) -> f64 {
-        self.measured_sample_rate
     }
 }
 
@@ -408,7 +329,7 @@ pub struct ResilientAlsaOutput {
     output: Option<AlsaOutput>,
     period_duration: TimeDelta,
     last_open_attempt: Time,
-    sample_rate: usize,
+    sample_rate: f32,
     min_delay: TimeDelta,
 }
 
@@ -420,7 +341,7 @@ impl ResilientAlsaOutput {
             output: None,
             period_duration: period_duration,
             last_open_attempt: Time::now(),
-            sample_rate: sample_rate,
+            sample_rate: sample_rate as f32,
             min_delay: period_duration * BUFFER_PERIODS as i64 + TimeDelta::milliseconds(20),
         })
     }
@@ -478,63 +399,38 @@ impl Output for ResilientAlsaOutput {
     fn deactivate(&mut self) {
         self.output = None;
     }
-    fn sample_rate(&self) -> usize {
+
+    fn sample_rate(&self) -> f32 {
         self.sample_rate
     }
+
     fn min_delay(&self) -> TimeDelta {
         self.min_delay
     }
-    fn measured_sample_rate(&self) -> f64 {
-        match self.output.as_ref() {
-            Some(ref o) => o.measured_sample_rate(),
-            None => self.sample_rate as f64,
-        }
-    }
-}
-
-const RATE_UPDATE_PERIOD_MS: i64 = 1000;
+ }
 
 pub struct ResamplingOutput {
     output: Box<Output>,
     resampler: resampler::StreamResampler,
-    last_rate_update: Time,
-    dynamic_resampling: bool,
 }
 
 impl ResamplingOutput {
-    pub fn new(output: Box<Output>, window_size: usize, dynamic_resampling: bool) -> Box<Output> {
+    pub fn new(output: Box<Output>, window_size: usize) -> Box<Output> {
         let resampler = resampler::StreamResampler::new(
-            output.measured_sample_rate(),
-            output.sample_rate(),
+            output.sample_rate() as f32,
             window_size,
         );
         Box::new(ResamplingOutput {
             output: output,
             resampler: resampler,
-            last_rate_update: Time::now(),
-            dynamic_resampling: dynamic_resampling,
         })
     }
 }
 
 impl Output for ResamplingOutput {
     fn write(&mut self, frame: Frame) -> Result<()> {
-        if self.output.sample_rate() == 0 {
+        if self.output.sample_rate() == 0.0 {
             return self.output.write(frame);
-        }
-
-        if self.dynamic_resampling {
-            let now = Time::now();
-            let current_rate = self.resampler.get_output_sample_rate();
-            let new_rate = self.output.measured_sample_rate();
-            if (current_rate - new_rate).abs() / current_rate > 0.05
-                || now - self.last_rate_update >= TimeDelta::milliseconds(RATE_UPDATE_PERIOD_MS)
-            {
-                println!("Output rate: {}", new_rate);
-                self.resampler
-                    .set_output_sample_rate(new_rate, self.output.sample_rate());
-                self.last_rate_update = now;
-            }
         }
 
         match self.resampler.resample(frame) {
@@ -547,16 +443,12 @@ impl Output for ResamplingOutput {
         self.output.deactivate();
     }
 
-    fn sample_rate(&self) -> usize {
-        0
+    fn sample_rate(&self) -> f32 {
+        0.0
     }
 
     fn min_delay(&self) -> TimeDelta {
         self.output.min_delay() + self.resampler.delay()
-    }
-
-    fn measured_sample_rate(&self) -> f64 {
-        0.0
     }
 }
 
@@ -566,17 +458,15 @@ enum PipeMessage {
 }
 
 enum FeedbackMessage {
-    SampleRate(usize),
-    MeasuredSampleRate(f64),
+    SampleRate(f32),
     MinDelay(TimeDelta),
 }
 
 pub struct AsyncOutput {
     sender: mpsc::Sender<PipeMessage>,
     feedback_receiver: mpsc::Receiver<FeedbackMessage>,
-    sample_rate: usize,
+    sample_rate: f32,
     min_delay: TimeDelta,
-    measured_sample_rate: f64,
 }
 
 impl AsyncOutput {
@@ -589,26 +479,16 @@ impl AsyncOutput {
             feedback_receiver: feedback_receiver,
             sample_rate: output.sample_rate(),
             min_delay: output.min_delay(),
-            measured_sample_rate: output.measured_sample_rate(),
         };
 
         thread::spawn(move || {
-            let mut sample_rate = 0;
-            let mut measured_sample_rate = 0f64;
+            let mut sample_rate = 0.0;
             let mut min_delay = TimeDelta::zero();
             loop {
                 if sample_rate != output.sample_rate() {
                     sample_rate = output.sample_rate();
                     feedback_sender
                         .send(FeedbackMessage::SampleRate(sample_rate))
-                        .expect("Failed to send feedback message.");
-                }
-
-                let current_measured_sample_rate = output.measured_sample_rate();
-                if current_measured_sample_rate != measured_sample_rate {
-                    measured_sample_rate = current_measured_sample_rate;
-                    feedback_sender
-                        .send(FeedbackMessage::MeasuredSampleRate(measured_sample_rate))
                         .expect("Failed to send feedback message.");
                 }
 
@@ -655,9 +535,6 @@ impl Output for AsyncOutput {
                 FeedbackMessage::SampleRate(sample_rate) => {
                     self.sample_rate = sample_rate;
                 }
-                FeedbackMessage::MeasuredSampleRate(value) => {
-                    self.measured_sample_rate = value;
-                }
                 FeedbackMessage::MinDelay(value) => {
                     self.min_delay = value;
                 }
@@ -676,16 +553,12 @@ impl Output for AsyncOutput {
             .expect("Failed to deactivate");
     }
 
-    fn sample_rate(&self) -> usize {
+    fn sample_rate(&self) -> f32 {
         self.sample_rate
     }
 
     fn min_delay(&self) -> TimeDelta {
         self.min_delay
-    }
-
-    fn measured_sample_rate(&self) -> f64 {
-        self.measured_sample_rate
     }
 }
 
@@ -699,7 +572,6 @@ impl CompositeOutput {
         devices: Vec<DeviceSpec>,
         period_duration: TimeDelta,
         resampler_window: usize,
-        dynamic_resampling: bool,
     ) -> Result<Box<Output>> {
         let mut result = CompositeOutput {
             outputs: vec![],
@@ -713,7 +585,7 @@ impl CompositeOutput {
             }
 
             let out = ResilientAlsaOutput::new(d, period_duration);
-            let out = ResamplingOutput::new(out, resampler_window, dynamic_resampling);
+            let out = ResamplingOutput::new(out, resampler_window);
 
             result.outputs.push(out);
         }
@@ -748,8 +620,8 @@ impl Output for CompositeOutput {
         }
     }
 
-    fn sample_rate(&self) -> usize {
-        0
+    fn sample_rate(&self) -> f32 {
+        0.0
     }
 
     fn min_delay(&self) -> TimeDelta {
@@ -758,9 +630,5 @@ impl Output for CompositeOutput {
             .map(|o| o.min_delay())
             .max()
             .unwrap_or(TimeDelta::zero())
-    }
-
-    fn measured_sample_rate(&self) -> f64 {
-        0.0
     }
 }

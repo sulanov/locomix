@@ -14,11 +14,11 @@ pub struct InputResampler {
 }
 
 impl InputResampler {
-    pub fn new(input: Box<Input>, sample_rate: usize, window_size: usize) -> InputResampler {
+    pub fn new(input: Box<Input>, output_rate: f32, window_size: usize) -> InputResampler {
         InputResampler {
             input: input,
-            resampler: StreamResampler::new(sample_rate as f64, sample_rate, window_size),
-            delay: samples_to_timedelta(sample_rate, window_size as i64),
+            resampler: StreamResampler::new(output_rate, window_size),
+            delay: samples_to_timedelta(output_rate, window_size as i64),
         }
     }
 }

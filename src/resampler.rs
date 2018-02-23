@@ -186,7 +186,7 @@ impl Resampler {
             o_pos += 1.0;
         }
 
-        let samples_to_keep = cmp::min(self.table.size * 2 + 1, self.queue.len() + input.len());
+        let samples_to_keep = cmp::min(self.table.size * 2, self.queue.len() + input.len());
         let samples_to_remove = self.queue.len() + input.len() - samples_to_keep;
         if samples_to_remove > self.queue.len() {
             self.queue.clear();
@@ -225,9 +225,8 @@ impl ResamplerFactory {
 }
 
 pub struct StreamResampler {
-    input_sample_rate: usize,
-    output_sample_rate: f64,
-    reported_output_sample_rate: usize,
+    input_sample_rate: f32,
+    output_sample_rate: f32,
     resampler_factory: ResamplerFactory,
     resamplers: Vec<Resampler>,
     delay: TimeDelta,
@@ -236,14 +235,12 @@ pub struct StreamResampler {
 
 impl StreamResampler {
     pub fn new(
-        output_sample_rate: f64,
-        reported_output_sample_rate: usize,
+        output_sample_rate: f32,
         window_size: usize,
     ) -> StreamResampler {
         StreamResampler {
-            input_sample_rate: 48000,
+            input_sample_rate: 48000.0,
             output_sample_rate: output_sample_rate,
-            reported_output_sample_rate: reported_output_sample_rate,
             resampler_factory: ResamplerFactory::new(window_size),
             resamplers: Vec::new(),
             delay: TimeDelta::zero(),
@@ -251,28 +248,21 @@ impl StreamResampler {
         }
     }
 
-    pub fn get_output_sample_rate(&self) -> f64 {
-        self.output_sample_rate
+    fn update_rates(&mut self) {
+        for r in self.resamplers.as_mut_slice() {
+            r.set_frequencies(self.input_sample_rate as f64, self.output_sample_rate as f64);
+        }
     }
 
-    pub fn set_output_sample_rate(
-        &mut self,
-        output_sample_rate: f64,
-        reported_output_sample_rate: usize,
-    ) {
+    pub fn set_output_sample_rate(&mut self, output_sample_rate: f32) {
         self.output_sample_rate = output_sample_rate;
-        self.reported_output_sample_rate = reported_output_sample_rate;
-        for r in self.resamplers.as_mut_slice() {
-            r.set_frequencies(self.input_sample_rate as f64, self.output_sample_rate);
-        }
+        self.update_rates();
     }
 
     pub fn resample(&mut self, mut frame: base::Frame) -> Option<base::Frame> {
         if self.input_sample_rate != frame.sample_rate {
             self.input_sample_rate = frame.sample_rate;
-            for r in self.resamplers.as_mut_slice() {
-                r.set_frequencies(self.input_sample_rate as f64, self.output_sample_rate);
-            }
+            self.update_rates();
             self.delay =
                 base::samples_to_timedelta(self.input_sample_rate, self.window_size as i64);
         }
@@ -280,7 +270,7 @@ impl StreamResampler {
         if self.resamplers.is_empty() {
             self.resamplers.push(self.resampler_factory.create_resampler(
                 self.input_sample_rate as f64,
-                self.output_sample_rate,
+                self.output_sample_rate as f64,
             ));
         }
 
@@ -294,7 +284,7 @@ impl StreamResampler {
         }
 
         frame.timestamp -= self.delay;
-        frame.sample_rate = self.reported_output_sample_rate;
+        frame.sample_rate = self.output_sample_rate;
 
         if frame.len() > 0 {
             Some(frame)

@@ -23,7 +23,7 @@ impl InputMixer {
     fn new(input: AsyncInput, gain: ui::Gain) -> InputMixer {
         InputMixer {
             input: input,
-            current_frame: Frame::new_stereo(1, Time::zero(), 0),
+            current_frame: Frame::new_stereo(1.0, Time::zero(), 0),
             current_frame_pos: 0,
             gain: gain,
         }
@@ -185,16 +185,12 @@ impl output::Output for FilteredOutput {
         self.output.deactivate();
     }
 
-    fn sample_rate(&self) -> usize {
+    fn sample_rate(&self) -> f32 {
         self.output.sample_rate()
     }
 
     fn min_delay(&self) -> TimeDelta {
         self.output.min_delay()
-    }
-
-    fn measured_sample_rate(&self) -> f64 {
-        self.output.measured_sample_rate()
     }
 }
 
@@ -230,8 +226,8 @@ pub fn run_mixer_loop(
     let mut selected_output = 0;
 
     let mut loudness_filter =
-        MultichannelFilter::<LoudnessFilter>::new(SimpleFilterParams::new(sample_rate, 10.0));
-    let mut crossfeed_filter = CrossfeedFilter::new(sample_rate);
+        MultichannelFilter::<LoudnessFilter>::new(SimpleFilterParams::new(sample_rate as f32, 10.0));
+    let mut crossfeed_filter = CrossfeedFilter::new(sample_rate as f32);
 
     let mut exclusive_mux_mode = true;
 
@@ -246,8 +242,8 @@ pub fn run_mixer_loop(
     let mut stream_pos: i64 = 0;
 
     loop {
-        let frame_timestamp = get_sample_timestamp(stream_start_time, sample_rate, stream_pos);
-        let mut frame = Frame::new_stereo(sample_rate, frame_timestamp, period_size);
+        let frame_timestamp = get_sample_timestamp(stream_start_time, sample_rate as f32, stream_pos);
+        let mut frame = Frame::new_stereo(sample_rate as f32, frame_timestamp, period_size);
         stream_pos += frame.len() as i64;
 
         let mut have_data = false;
@@ -313,7 +309,7 @@ pub fn run_mixer_loop(
                 }
                 ui::UiMessage::SetMasterVolume { volume, loudness } => {
                     output_gain = volume;
-                    loudness_filter.set_params(SimpleFilterParams::new(sample_rate, loudness.db));
+                    loudness_filter.set_params(SimpleFilterParams::new(sample_rate as f32, loudness.db));
                 }
                 ui::UiMessage::SetInputGain { device, gain } => {
                     mixers[device as usize].set_gain(gain);

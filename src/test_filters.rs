@@ -12,11 +12,11 @@ use std::f32::consts::PI;
 use std::env;
 use std::fs;
 
-fn get_filter_response<F: StreamFilter>(f: &mut F, sample_rate: usize, freq: FCoef) -> FCoef {
+fn get_filter_response<F: StreamFilter>(f: &mut F, sample_rate: f32, freq: FCoef) -> FCoef {
     let mut test_signal = Frame::new(sample_rate, time::Time::now());
     test_signal
         .channels
-        .push(ChannelData::new(ChannelPos::FL, 2 * sample_rate));
+        .push(ChannelData::new(ChannelPos::FL, 2 * sample_rate as usize));
     for i in 0..test_signal.len() {
         test_signal.channels[0].pcm[i] =
             (i as FCoef / sample_rate as f32 * freq * 2.0 * PI).sin() as f32;
@@ -32,7 +32,7 @@ fn get_filter_response<F: StreamFilter>(f: &mut F, sample_rate: usize, freq: FCo
     ((p_sum / ((response.len() / 2) as FCoef)) * 2.0).log(10.0) * 10.0
 }
 
-fn draw_filter_graph<F: StreamFilter>(sample_rate: usize, mut f: F) {
+fn draw_filter_graph<F: StreamFilter>(sample_rate: f32, mut f: F) {
     let mut freq: FCoef = 20.0;
     for _ in 0..82 {
         let response = get_filter_response(&mut f, sample_rate, freq);
@@ -42,10 +42,10 @@ fn draw_filter_graph<F: StreamFilter>(sample_rate: usize, mut f: F) {
 }
 
 fn get_crossfeed_response(sample_rate: FCoef, freq: FCoef) -> FCoef {
-    let mut f = CrossfeedFilter::new(sample_rate as usize);
+    let mut f = CrossfeedFilter::new(sample_rate);
     f.set_params(0.3, 0.3);
     let mut test_signal = Frame::new_stereo(
-        sample_rate as usize,
+        sample_rate,
         time::Time::now(),
         (sample_rate as usize) * 2,
     );
@@ -63,10 +63,10 @@ fn get_crossfeed_response(sample_rate: FCoef, freq: FCoef) -> FCoef {
     ((p_sum / (response.len() as FCoef)) * 2.0).log(10.0) * 10.0
 }
 
-fn draw_crossfeed_graph(sample_rate: usize) {
+fn draw_crossfeed_graph(sample_rate: f32) {
     let mut freq: FCoef = 20.0;
     for _ in 0..82 {
-        let response = get_crossfeed_response(sample_rate as FCoef, freq);
+        let response = get_crossfeed_response(sample_rate, freq);
         println!("{} {}", freq as usize, response);
         freq = freq * (2 as FCoef).powf(0.125);
     }
@@ -115,8 +115,8 @@ fn run() -> Result<()> {
     }
 
     let sample_rate = match matches.opt_str("r").map(|x| x.parse::<usize>()) {
-        None => 48000,
-        Some(Ok(rate)) => rate,
+        None => 48000.0,
+        Some(Ok(rate)) => rate as f32,
         Some(Err(_)) => return Err(Error::new("Cannot parse sample-rate parameter.")),
     };
 
@@ -140,10 +140,10 @@ fn run() -> Result<()> {
 
         println!("Brute FIR filter {}", filename);
         draw_filter_graph(
-            48000,
+            sample_rate,
             BruteFir::new(
                 vec![filename.clone()],
-                48000,
+                sample_rate as usize,
                 time::TimeDelta::milliseconds(5),
                 filter_length,
             )?,
@@ -151,7 +151,7 @@ fn run() -> Result<()> {
 
         println!("FIR filter {}", filename);
         draw_filter_graph(
-            48000,
+            sample_rate,
             MultichannelFirFilter::new(vec![reduce_fir(params, filter_length)]),
         );
     }

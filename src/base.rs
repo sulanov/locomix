@@ -144,11 +144,11 @@ pub fn convolve(v1: &[f32], v2: &[f32]) -> f32 {
         + sum2.extract(1) + sum2.extract(2) + sum2.extract(3) + sum_end
 }
 
-pub fn samples_to_timedelta(sample_rate: usize, samples: i64) -> TimeDelta {
+pub fn samples_to_timedelta(sample_rate: f32, samples: i64) -> TimeDelta {
     (TimeDelta::seconds(1) * samples) / sample_rate as i64
 }
 
-pub fn get_sample_timestamp(start: Time, sample_rate: usize, sample: i64) -> Time {
+pub fn get_sample_timestamp(start: Time, sample_rate: f32, sample: i64) -> Time {
     start + samples_to_timedelta(sample_rate, sample)
 }
 
@@ -169,13 +169,13 @@ impl ChannelData {
 }
 
 pub struct Frame {
-    pub sample_rate: usize,
+    pub sample_rate: f32,
     pub timestamp: Time,
     pub channels: Vec<ChannelData>,
 }
 
 impl Frame {
-    pub fn new(sample_rate: usize, timestamp: Time) -> Frame {
+    pub fn new(sample_rate: f32, timestamp: Time) -> Frame {
         Frame {
             sample_rate: sample_rate,
             timestamp: timestamp,
@@ -183,7 +183,7 @@ impl Frame {
         }
     }
 
-    pub fn new_stereo(sample_rate: usize, timestamp: Time, samples: usize) -> Frame {
+    pub fn new_stereo(sample_rate: f32, timestamp: Time, samples: usize) -> Frame {
         Frame {
             sample_rate: sample_rate,
             timestamp: timestamp,
@@ -258,7 +258,7 @@ impl Frame {
 
     pub fn from_buffer_stereo(
         format: SampleFormat,
-        sample_rate: usize,
+        sample_rate: f32,
         buffer: &[u8],
         timestamp: Time,
     ) -> Frame {
@@ -273,7 +273,7 @@ impl Frame {
 
     pub fn from_buffer(
         format: SampleFormat,
-        sample_rate: usize,
+        sample_rate: f32,
         channels: &[ChannelPos],
         buffer: &[u8],
         timestamp: Time,
@@ -358,6 +358,7 @@ pub struct DeviceSpec {
     pub name: String,
     pub id: String,
     pub sample_rate: Option<usize>,
+    pub exact_sample_rate: bool,
     pub channels: Vec<ChannelPos>,
     pub delay: TimeDelta,
 }
@@ -366,11 +367,12 @@ const TIME_PRECISION_US: i64 = 1000;
 const MAX_SAMPLE_RATE: f32 = 96000.0;
 
 pub struct RateDetector {
-    history: VecDeque<(Time, usize)>,
     window: TimeDelta,
+    history: VecDeque<(Time, usize)>,
     sum: usize,
 }
 
+#[derive(Clone, Copy)]
 pub struct DetectedRate {
     pub rate: f32,
     pub error: f32,
@@ -379,8 +381,8 @@ pub struct DetectedRate {
 impl RateDetector {
     pub fn new(target_precision: f32) -> RateDetector {
         return RateDetector {
-            history: VecDeque::new(),
             window: TimeDelta::microseconds(TIME_PRECISION_US) * (2.0 * MAX_SAMPLE_RATE / target_precision),
+            history: VecDeque::new(),
             sum: 0,
         };
     }
@@ -400,10 +402,16 @@ impl RateDetector {
         }
 
         let samples = (self.sum - self.history[0].1) as f64;
+        let rate = samples / period.in_seconds_f();
         DetectedRate {
-            rate: (samples / period.in_seconds_f()) as f32,
-            error: (samples * TIME_PRECISION_US as f64 / period.in_microseconds_f()) as f32,
+            rate: rate as f32,
+            error: (rate * (TIME_PRECISION_US as f64 / 1_000_000.0) / period.in_seconds_f()) as f32,
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.history.clear();
+        self.sum = 0;
     }
 }
 

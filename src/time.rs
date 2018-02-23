@@ -67,10 +67,6 @@ impl TimeDelta {
     pub fn in_microseconds(&self) -> i64 {
         self.0 / NANOS_PER_MICRO
     }
-    pub fn in_microseconds_f(&self) -> f64 {
-        self.0 as f64 / NANOS_PER_MICRO as f64
-    }
-
 
     pub fn abs(&self) -> TimeDelta {
         TimeDelta(self.0.abs())

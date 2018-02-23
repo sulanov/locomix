@@ -72,6 +72,7 @@ struct InputConfig {
     sample_rate: Option<usize>,
     resampler_window: Option<usize>,
     default_gain: Option<f32>,
+    dynamic_resampling: Option<bool>,
 
     // Enables sample rate probing. Useful for sound cards that don't
     // detect input rate, e.g. Creative SB X-Fi HD.
@@ -123,12 +124,11 @@ struct Config {
     control_device: Option<Vec<ControlDeviceConfig>>,
 }
 
-fn get_resampler_window(value: Option<usize>, dynamic: bool) -> Result<usize, RunError> {
-    match (value, dynamic) {
-        (None, false) => Ok(100),
-        (None, true) => Ok(25),
-        (Some(w), _) if w >= 2 && w < 2000 => Ok(w),
-        (Some(w), _) => Err(RunError::new(
+fn get_resampler_window(value: Option<usize>) -> Result<usize, RunError> {
+    match value {
+        None => Ok(100),
+        Some(w) if w >= 2 && w < 2000 => Ok(w),
+        Some(w) => Err(RunError::new(
             format!("Invalid resampler_window: {}", w).as_str(),
         )),
     }
@@ -271,6 +271,7 @@ fn run() -> Result<(), RunError> {
                     sample_rate: input.sample_rate,
                     channels: vec![],
                     delay: TimeDelta::zero(),
+                    exact_sample_rate: input.dynamic_resampling.unwrap_or(false),
                 },
                 period_duration,
                 input.probe_sample_rate.unwrap_or(false),
@@ -284,8 +285,8 @@ fn run() -> Result<(), RunError> {
 
         let async_resampled = async_input::AsyncInput::new(Box::new(input::InputResampler::new(
             device,
-            sample_rate,
-            try!(get_resampler_window(input.resampler_window, false)),
+            sample_rate as f32,
+            try!(get_resampler_window(input.resampler_window)),
         )));
 
         inputs.push(async_resampled);
@@ -300,12 +301,7 @@ fn run() -> Result<(), RunError> {
     for output in config.output {
         index += 1;
         let name = output.name.unwrap_or(format!("Output {}", index));
-
         let dynamic_resampling = output.dynamic_resampling.unwrap_or(false);
-        let resampler_window = try!(get_resampler_window(
-            output.resampler_window,
-            dynamic_resampling
-        ));
 
         let devices = match (output.device, output.channel_map, output.devices) {
             (Some(device), channel_map, None) => vec![
@@ -315,6 +311,7 @@ fn run() -> Result<(), RunError> {
                     sample_rate: output.sample_rate,
                     channels: try!(parse_channel_map(channel_map)),
                     delay: TimeDelta::zero(),
+                    exact_sample_rate: dynamic_resampling,
                 },
             ],
             (None, None, Some(devices)) => {
@@ -326,6 +323,7 @@ fn run() -> Result<(), RunError> {
                         sample_rate: d.sample_rate.or(output.sample_rate),
                         channels: try!(parse_channel_map(d.channel_map)),
                         delay: TimeDelta::milliseconds_f(d.delay.unwrap_or(0.0)),
+                        exact_sample_rate: dynamic_resampling,
                     });
                 }
                 result
@@ -354,8 +352,7 @@ fn run() -> Result<(), RunError> {
         let out = try!(output::CompositeOutput::new(
             devices,
             period_duration,
-            resampler_window,
-            dynamic_resampling,
+            try!(get_resampler_window(output.resampler_window)),
         ));
 
         let sub_config = match (have_subwoofer, output.subwoofer_crossover_frequency) {

@@ -160,7 +160,7 @@ pub struct SimpleFilterParams {
 }
 
 impl SimpleFilterParams {
-    pub fn new(sample_rate: usize, gain_db: f32) -> SimpleFilterParams {
+    pub fn new(sample_rate: f32, gain_db: f32) -> SimpleFilterParams {
         SimpleFilterParams {
             sample_rate: sample_rate as FCoef,
             gain_db: gain_db as FCoef,
@@ -541,7 +541,7 @@ pub struct CrossfeedFilter {
 }
 
 impl CrossfeedFilter {
-    pub fn new(sample_rate: usize) -> CrossfeedFilter {
+    pub fn new(sample_rate: f32) -> CrossfeedFilter {
         CrossfeedFilter {
             level: 0.0,
             delay_ms: 0.3,
