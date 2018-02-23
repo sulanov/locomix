@@ -18,7 +18,7 @@ pub trait Output: Send {
     fn min_delay(&self) -> TimeDelta;
 }
 
-const MAX_TIMESTAMP_DEVIATION_US: i64 = 500;
+const MAX_TIMESTAMP_DEVIATION_US: i64 = 1000;
 const BUFFER_PERIODS: usize = 4;
 const RATE_UPDATE_PERIOD_MS: i64 = 500;
 

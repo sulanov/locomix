@@ -17,6 +17,9 @@ simd = "0.2.0"
 tempfile = "2.2.0"
 toml = "0.4.5"
 
+[profile.release]
+debug = true
+
 [[bin]]
 name = "locomix"
 path = "src/locomix.rs"
