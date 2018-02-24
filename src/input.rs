@@ -10,7 +10,6 @@ pub trait Input: Send {
 pub struct InputResampler {
     input: Box<Input>,
     resampler: StreamResampler,
-    delay: TimeDelta,
 }
 
 impl InputResampler {
@@ -18,7 +17,6 @@ impl InputResampler {
         InputResampler {
             input: input,
             resampler: StreamResampler::new(output_rate, window_size),
-            delay: samples_to_timedelta(output_rate, window_size as i64),
         }
     }
 }
@@ -32,6 +30,6 @@ impl Input for InputResampler {
     }
 
     fn min_delay(&self) -> TimeDelta {
-        self.input.min_delay() + self.delay
+        self.input.min_delay() + self.resampler.delay()
     }
 }
