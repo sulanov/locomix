@@ -71,7 +71,6 @@ struct InputConfig {
     device: String,
     sample_rate: Option<usize>,
     channel_map: Option<String>,
-    resampler_window: Option<usize>,
     default_gain: Option<f32>,
     dynamic_resampling: Option<bool>,
 
@@ -95,7 +94,6 @@ struct OutputConfig {
     devices: Option<Vec<CompositeOutputEntry>>,
     channel_map: Option<String>,
     sample_rate: Option<usize>,
-    resampler_window: Option<usize>,
     dynamic_resampling: Option<bool>,
     default_gain: Option<f32>,
     subwoofer_crossover_frequency: Option<usize>,
@@ -119,20 +117,11 @@ struct Config {
     period_duration: Option<usize>,
     state_script: Option<String>,
     enable_crossfeed: Option<bool>,
+    resampler_window: Option<usize>,
 
     input: Vec<InputConfig>,
     output: Vec<OutputConfig>,
     control_device: Option<Vec<ControlDeviceConfig>>,
-}
-
-fn get_resampler_window(value: Option<usize>) -> Result<usize, RunError> {
-    match value {
-        None => Ok(100),
-        Some(w) if w >= 2 && w < 2000 => Ok(w),
-        Some(w) => Err(RunError::new(
-            format!("Invalid resampler_window: {}", w).as_str(),
-        )),
-    }
 }
 
 fn parse_channel_map(map_str: Option<String>) -> Result<Vec<base::ChannelPos>, RunError> {
@@ -251,6 +240,13 @@ fn run() -> Result<(), RunError> {
         ));
     }
 
+    let resampler_window = config.resampler_window.unwrap_or(100);
+    if resampler_window < 2 || resampler_window > 2000 {
+        return Err(RunError::new(
+            format!("Invalid resampler_window: {}", resampler_window).as_str(),
+        ));
+    }
+
     let shared_state = ui::SharedState::new();
 
     let mut inputs = Vec::<async_input::AsyncInput>::new();
@@ -288,7 +284,7 @@ fn run() -> Result<(), RunError> {
         let async_resampled = async_input::AsyncInput::new(Box::new(input::InputResampler::new(
             device,
             sample_rate as f32,
-            try!(get_resampler_window(input.resampler_window)),
+            resampler_window,
         )));
 
         inputs.push(async_resampled);
@@ -354,7 +350,7 @@ fn run() -> Result<(), RunError> {
         let out = try!(output::CompositeOutput::new(
             devices,
             period_duration,
-            try!(get_resampler_window(output.resampler_window)),
+            resampler_window,
         ));
 
         let sub_config = match (have_subwoofer, output.subwoofer_crossover_frequency) {

@@ -5,20 +5,20 @@ use input;
 use base;
 
 enum PipeMessage {
-    Frame(base::Frame),
+    Frame(base::Frame, TimeDelta),
     Error(base::Error),
 }
 
 pub struct AsyncInput {
     receiver: mpsc::Receiver<PipeMessage>,
-    delay: TimeDelta,
+    min_delay: TimeDelta,
 }
 
 impl AsyncInput {
     pub fn new(mut input: Box<input::Input>) -> AsyncInput {
         let (sender, receiver) = mpsc::channel();
 
-        let delay = input.min_delay();
+        let min_delay = input.min_delay();
 
         thread::spawn(move || loop {
             match input.read() {
@@ -28,20 +28,23 @@ impl AsyncInput {
                 }
                 Ok(None) => (),
                 Ok(Some(frame)) => {
-                    sender.send(PipeMessage::Frame(frame)).unwrap();
+                    sender.send(PipeMessage::Frame(frame, input.min_delay())).unwrap();
                 }
             }
         });
 
         AsyncInput {
             receiver: receiver,
-            delay: delay,
+            min_delay: min_delay,
         }
     }
 
     pub fn read(&mut self, timeout: TimeDelta) -> base::Result<Option<base::Frame>> {
         match self.receiver.recv_timeout(timeout.as_duration()) {
-            Ok(PipeMessage::Frame(frame)) => Ok(Some(frame)),
+            Ok(PipeMessage::Frame(frame, min_delay)) => {
+                self.min_delay = min_delay;
+                Ok(Some(frame))
+            },
             Ok(PipeMessage::Error(e)) => Err(e),
             Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
             Err(mpsc::RecvTimeoutError::Disconnected) => Err(base::Error::new("Channel closed")),
@@ -49,6 +52,6 @@ impl AsyncInput {
     }
 
     pub fn min_delay(&self) -> TimeDelta {
-        self.delay
+        self.min_delay
     }
 }
