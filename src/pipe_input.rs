@@ -1,10 +1,11 @@
+extern crate libc;
 extern crate nix;
 
 use std;
 use std::fs::File;
 use std::io::Read;
-use time::{Time, TimeDelta};
 use base::*;
+use time::{Time, TimeDelta};
 use std::os::linux::fs::MetadataExt;
 use std::os::unix::io::AsRawFd;
 use self::nix::fcntl;
@@ -111,8 +112,10 @@ impl Input for PipeInput {
             }
             Some(Ok(result)) => result,
             Some(Err(err)) => {
-                println!("ERROR: read returned: {}", err);
-                self.file = None;
+                if err.raw_os_error() != Some(libc::EAGAIN) {
+                    println!("ERROR: read returned: {}", err);
+                    self.file = None;
+                }
                 return Ok(None);
             }
         };
