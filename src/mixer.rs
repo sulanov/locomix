@@ -231,17 +231,17 @@ pub fn run_mixer_loop(
 
     let mut exclusive_mux_mode = true;
 
-    let min_input_delay = inputs
-        .iter()
-        .fold(TimeDelta::zero(), |max, i| cmp::max(max, i.min_delay()));
-    let mix_delay = min_input_delay + period_duration * 2;
-
     let period_size = (period_duration * sample_rate as i64 / TimeDelta::seconds(1)) as usize;
 
-    let mut stream_start_time = Time::now() - mix_delay;
+    let mut stream_start_time = Time::now();
     let mut stream_pos: i64 = 0;
 
     loop {
+        let min_input_delay = inputs
+            .iter()
+            .fold(TimeDelta::zero(), |max, i| cmp::max(max, i.min_delay()));
+        let mix_delay = min_input_delay + period_duration * 2;
+
         let frame_timestamp = get_sample_timestamp(stream_start_time, sample_rate as f32, stream_pos);
         let mut frame = Frame::new_stereo(sample_rate as f32, frame_timestamp, period_size);
         stream_pos += frame.len() as i64;
