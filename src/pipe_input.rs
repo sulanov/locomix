@@ -12,13 +12,11 @@ use self::nix::fcntl;
 use super::input::*;
 
 const FORMAT: SampleFormat = SampleFormat::S32LE;
-const SAMPLE_RATE: f32 = 44100.0;
-const CHANNELS: usize = 2;
-const FILE_REOPEN_FREQUENCY_SECS: i64 = 3;
-const BYTES_PER_SAMPLE: usize = 4 * CHANNELS; // FORMAT.bytes_per_sample() * CHANNELS;
+const FILE_REOPEN_FREQUENCY_SECS: i64 = 2;
 
 pub struct PipeInput {
-    filename: String,
+    spec: DeviceSpec,
+    sample_rate: f32,
     file: Option<File>,
 
     last_open_time: Time,
@@ -27,18 +25,23 @@ pub struct PipeInput {
 
     reference_time: Time,
     pos: i64,
+
+    leftover: Vec<u8>,
 }
 
 impl PipeInput {
-    pub fn open(filename: &str, period_duration: TimeDelta) -> Box<PipeInput> {
+    pub fn open(spec: DeviceSpec, period_duration: TimeDelta) -> Box<PipeInput> {
         let now = Time::now();
+        let sample_rate = spec.sample_rate.unwrap_or(48000) as f32;
         Box::new(PipeInput {
-            filename: String::from(filename),
+            spec: spec,
+            sample_rate: sample_rate,
             file: None,
             last_open_time: now - TimeDelta::seconds(FILE_REOPEN_FREQUENCY_SECS),
             period_duration: period_duration,
             reference_time: now,
             pos: 0,
+            leftover: vec![],
         })
     }
 
@@ -48,7 +51,7 @@ impl PipeInput {
             return;
         }
         self.last_open_time = now;
-        match File::open(&self.filename) {
+        match File::open(&self.spec.id) {
             Err(_) => {
                 self.file = None;
             }
@@ -67,7 +70,7 @@ impl PipeInput {
                     }
                 };
                 if replace {
-                    println!("INFO: Opened input: {}", self.filename);
+                    println!("INFO: Opened input: {}", self.spec.id);
                     match fcntl::fcntl(f.as_raw_fd(), fcntl::FcntlArg::F_SETPIPE_SZ(16384)) {
                         Err(e) => println!("WARNING: failed to set buffer size for pipe: {}", e),
                         _ => (),
@@ -82,6 +85,7 @@ impl PipeInput {
                     }
 
                     self.file = Some(f);
+                    self.leftover.clear();
                 }
             }
         }
@@ -91,12 +95,22 @@ impl PipeInput {
 impl Input for PipeInput {
     fn read(&mut self) -> Result<Option<Frame>> {
         self.try_reopen();
-        let size = (self.period_duration * SAMPLE_RATE as i64 / TimeDelta::seconds(1)
-            * BYTES_PER_SAMPLE as i64) as usize / 2;
+
+        let bytes_per_frame = FORMAT.bytes_per_sample() * self.spec.channels.len();
+
+        let size = (self.period_duration * self.sample_rate as i64 / TimeDelta::seconds(1)
+            * bytes_per_frame as i64) as usize / 2;
         let mut buffer = vec![0u8; size];
-        let bytes_read = match self.file.as_mut().map(|f| f.read(&mut buffer)) {
-            None | Some(Ok(0)) => {
+
+        buffer[0..self.leftover.len()].copy_from_slice(&self.leftover[..]);
+        let pos = self.leftover.len();
+        let bytes_read = self.leftover.len() + match self.file.as_mut().map(|f| f.read(&mut buffer[pos..])) {
+            None => {
                 std::thread::sleep(self.period_duration.as_duration());
+                return Ok(None);
+            }
+            Some(Ok(0)) => {
+                self.file = None;
                 return Ok(None);
             }
             Some(Ok(result)) => result,
@@ -107,11 +121,19 @@ impl Input for PipeInput {
             }
         };
 
-        let mut frame = Frame::from_buffer_stereo(
+        let leftover_bytes = bytes_read % bytes_per_frame;
+        let bytes_to_use = bytes_read - leftover_bytes;
+        self.leftover = buffer[(buffer.len() - leftover_bytes)..].to_vec();
+        if bytes_to_use == 0 {
+            return Ok(None);
+        }
+
+        let mut frame = Frame::from_buffer(
             FORMAT,
-            SAMPLE_RATE,
-            &buffer[0..bytes_read],
-            get_sample_timestamp(self.reference_time, SAMPLE_RATE, self.pos),
+            self.sample_rate as f32,
+            &self.spec.channels,
+            &buffer[0..bytes_to_use],
+            get_sample_timestamp(self.reference_time, self.sample_rate, self.pos),
         );
 
         self.pos += frame.len() as i64;

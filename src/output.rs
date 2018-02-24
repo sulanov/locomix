@@ -6,7 +6,6 @@ use std::collections::BTreeMap;
 use std::cmp;
 use std::ffi::CString;
 use std::sync::mpsc;
-use std;
 use std::thread;
 use time::{Time, TimeDelta};
 use resampler;
@@ -57,9 +56,7 @@ impl AlsaWriteLoop {
             if self.cur_frame.is_none() {
                 let timeout = deadline - Time::now();
                 if timeout >= TimeDelta::zero() {
-                    let timeout_duration =
-                        std::time::Duration::from_micros(cmp::max(0, timeout.in_microseconds()) as u64);
-                    self.cur_frame = match self.frame_receiver.recv_timeout(timeout_duration) {
+                    self.cur_frame = match self.frame_receiver.recv_timeout(timeout.as_duration()) {
                         Ok(frame) => Some(frame),
                         Err(mpsc::RecvTimeoutError::Timeout) => None,
                         Err(mpsc::RecvTimeoutError::Disconnected) => return LoopState::Stop,

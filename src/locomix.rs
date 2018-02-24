@@ -70,6 +70,7 @@ struct InputConfig {
     type_: Option<String>,
     device: String,
     sample_rate: Option<usize>,
+    channel_map: Option<String>,
     resampler_window: Option<usize>,
     default_gain: Option<f32>,
     dynamic_resampling: Option<bool>,
@@ -262,17 +263,18 @@ fn run() -> Result<(), RunError> {
         });
 
         let type_ = input.type_.unwrap_or("alsa".to_string());
+        let spec = base::DeviceSpec {
+            name: name,
+            id: input.device,
+            sample_rate: input.sample_rate,
+            channels: parse_channel_map(input.channel_map)?,
+            delay: TimeDelta::zero(),
+            exact_sample_rate: input.dynamic_resampling.unwrap_or(false),
+        };
         let device: Box<input::Input> = match type_.as_str() {
-            "pipe" => pipe_input::PipeInput::open(input.device.as_str(), period_duration),
+            "pipe" => pipe_input::PipeInput::open(spec, period_duration),
             "alsa" => alsa_input::ResilientAlsaInput::new(
-                base::DeviceSpec {
-                    name: name,
-                    id: input.device,
-                    sample_rate: input.sample_rate,
-                    channels: vec![],
-                    delay: TimeDelta::zero(),
-                    exact_sample_rate: input.dynamic_resampling.unwrap_or(false),
-                },
+                spec,
                 period_duration,
                 input.probe_sample_rate.unwrap_or(false),
             ),
