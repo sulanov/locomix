@@ -11,7 +11,7 @@ use self::nix::fcntl;
 
 use super::input::*;
 
-const FORMAT: SampleFormat = SampleFormat::S32LE;
+const FORMAT: SampleFormat = SampleFormat::F32LE;
 const FILE_REOPEN_FREQUENCY_SECS: i64 = 2;
 
 pub struct PipeInput {

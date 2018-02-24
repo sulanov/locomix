@@ -1,6 +1,8 @@
 extern crate alsa;
+extern crate byteorder;
 extern crate simd;
 
+use self::byteorder::{LittleEndian, ByteOrder};
 use self::simd::f32x4;
 use std::error;
 use std::fmt;
@@ -15,6 +17,7 @@ pub enum SampleFormat {
     S24LE3,
     S24LE4,
     S32LE,
+    F32LE
 }
 
 impl SampleFormat {
@@ -24,6 +27,7 @@ impl SampleFormat {
             SampleFormat::S24LE3 => "S24LE3",
             SampleFormat::S24LE4 => "S24LE4",
             SampleFormat::S32LE => "S32LE",
+            SampleFormat::F32LE => "F32LE",
         }
     }
 
@@ -33,6 +37,7 @@ impl SampleFormat {
             SampleFormat::S24LE3 => 3,
             SampleFormat::S24LE4 => 4,
             SampleFormat::S32LE => 4,
+            SampleFormat::F32LE => 4,
         }
     }
 }
@@ -250,6 +255,9 @@ impl Frame {
                 SampleFormat::S32LE => for i in 0..self.len() {
                     write_sample_s32le(channel.pcm[i], &mut buf[i * bytes_per_frame + shift..]);
                 },
+                SampleFormat::F32LE => for i in 0..self.len() {
+                    LittleEndian::write_f32(&mut buf[i * bytes_per_frame + shift..], channel.pcm[i]);
+                }
             }
         }
 
@@ -297,6 +305,9 @@ impl Frame {
                 },
                 SampleFormat::S32LE => for i in 0..samples {
                     data.pcm[i] = read_sample_s32le(&buffer[i * bytes_per_sample + c * 4..]);
+                },
+                SampleFormat::F32LE => for i in 0..samples {
+                    data.pcm[i] = LittleEndian::read_f32(&buffer[i * bytes_per_sample + c * 4..]);
                 },
             }
             frame.channels.push(data)
