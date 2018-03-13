@@ -106,7 +106,7 @@ impl Input for PipeInput {
         buffer[0..self.leftover.len()].copy_from_slice(&self.leftover[..]);
         let pos = self.leftover.len();
         let bytes_read = self.leftover.len() + match self.file.as_mut().map(|f| f.read(&mut buffer[pos..])) {
-            None | Some(Ok(0)) => {
+            None => {
                 std::thread::sleep(self.period_duration.as_duration());
                 return Ok(None);
             }
@@ -116,6 +116,7 @@ impl Input for PipeInput {
                     println!("ERROR: read returned: {}", err);
                     self.file = None;
                 }
+                std::thread::sleep(self.period_duration.as_duration());
                 return Ok(None);
             }
         };
@@ -124,6 +125,7 @@ impl Input for PipeInput {
         let bytes_to_use = bytes_read - leftover_bytes;
         self.leftover = buffer[(buffer.len() - leftover_bytes)..].to_vec();
         if bytes_to_use == 0 {
+            std::thread::sleep(self.period_duration.as_duration());
             return Ok(None);
         }
 

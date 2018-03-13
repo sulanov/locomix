@@ -137,7 +137,9 @@ impl Input for AlsaInput {
         assert!(samples > 0);
 
         let now = Time::now();
-        let rate = self.rate_detector.update(samples, now);
+        let timestamp = now - samples_to_timedelta(self.sample_rate as f32,
+                                                   try!(self.pcm.avail_update()) as i64);
+        let rate = self.rate_detector.update(samples, timestamp);
         if (self.sample_rate as f32 - rate.rate).abs() > MAX_SAMPLE_RATE_ERROR &&
            rate.error < MAX_SAMPLE_RATE_ERROR {
             let mut new_rate = 0;
@@ -164,7 +166,7 @@ impl Input for AlsaInput {
         }
 
         if self.spec.exact_sample_rate {
-            let rate = self.exact_rate_detector.update(samples, now);
+            let rate = self.exact_rate_detector.update(samples, timestamp);
 
             if (now - self.last_rate_update) > TimeDelta::milliseconds(500) {
                self.last_rate_update = now;
@@ -206,7 +208,7 @@ impl Input for AlsaInput {
         }
 
         let mut frame = Frame::from_buffer_stereo(
-            self.format, self.current_rate.rate, &buf[0..bytes], Time::now());
+            self.format, self.current_rate.rate, &buf[0..bytes], timestamp);
         frame.timestamp -= frame.duration();
 
         Ok(Some(frame))

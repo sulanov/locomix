@@ -102,18 +102,18 @@ impl AlsaWriteLoop {
 
     fn do_write(&mut self) -> alsa::Result<LoopState> {
         let now = Time::now();
-        let (avail, delay) = try!(self.pcm.avail_delay());
-        let avail = avail as usize;
+        let (avail, mut delay) = try!(self.pcm.avail_delay());
 
-        let stream_time =
-            now + samples_to_timedelta(self.sample_rate as f32, delay as i64) + self.spec.delay;
 
         if self.buffer_pos >= self.buffer.len() {
+            let stream_time =
+                now + samples_to_timedelta(self.sample_rate as f32, delay as i64) + self.spec.delay;
             let deadline =
                 now + samples_to_timedelta(self.sample_rate as f32, self.period_size as i64 - avail as i64);
             if self.next_buffer(stream_time, deadline) == LoopState::Stop {
                 return Ok(LoopState::Stop);
             }
+            delay = try!(self.pcm.avail_delay()).1;
         }
 
         let frames_written = try!(self.pcm.io().writei(&self.buffer[self.buffer_pos..])) as usize;
@@ -122,7 +122,7 @@ impl AlsaWriteLoop {
         if self.spec.exact_sample_rate {
             let current_rate = self.rate_detector.update(
                 frames_written,
-                stream_time + samples_to_timedelta(self.sample_rate as f32, frames_written as i64));
+                now + samples_to_timedelta(self.sample_rate as f32, delay as i64 + frames_written as i64));
             if now - self.last_rate_update > TimeDelta::milliseconds(RATE_UPDATE_PERIOD_MS) {
                 self.last_rate_update = now;
                 self.feedback_sender.send(AlsaWriteLoopFeedback::CurrentRate(current_rate.rate))
@@ -429,6 +429,8 @@ impl Output for ResamplingOutput {
         if self.output.sample_rate() == 0.0 {
             return self.output.write(frame);
         }
+
+        self.resampler.set_output_sample_rate(self.output.sample_rate());
 
         match self.resampler.resample(frame) {
             None => Ok(()),
