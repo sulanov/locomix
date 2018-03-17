@@ -1,7 +1,5 @@
 use base::*;
-use std::cmp;
 use std::f32::consts::PI;
-use std::mem;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
@@ -249,20 +247,20 @@ pub trait StreamFilter: Send {
 
 pub struct MultichannelFilter<T: AudioFilter<T>> {
     params: T::Params,
-    filters: Vec<T>,
+    filters: PerChannel<T>,
 }
 
 impl<T: AudioFilter<T>> MultichannelFilter<T> {
     pub fn new(params: T::Params) -> MultichannelFilter<T> {
         MultichannelFilter {
             params: params,
-            filters: Vec::new(),
+            filters: PerChannel::new(),
         }
     }
 
     pub fn set_params(&mut self, params: T::Params) {
-        for i in 0..self.filters.len() {
-            self.filters[i].set_params(params.clone());
+        for (_, f) in self.filters.iter() {
+            f.set_params(params.clone());
         }
         self.params = params
     }
@@ -270,11 +268,12 @@ impl<T: AudioFilter<T>> MultichannelFilter<T> {
 
 impl<T: AudioFilter<T> + Send> StreamFilter for MultichannelFilter<T> {
     fn apply(&mut self, mut frame: Frame) -> Frame {
-        for i in 0..frame.channels.len() {
-            if self.filters.len() <= i {
-                self.filters.push(T::new(self.params.clone()));
+        for (c, pcm) in frame.iter_channels() {
+            if !self.filters.have_channel(c) {
+                self.filters.set(c, T::new(self.params.clone()))
             }
-            self.filters[i].apply_multi(&mut frame.channels[i].pcm[..]);
+
+            self.filters.get_mut(c).unwrap().apply_multi(pcm);
         }
         frame
     }
@@ -294,8 +293,7 @@ enum FilterJob {
 }
 
 pub struct MultichannelFirFilter {
-    channel0: FirFilter,
-    threads: Vec<mpsc::Sender<FilterJob>>,
+    threads: PerChannel<mpsc::Sender<FilterJob>>,
     size_multiplier: usize,
     delay1: f64,
     delay2: f64,
@@ -303,16 +301,20 @@ pub struct MultichannelFirFilter {
 
 impl MultichannelFirFilter {
     pub fn new_pair(left: FirFilterParams, right: FirFilterParams) -> MultichannelFirFilter {
-        return MultichannelFirFilter::new(vec![left, right]);
+        let mut params = PerChannel::new();
+        params.set(ChannelPos::FL, left);
+        params.set(ChannelPos::FR, right);
+        return MultichannelFirFilter::new(params);
     }
 
-    pub fn new(mut params: Vec<FirFilterParams>) -> MultichannelFirFilter {
-        let mut threads = vec![];
-        for channel_params in params.drain(1..) {
-            let (thread, job_receiver) = mpsc::channel::<FilterJob>();
-            threads.push(thread);
+    pub fn new(mut params: PerChannel<FirFilterParams>) -> MultichannelFirFilter {
+        let mut threads = PerChannel::new();
+        for (channel, channel_params) in params.iter() {
+            let (job_sender, job_receiver) = mpsc::channel::<FilterJob>();
+            let params = channel_params.clone();
+            threads.set(channel, job_sender);
             thread::spawn(move || {
-                let mut filter = FirFilter::new(channel_params);
+                let mut filter = FirFilter::new(params);
                 for mut job in job_receiver.iter() {
                     match job {
                         FilterJob::Apply {
@@ -333,7 +335,6 @@ impl MultichannelFirFilter {
         }
 
         MultichannelFirFilter {
-            channel0: FirFilter::new(params.swap_remove(0)),
             threads: threads,
             size_multiplier: 256,
             delay1: 0.0,
@@ -348,26 +349,20 @@ impl StreamFilter for MultichannelFirFilter {
 
         let mut recv_channels = vec![];
 
-        for i in 0..self.threads.len() {
+        for (c, t) in self.threads.iter() {
             let (s, r) = mpsc::channel::<Vec<f32>>();
             recv_channels.push(r);
-            let mut v = vec![0f32; 0];
-            mem::swap(&mut v, &mut frame.channels[i + 1].pcm);
-            self.threads[i]
-                .send(FilterJob::Apply {
-                    data: v,
-                    response_channel: s,
-                    size_multiplier: self.size_multiplier,
-                })
-                .expect("Failed to send");
+            frame.ensure_channel(c);
+            t.send(FilterJob::Apply {
+                data: frame.take_channel(c).unwrap(),
+                response_channel: s,
+                size_multiplier: self.size_multiplier,
+            }).expect("Failed to send");
         }
 
-        self.channel0.window_size = self.channel0.buffer.len() * self.size_multiplier / 256;
-        self.channel0.apply_multi(&mut frame.channels[0].pcm[..]);
-
-        for i in 0..self.threads.len() {
+        for (i, (c, _t)) in self.threads.iter().enumerate() {
             let mut v = recv_channels[i].recv().expect("Failed to apply filter");
-            mem::swap(&mut v, &mut frame.channels[i + 1].pcm);
+            frame.set_channel(c, v);
         }
 
         let now = time::Time::now();
@@ -389,7 +384,7 @@ impl StreamFilter for MultichannelFirFilter {
             self.delay2 *= m;
             println!(
                 "Updated FIR filter size to {}, delay: {:?} ",
-                self.size_multiplier * self.channel0.buffer.len() / 256,
+                self.size_multiplier as f32 / 256.0,
                 mean_delay
             );
         }
@@ -398,12 +393,10 @@ impl StreamFilter for MultichannelFirFilter {
     }
 
     fn reset(&mut self) {
-        for i in 0..self.threads.len() {
-            self.threads[i]
-                .send(FilterJob::Reset)
+        for (_c, t) in self.threads.iter() {
+            t.send(FilterJob::Reset)
                 .expect("Failed to send reset command");
         }
-        self.channel0.reset();
     }
 }
 
@@ -412,58 +405,12 @@ pub struct FirFilterParams {
     coefficients: Arc<Vec<FCoef>>,
 }
 
-pub fn reduce_fir(fir: Vec<f32>, size: usize) -> FirFilterParams {
-    let mut start: usize = 0;
-    let mut max_sum: f64 = 0.0;
-    let mut sum: f64 = 0.0;
-    let size = cmp::min(size, fir.len());
-    for i in 0..fir.len() {
-        let l = fir[i] as f64;
-        sum += l * l;
-
-        if i >= size {
-            let l = fir[i - size] as f64;
-            sum -= l * l;
-        }
-        if sum > max_sum {
-            max_sum = sum;
-            start = if i >= size { i - size + 1 } else { 0 }
+impl FirFilterParams {
+    pub fn new(fir: Vec<f32>, size: usize) -> FirFilterParams {
+        FirFilterParams {
+            coefficients: Arc::new(fir[0..size].to_vec()),
         }
     }
-    FirFilterParams {
-        coefficients: Arc::new(fir[start..(start + size)].to_vec()),
-    }
-}
-
-pub fn reduce_fir_set(params: Vec<Vec<f32>>, size: usize) -> Vec<FirFilterParams> {
-    let length = params.iter().map(|p| p.len()).min().unwrap_or(0);
-    let mut start: usize = 0;
-    let mut max_sum: f64 = 0.0;
-    let mut sum: f64 = 0.0;
-    let size = cmp::min(size, length);
-    for i in 0..length {
-        for p in &params {
-            let v = p[i] as f64;
-            sum += v * v
-        }
-
-        if i >= size {
-            for p in &params {
-                let v = p[i] as f64;
-                sum -= v * v
-            }
-        }
-        if sum > max_sum {
-            max_sum = sum;
-            start = if i >= size { i - size + 1 } else { 0 }
-        }
-    }
-    params
-        .iter()
-        .map(|p| FirFilterParams {
-            coefficients: Arc::new(p[start..(start + size)].to_vec()),
-        })
-        .collect()
 }
 
 pub struct FirFilter {
@@ -533,9 +480,9 @@ impl AudioFilter<FirFilter> for FirFilter {
 pub struct CrossfeedFilter {
     level: f32,
     delay_ms: f32,
-    previous: Option<Frame>,
+    previous: Frame,
     left_cross_filter: BiquadFilter,
-    left_straigh_filter: BiquadFilter,
+    left_straight_filter: BiquadFilter,
     right_cross_filter: BiquadFilter,
     right_straight_filter: BiquadFilter,
 }
@@ -545,8 +492,8 @@ impl CrossfeedFilter {
         CrossfeedFilter {
             level: 0.0,
             delay_ms: 0.3,
-            previous: None,
-            left_straigh_filter: BiquadFilter::new(BiquadParams::low_shelf_filter(
+            previous: Frame::new(1.0, time::Time::now(), 0),
+            left_straight_filter: BiquadFilter::new(BiquadParams::low_shelf_filter(
                 sample_rate as FCoef,
                 200.0,
                 1.1,
@@ -576,46 +523,69 @@ impl CrossfeedFilter {
         self.delay_ms = delay_ms;
     }
 
-    pub fn apply(&mut self, frame: Frame) -> Frame {
+    fn crossfeed(
+        out: &mut [f32],
+        inp: &[f32],
+        other: &[f32],
+        prev: &[f32],
+        delay: usize,
+        level: f32,
+        straight_filter: &mut BiquadFilter,
+        cross_filter: &mut BiquadFilter,
+    ) {
+        for i in 0..out.len() {
+            out[i] = straight_filter.apply_one(inp[i])
+        }
+
+        if prev.len() > 0 {
+            assert!(prev.len() > delay);
+            for i in 0..delay {
+                out[i] += cross_filter.apply_one(prev[prev.len() - delay + i]) * level;
+            }
+        }
+
+        for i in delay..out.len() {
+            out[i] += cross_filter.apply_one(other[i - delay]) * level;
+        }
+    }
+
+    pub fn apply(&mut self, mut frame: Frame) -> Frame {
         assert!(frame.is_stereo());
 
         if self.level == 0.0 {
             return frame;
         }
-        let mut out = Frame::new_stereo(frame.sample_rate, frame.timestamp, frame.len());
+        let mut out = Frame::new(frame.sample_rate, frame.timestamp, frame.len());
 
         let delay = (self.delay_ms * frame.sample_rate as f32 / 1000.0) as usize;
         assert!(delay < out.len());
 
-        match self.previous.as_ref() {
-            Some(ref p) => {
-                let s = p.len() - delay;
-                for i in 0..delay {
-                    out.channels[0].pcm[i] = self.left_straigh_filter
-                        .apply_one(frame.channels[0].pcm[i])
-                        + self.left_cross_filter.apply_one(p.channels[0].pcm[s + i]) * self.level;
-                    out.channels[1].pcm[i] = self.right_straight_filter
-                        .apply_one(frame.channels[1].pcm[i])
-                        + self.right_cross_filter.apply_one(p.channels[1].pcm[s + i]) * self.level;
-                }
-            }
-            None => for i in 0..delay {
-                out.channels[0].pcm[i] = frame.channels[0].pcm[i];
-                out.channels[1].pcm[i] = frame.channels[1].pcm[i];
-            },
-        }
+        frame.ensure_channel(ChannelPos::FL);
+        frame.ensure_channel(ChannelPos::FR);
 
-        for i in delay..out.len() {
-            out.channels[0].pcm[i] = self.left_straigh_filter.apply_one(frame.channels[0].pcm[i])
-                + self.left_cross_filter
-                    .apply_one(frame.channels[1].pcm[i - delay]) * self.level;
-            out.channels[1].pcm[i] = self.right_straight_filter
-                .apply_one(frame.channels[1].pcm[i])
-                + self.right_cross_filter
-                    .apply_one(frame.channels[0].pcm[i - delay]) * self.level;
-        }
+        CrossfeedFilter::crossfeed(
+            out.ensure_channel(ChannelPos::FL),
+            frame.get_channel(ChannelPos::FL).unwrap(),
+            frame.get_channel(ChannelPos::FR).unwrap(),
+            self.previous.ensure_channel(ChannelPos::FR),
+            delay,
+            self.level,
+            &mut self.left_straight_filter,
+            &mut self.left_cross_filter,
+        );
 
-        self.previous = Some(frame);
+        CrossfeedFilter::crossfeed(
+            out.ensure_channel(ChannelPos::FR),
+            frame.get_channel(ChannelPos::FR).unwrap(),
+            frame.get_channel(ChannelPos::FL).unwrap(),
+            self.previous.ensure_channel(ChannelPos::FL),
+            delay,
+            self.level,
+            &mut self.right_straight_filter,
+            &mut self.right_cross_filter,
+        );
+
+        self.previous = frame;
 
         out
     }

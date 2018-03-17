@@ -105,21 +105,22 @@ impl Input for PipeInput {
 
         buffer[0..self.leftover.len()].copy_from_slice(&self.leftover[..]);
         let pos = self.leftover.len();
-        let bytes_read = self.leftover.len() + match self.file.as_mut().map(|f| f.read(&mut buffer[pos..])) {
-            None => {
-                std::thread::sleep(self.period_duration.as_duration());
-                return Ok(None);
-            }
-            Some(Ok(result)) => result,
-            Some(Err(err)) => {
-                if err.raw_os_error() != Some(libc::EAGAIN) {
-                    println!("ERROR: read returned: {}", err);
-                    self.file = None;
+        let bytes_read = self.leftover.len()
+            + match self.file.as_mut().map(|f| f.read(&mut buffer[pos..])) {
+                None => {
+                    std::thread::sleep(self.period_duration.as_duration());
+                    return Ok(None);
                 }
-                std::thread::sleep(self.period_duration.as_duration());
-                return Ok(None);
-            }
-        };
+                Some(Ok(result)) => result,
+                Some(Err(err)) => {
+                    if err.raw_os_error() != Some(libc::EAGAIN) {
+                        println!("ERROR: read returned: {}", err);
+                        self.file = None;
+                    }
+                    std::thread::sleep(self.period_duration.as_duration());
+                    return Ok(None);
+                }
+            };
 
         let leftover_bytes = bytes_read % bytes_per_frame;
         let bytes_to_use = bytes_read - leftover_bytes;

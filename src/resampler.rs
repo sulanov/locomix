@@ -79,10 +79,10 @@ impl ResamplerTable {
             for p in 0..(size * 2) {
                 let x = p as f32 - size as f32 + i as f32 / NUM_SUB_INTERVALS as f32;
                 let q = QuadFunction::new(
-                        kernel(x, size),
-                        kernel(x + 0.5 / NUM_SUB_INTERVALS as f32, size),
-                        kernel(x + 1.0 / NUM_SUB_INTERVALS as f32, size),
-                    );
+                    kernel(x, size),
+                    kernel(x + 0.5 / NUM_SUB_INTERVALS as f32, size),
+                    kernel(x + 1.0 / NUM_SUB_INTERVALS as f32, size),
+                );
                 s.a[p] = q.a;
                 s.b[p] = q.b;
                 s.c[p] = q.c;
@@ -182,7 +182,8 @@ impl Resampler {
                     c_sum += convolve(&seq.c[pos..], &input[i_pos..(end - queue_len)]);
                 }
 
-                (a_sum as f64 * interval_pos * interval_pos + b_sum as f64 * interval_pos + c_sum as f64) as f32
+                (a_sum as f64 * interval_pos * interval_pos + b_sum as f64 * interval_pos
+                    + c_sum as f64) as f32
             };
             output.push(result);
             o_pos += 1.0;
@@ -217,7 +218,7 @@ pub struct ResamplerFactory {
 impl ResamplerFactory {
     pub fn new(window_size: usize) -> ResamplerFactory {
         ResamplerFactory {
-            table: Arc::new(ResamplerTable::new(window_size))
+            table: Arc::new(ResamplerTable::new(window_size)),
         }
     }
 
@@ -230,35 +231,35 @@ pub struct StreamResampler {
     input_sample_rate: f32,
     output_sample_rate: f32,
     resampler_factory: ResamplerFactory,
-    resamplers: Vec<Resampler>,
+    resamplers: base::PerChannel<Resampler>,
     delay: TimeDelta,
     window_size: usize,
 }
 
 impl StreamResampler {
-    pub fn new(
-        output_sample_rate: f32,
-        window_size: usize,
-    ) -> StreamResampler {
+    pub fn new(output_sample_rate: f32, window_size: usize) -> StreamResampler {
         StreamResampler {
             input_sample_rate: 48000.0,
             output_sample_rate: output_sample_rate,
             resampler_factory: ResamplerFactory::new(window_size),
-            resamplers: Vec::new(),
+            resamplers: base::PerChannel::new(),
             delay: TimeDelta::zero(),
             window_size: window_size,
         }
     }
 
     fn update_rates(&mut self) {
-        for r in self.resamplers.as_mut_slice() {
-            r.set_frequencies(self.input_sample_rate as f64, self.output_sample_rate as f64);
+        for (_, r) in self.resamplers.iter() {
+            r.set_frequencies(
+                self.input_sample_rate as f64,
+                self.output_sample_rate as f64,
+            );
         }
     }
 
     pub fn set_output_sample_rate(&mut self, output_sample_rate: f32) {
         if self.output_sample_rate == output_sample_rate {
-            return
+            return;
         }
         println!("Output sample rate: {}", output_sample_rate);
         self.output_sample_rate = output_sample_rate;
@@ -273,27 +274,34 @@ impl StreamResampler {
                 base::samples_to_timedelta(self.input_sample_rate, self.window_size as i64);
         }
 
-        if self.resamplers.is_empty() {
-            self.resamplers.push(self.resampler_factory.create_resampler(
-                self.input_sample_rate as f64,
-                self.output_sample_rate as f64,
-            ));
+        // Ensure we have resampler for each channel.
+        for (c, _) in frame.iter_channels() {
+            if !self.resamplers.have_channel(c) {
+                let new_resampler = match self.resamplers.iter().next() {
+                    None => self.resampler_factory.create_resampler(
+                        self.input_sample_rate as f64,
+                        self.output_sample_rate as f64,
+                    ),
+                    Some((_c, r)) => Resampler::clone_state(r),
+                };
+                self.resamplers.set(c, new_resampler);
+            }
         }
 
-        while self.resamplers.len() < frame.channels() {
-            let new = Resampler::clone_state(&self.resamplers[0]);
-            self.resamplers.push(new);
+        let mut result = base::Frame::new(self.output_sample_rate, frame.timestamp - self.delay, 0);
+        for (c, pcm) in frame.iter_channels() {
+            let pcm = self.resamplers.get_mut(c).unwrap().resample(&pcm);
+            if pcm.len() == 0 {
+                continue;
+            }
+            if result.len() == 0 {
+                result = base::Frame::new(result.sample_rate, result.timestamp, pcm.len());
+            }
+            result.set_channel(c, pcm);
         }
 
-        for i in 0..frame.channels.len() {
-            frame.channels[i].pcm = self.resamplers[i].resample(&frame.channels[i].pcm);
-        }
-
-        frame.timestamp -= self.delay;
-        frame.sample_rate = self.output_sample_rate;
-
-        if frame.len() > 0 {
-            Some(frame)
+        if result.len() > 0 {
+            Some(result)
         } else {
             None
         }

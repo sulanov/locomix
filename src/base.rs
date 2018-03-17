@@ -2,11 +2,13 @@ extern crate alsa;
 extern crate byteorder;
 extern crate simd;
 
-use self::byteorder::{LittleEndian, ByteOrder};
+use self::byteorder::{ByteOrder, LittleEndian};
 use self::simd::f32x4;
 use std::error;
 use std::fmt;
 use std::io;
+use std::slice;
+use std::iter::Enumerate;
 use std::result;
 use std::collections::VecDeque;
 use time::{Time, TimeDelta};
@@ -17,7 +19,7 @@ pub enum SampleFormat {
     S24LE3,
     S24LE4,
     S32LE,
-    F32LE
+    F32LE,
 }
 
 impl SampleFormat {
@@ -44,10 +46,110 @@ impl SampleFormat {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Ord, PartialOrd)]
 pub enum ChannelPos {
-    FL,
-    FR,
-    Sub,
-    Other,
+    Other = -1,
+    FL = 0,
+    FR = 1,
+    FC = 2,
+    SL = 3,
+    SR = 4,
+    SC = 5,
+    Sub = 6,
+}
+
+const CHANNEL_MAX: usize = 7;
+const ALL_CHANNEL: [ChannelPos; CHANNEL_MAX] = [
+    ChannelPos::FL,
+    ChannelPos::FR,
+    ChannelPos::FC,
+    ChannelPos::SL,
+    ChannelPos::SR,
+    ChannelPos::SC,
+    ChannelPos::Sub,
+];
+
+#[derive(Clone)]
+pub struct PerChannel<T> {
+    values: [Option<T>; CHANNEL_MAX],
+}
+
+pub struct ChannelIter<'a, T: 'a> {
+    inner: Enumerate<slice::IterMut<'a, Option<T>>>,
+}
+
+impl<'a, T> ChannelIter<'a, T> {
+    fn new(per_channel: &'a mut PerChannel<T>) -> ChannelIter<T> {
+        ChannelIter {
+            inner: per_channel.values.iter_mut().enumerate(),
+        }
+    }
+}
+
+impl<T> PerChannel<T> {
+    pub fn new() -> PerChannel<T> {
+        PerChannel {
+            values: [None, None, None, None, None, None, None],
+        }
+    }
+
+    pub fn get(&self, c: ChannelPos) -> Option<&T> {
+        assert!(c != ChannelPos::Other);
+        self.values[c as usize].as_ref()
+    }
+
+    pub fn get_mut(&mut self, c: ChannelPos) -> Option<&mut T> {
+        assert!(c != ChannelPos::Other);
+        self.values[c as usize].as_mut()
+    }
+
+    pub fn take(&mut self, c: ChannelPos) -> Option<T> {
+        assert!(c != ChannelPos::Other);
+        self.values[c as usize].take()
+    }
+
+    pub fn get_or_insert<F: FnOnce() -> T>(&mut self, c: ChannelPos, default: F) -> &mut T {
+        assert!(c != ChannelPos::Other);
+        if !self.have_channel(c) {
+            self.values[c as usize] = Some(default());
+        }
+        self.values[c as usize].as_mut().unwrap()
+    }
+
+    pub fn have_channel(&self, c: ChannelPos) -> bool {
+        assert!(c != ChannelPos::Other);
+        self.values[c as usize].is_some()
+    }
+
+    pub fn set(&mut self, c: ChannelPos, v: T) {
+        assert!(c != ChannelPos::Other);
+        self.values[c as usize] = Some(v)
+    }
+
+    pub fn iter(&mut self) -> ChannelIter<T> {
+        ChannelIter::new(self)
+    }
+
+    pub fn clear(&mut self) {
+        self.values = [None, None, None, None, None, None, None];
+    }
+}
+
+impl<'a, T> Iterator for ChannelIter<'a, T> {
+    type Item = (ChannelPos, &'a mut T);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            match self.inner.next() {
+                None => return None,
+                Some((i, v)) => {
+                    if v.is_none() {
+                        continue;
+                    } else {
+                        return v.as_mut().map(|v| (ALL_CHANNEL[i], v));
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl fmt::Display for SampleFormat {
@@ -157,58 +259,116 @@ pub fn get_sample_timestamp(start: Time, sample_rate: f32, sample: i64) -> Time 
     start + samples_to_timedelta(sample_rate, sample)
 }
 
-pub struct ChannelData {
-    pub pos: ChannelPos,
-    pub pcm: Vec<f32>,
-}
-
-impl ChannelData {
-    pub fn new(pos: ChannelPos, samples: usize) -> ChannelData {
-        // Avoid denormal zero.
-        let zero = 1e-10f32;
-        ChannelData {
-            pos: pos,
-            pcm: vec![zero; samples],
-        }
-    }
-}
-
 pub struct Frame {
     pub sample_rate: f32,
     pub timestamp: Time,
-    pub channels: Vec<ChannelData>,
+    channels: PerChannel<Vec<f32>>,
+    len: usize,
+    num_channels: usize,
+}
+
+pub struct FrameChannelIter<'a> {
+    iter: ChannelIter<'a, Vec<f32>>,
+}
+
+impl<'a> Iterator for FrameChannelIter<'a> {
+    type Item = (ChannelPos, &'a mut [f32]);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.iter.next() {
+            None => None,
+            Some((c, v)) => Some((c, &mut v[..])),
+        }
+    }
 }
 
 impl Frame {
-    pub fn new(sample_rate: f32, timestamp: Time) -> Frame {
+    pub fn new(sample_rate: f32, timestamp: Time, len: usize) -> Frame {
         Frame {
             sample_rate: sample_rate,
             timestamp: timestamp,
-            channels: Vec::new(),
+            channels: PerChannel::new(),
+            len: len,
+            num_channels: 0,
         }
     }
 
-    pub fn new_stereo(sample_rate: f32, timestamp: Time, samples: usize) -> Frame {
-        Frame {
-            sample_rate: sample_rate,
-            timestamp: timestamp,
-            channels: vec![
-                ChannelData::new(ChannelPos::FL, samples),
-                ChannelData::new(ChannelPos::FR, samples),
-            ],
-        }
+    pub fn new_stereo(sample_rate: f32, timestamp: Time, len: usize) -> Frame {
+        let mut result = Frame::new(sample_rate, timestamp, len);
+        result.ensure_channel(ChannelPos::FL);
+        result.ensure_channel(ChannelPos::FR);
+        result
     }
 
-    pub fn len(&self) -> usize {
-        if self.channels.is_empty() {
-            0
+    pub fn get_channel(&self, pos: ChannelPos) -> Option<&[f32]> {
+        self.channels.get(pos).map(|c| &c[..])
+    }
+
+    pub fn get_channel_mut(&mut self, pos: ChannelPos) -> Option<&mut [f32]> {
+        self.channels.get_mut(pos).map(|c| &mut c[..])
+    }
+
+    pub fn ensure_channel(&mut self, pos: ChannelPos) -> &mut [f32] {
+        let mut added = false;
+        let len = self.len;
+        let result = &mut (self.channels.get_or_insert(pos, || {
+            added = true;
+            // Avoid denormal zero.
+            vec![1e-10f32; len]
+        })[..]);
+        if added {
+            self.num_channels += 1;
+        }
+        result
+    }
+
+    pub fn set_channel(&mut self, pos: ChannelPos, samples: Vec<f32>) {
+        assert!(samples.len() == self.len);
+        if !self.channels.have_channel(pos) {
+            self.num_channels += 1;
+        }
+        self.channels.set(pos, samples);
+    }
+
+    pub fn mix_channel(&mut self, pos: ChannelPos, samples: Vec<f32>) {
+        assert!(samples.len() == self.len);
+
+        if !self.channels.have_channel(pos) {
+            self.num_channels += 1;
+            self.channels.set(pos, samples);
         } else {
-            self.channels[0].pcm.len()
+            let data = self.channels.get_mut(pos).unwrap();
+            for i in 0..data.len() {
+                data[i] += samples[i];
+            }
+        }
+    }
+
+    pub fn take_channel(&mut self, pos: ChannelPos) -> Option<Vec<f32>> {
+        if self.channels.have_channel(pos) {
+            self.num_channels -= 1;
+        }
+        self.channels.take(pos)
+    }
+
+    pub fn take_channel_or_zero(&mut self, pos: ChannelPos) -> Vec<f32> {
+        self.channels
+            .take(pos)
+            .unwrap_or_else(|| vec![1e-10f32; self.len])
+    }
+
+    pub fn iter_channels(&mut self) -> FrameChannelIter {
+        FrameChannelIter {
+            iter: self.channels.iter(),
         }
     }
 
     pub fn channels(&self) -> usize {
-        self.channels.len()
+        self.num_channels
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
     }
 
     pub fn duration(&self) -> TimeDelta {
@@ -219,10 +379,10 @@ impl Frame {
         self.timestamp + self.duration()
     }
 
-    pub fn to_buffer(&self, format: SampleFormat) -> Vec<u8> {
-        let chmap: Vec<ChannelPos> = self.channels.iter().map(|c| c.pos).collect();
-        self.to_buffer_with_channel_map(format, chmap.as_slice())
-    }
+    // pub fn to_buffer(&self, format: SampleFormat) -> Vec<u8> {
+    //     let chmap: Vec<ChannelPos> = self.channels.iter().map(|c| c.pos).collect();
+    //     self.to_buffer_with_channel_map(format, chmap.as_slice())
+    // }
 
     pub fn to_buffer_with_channel_map(
         &self,
@@ -231,33 +391,32 @@ impl Frame {
     ) -> Vec<u8> {
         let bytes_per_frame = format.bytes_per_sample() * out_channels.len();
         let mut buf = vec![0; bytes_per_frame * self.len()];
-        for channel in &self.channels {
-            if channel.pos == ChannelPos::Other {
+        for c in 0..out_channels.len() {
+            if out_channels[c] == ChannelPos::Other {
                 continue;
             }
-
-            let out_channel = match out_channels.iter().position(|pos| channel.pos == *pos) {
-                Some(p) => p,
+            let data = match self.channels.get(out_channels[c]) {
+                Some(data) => data,
                 None => continue,
             };
 
-            let shift = out_channel * format.bytes_per_sample();
+            let shift = c * format.bytes_per_sample();
             match format {
                 SampleFormat::S16LE => for i in 0..self.len() {
-                    write_sample_s16le(channel.pcm[i], &mut buf[i * bytes_per_frame + shift..]);
+                    write_sample_s16le(data[i], &mut buf[i * bytes_per_frame + shift..]);
                 },
                 SampleFormat::S24LE3 => for i in 0..self.len() {
-                    write_sample_s24le3(channel.pcm[i], &mut buf[i * bytes_per_frame + shift..]);
+                    write_sample_s24le3(data[i], &mut buf[i * bytes_per_frame + shift..]);
                 },
                 SampleFormat::S24LE4 => for i in 0..self.len() {
-                    write_sample_s24le4(channel.pcm[i], &mut buf[i * bytes_per_frame + shift..]);
+                    write_sample_s24le4(data[i], &mut buf[i * bytes_per_frame + shift..]);
                 },
                 SampleFormat::S32LE => for i in 0..self.len() {
-                    write_sample_s32le(channel.pcm[i], &mut buf[i * bytes_per_frame + shift..]);
+                    write_sample_s32le(data[i], &mut buf[i * bytes_per_frame + shift..]);
                 },
                 SampleFormat::F32LE => for i in 0..self.len() {
-                    LittleEndian::write_f32(&mut buf[i * bytes_per_frame + shift..], channel.pcm[i]);
-                }
+                    LittleEndian::write_f32(&mut buf[i * bytes_per_frame + shift..], data[i]);
+                },
             }
         }
 
@@ -287,38 +446,41 @@ impl Frame {
         timestamp: Time,
     ) -> Frame {
         let samples = buffer.len() / format.bytes_per_sample() / channels.len();
-        let mut frame = Frame::new(sample_rate, timestamp);
+        let mut frame = Frame::new(sample_rate, timestamp, samples);
 
         let bytes_per_sample = format.bytes_per_sample() * channels.len();
 
         for c in 0..channels.len() {
-            let mut data = ChannelData::new(channels[c], samples);
+            let mut data = frame.ensure_channel(channels[c]);
             match format {
                 SampleFormat::S16LE => for i in 0..samples {
-                    data.pcm[i] = read_sample_s16le(&buffer[i * bytes_per_sample + c * 2..]);
+                    data[i] = read_sample_s16le(&buffer[i * bytes_per_sample + c * 2..]);
                 },
                 SampleFormat::S24LE3 => for i in 0..samples {
-                    data.pcm[i] = read_sample_s24le3(&buffer[i * bytes_per_sample + c * 3..]);
+                    data[i] = read_sample_s24le3(&buffer[i * bytes_per_sample + c * 3..]);
                 },
                 SampleFormat::S24LE4 => for i in 0..samples {
-                    data.pcm[i] = read_sample_s24le4(&buffer[i * bytes_per_sample + c * 4..]);
+                    data[i] = read_sample_s24le4(&buffer[i * bytes_per_sample + c * 4..]);
                 },
                 SampleFormat::S32LE => for i in 0..samples {
-                    data.pcm[i] = read_sample_s32le(&buffer[i * bytes_per_sample + c * 4..]);
+                    data[i] = read_sample_s32le(&buffer[i * bytes_per_sample + c * 4..]);
                 },
                 SampleFormat::F32LE => for i in 0..samples {
-                    data.pcm[i] = LittleEndian::read_f32(&buffer[i * bytes_per_sample + c * 4..]);
+                    data[i] = LittleEndian::read_f32(&buffer[i * bytes_per_sample + c * 4..]);
                 },
             }
-            frame.channels.push(data)
         }
 
         frame
     }
 
+    pub fn have_channel(&self, pos: ChannelPos) -> bool {
+        self.channels.have_channel(pos)
+    }
+
     pub fn is_stereo(&self) -> bool {
-        self.channels.len() == 2 && self.channels[0].pos == ChannelPos::FL
-            && self.channels[1].pos == ChannelPos::FR
+        self.channels() == 2 && self.have_channel(ChannelPos::FL)
+            && self.have_channel(ChannelPos::FR)
     }
 }
 
@@ -372,6 +534,7 @@ pub struct DeviceSpec {
     pub exact_sample_rate: bool,
     pub channels: Vec<ChannelPos>,
     pub delay: TimeDelta,
+    pub enable_a52: bool,
 }
 
 const TIME_PRECISION_US: i64 = 1000;
@@ -392,7 +555,8 @@ pub struct DetectedRate {
 impl RateDetector {
     pub fn new(target_precision: f32) -> RateDetector {
         return RateDetector {
-            window: TimeDelta::microseconds(TIME_PRECISION_US) * (2.0 * MAX_SAMPLE_RATE / target_precision),
+            window: TimeDelta::microseconds(TIME_PRECISION_US)
+                * (2.0 * MAX_SAMPLE_RATE / target_precision),
             history: VecDeque::new(),
             sum: 0,
         };
@@ -401,15 +565,16 @@ impl RateDetector {
     pub fn update(&mut self, samples: usize, t_end: Time) -> DetectedRate {
         self.sum += samples;
         self.history.push_back((t_end, samples));
-        while self.history.len() > 0
-            && t_end - self.history[0].0 >= self.window
-        {
+        while self.history.len() > 0 && t_end - self.history[0].0 >= self.window {
             self.sum -= self.history.pop_front().unwrap().1;
         }
 
         let period = t_end - self.history[0].0;
         if period <= TimeDelta::zero() {
-            return DetectedRate { rate: MAX_SAMPLE_RATE / 2.0, error: MAX_SAMPLE_RATE / 2.0 };
+            return DetectedRate {
+                rate: MAX_SAMPLE_RATE / 2.0,
+                error: MAX_SAMPLE_RATE / 2.0,
+            };
         }
 
         let samples = (self.sum - self.history[0].1) as f64;
@@ -425,7 +590,6 @@ impl RateDetector {
         self.sum = 0;
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -444,7 +608,7 @@ mod tests {
             buf.push(((r & 0xff00) >> 8) as u8);
         }
 
-        let frame = Frame::from_buffer_stereo(SampleFormat::S16LE, 44100, &buf[..], Time::now());
+        let frame = Frame::from_buffer_stereo(SampleFormat::S16LE, 44100.0, &buf[..], Time::now());
         let buf2 = frame.to_buffer(SampleFormat::S16LE);
 
         assert_eq!(buf.len(), buf2.len());
@@ -455,7 +619,7 @@ mod tests {
 
     #[test]
     fn clamping() {
-        let mut frame = Frame::new_stereo(100, Time::now(), 1);
+        let mut frame = Frame::new_stereo(100.0, Time::now(), 1);
         frame.channels[0].pcm[0] = 1.5;
         frame.channels[1].pcm[0] = -1.5;
 

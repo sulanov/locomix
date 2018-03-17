@@ -6,7 +6,8 @@ use std::io::Read;
 use std::io::Write;
 use std::process::{Child, Command, Stdio};
 use std;
-use time::TimeDelta;
+use std::mem;
+use time::{Time, TimeDelta};
 use filters;
 
 use self::tempfile::NamedTempFile;
@@ -19,7 +20,7 @@ impl BruteFirChannel {
     pub fn new(
         file: &str,
         sample_rate: usize,
-        part_length: usize,
+        part_size: usize,
         parts: usize,
     ) -> Result<BruteFirChannel> {
         let mut config = NamedTempFile::new()?;
@@ -51,7 +52,7 @@ filter 0 {{
   to_outputs: 0;
   coeff: 0;
 }};",
-            sample_rate, part_length, parts, file
+            sample_rate, part_size, parts, file
         ))?;
 
         let process = Command::new("brutefir")
@@ -65,7 +66,7 @@ filter 0 {{
         // Pass an empty block through brutefir to make sure it's finished
         // starting and was able to read the config file. |config| may be
         // dropped after that, which will also delete the temp file.
-        let mut buf = vec![0.0; part_length];
+        let mut buf = vec![0.0; part_size];
         result.write(&buf[..])?;
         result.read(&mut buf[..])?;
 
@@ -99,18 +100,18 @@ filter 0 {{
 }
 
 pub struct BruteFir {
-    files: Vec<String>,
-    channels: Vec<BruteFirChannel>,
-    part_length: usize,
+    channels: PerChannel<BruteFirChannel>,
+    part_size: usize,
     sample_rate: usize,
     parts: usize,
     samples_buffered: usize,
+    buf_frame: Frame,
     failed: bool,
 }
 
 impl BruteFir {
     pub fn new(
-        files: Vec<String>,
+        mut files: PerChannel<String>,
         sample_rate: usize,
         period_duration: TimeDelta,
         filter_length: usize,
@@ -119,74 +120,113 @@ impl BruteFir {
         // Calculate the largest partition length that's shorter than period_duration and shortest
         // filter length not shorter than filter_length.
         let period_size = (period_duration * (sample_rate as i64)) / TimeDelta::seconds(1);
-        let part_length = 1 << (32 - (period_size as u32).leading_zeros() - 1);
+        let part_size = 1 << (32 - (period_size as u32).leading_zeros() - 1);
         let filter_length = 1 << (32 - (filter_length as u32 - 1).leading_zeros());
-
+        let parts = filter_length / part_size;
         println!(
-            "INFO: Initializing brutefir with part_length = {}, total_length = {}",
-            part_length, filter_length
+            "INFO: Initializing brutefir with part_size = {}, total_length = {}",
+            part_size, filter_length
         );
+
+        let mut channels = PerChannel::new();
+        for (c, f) in files.iter() {
+            channels.set(c, BruteFirChannel::new(f, sample_rate, part_size, parts)?);
+        }
+
         Ok(BruteFir {
-            files: files,
-            channels: vec![],
-            part_length: part_length,
+            channels: channels,
+            part_size: part_size,
             sample_rate: sample_rate,
-            parts: filter_length / part_length,
+            parts: parts,
             samples_buffered: 0,
+            buf_frame: Frame::new(sample_rate as f32, Time::zero(), part_size),
             failed: false,
         })
     }
 
-    fn apply_internal(&mut self, input: &Frame) -> Result<Frame> {
-        if self.channels.is_empty() {
-            self.channels = Vec::with_capacity(self.files.len());
-            for c in 0..self.files.len() {
-                self.channels.push(BruteFirChannel::new(
-                    &self.files[c],
-                    self.sample_rate,
-                    self.part_length,
-                    self.parts,
-                )?);
+    fn process_frame(
+        &mut self,
+        input: &mut Frame,
+        input_pos: usize,
+        output: &mut Frame,
+        output_pos: usize,
+    ) -> Result<()> {
+        for (c, f) in self.channels.iter() {
+            let pcm = input.ensure_channel(c);
+            f.write(&pcm[input_pos..(input_pos + self.part_size)])?
+        }
+
+        for (c, f) in self.channels.iter() {
+            let pcm = output.ensure_channel(c);
+            f.read(&mut pcm[output_pos..(output_pos + self.part_size)])?;
+        }
+
+        // Copy unfiltered channels.
+        for (c, inp_pcm) in input.iter_channels() {
+            if !self.channels.have_channel(c) {
+                output.ensure_channel(c)[output_pos..(output_pos + self.part_size)]
+                    .copy_from_slice(&mut inp_pcm[input_pos..(input_pos + self.part_size)]);
             }
         }
 
-        assert!(input.channels.len() == self.channels.len());
+        Ok(())
+    }
 
+    fn apply_internal(&mut self, mut input: &mut Frame) -> Result<Frame> {
         let total_samples = input.len() + self.samples_buffered;
-        let result_samples = (total_samples / self.part_length) * self.part_length;
-        let mut result = Frame::new_stereo(
+        let result_samples = (total_samples / self.part_size) * self.part_size;
+        let mut result = Frame::new(
             self.sample_rate as f32,
-            input.timestamp - samples_to_timedelta(self.sample_rate as f32, self.samples_buffered as i64),
+            input.timestamp
+                - samples_to_timedelta(self.sample_rate as f32, self.samples_buffered as i64),
             result_samples,
         );
 
         let mut input_pos = 0;
         let mut output_pos = 0;
-        while input_pos < input.len() {
-            let samples_to_write = cmp::min(
-                input.len() - input_pos,
-                self.part_length - self.samples_buffered,
-            );
 
-            for c in 0..self.channels.len() {
-                self.channels[c]
-                    .write(&input.channels[c].pcm[input_pos..(input_pos + samples_to_write)])?;
+        // Pass input data through buf_frame if we have any leftovers from the previous frames
+        // or if we don't have enough data for the next frame
+        if self.samples_buffered > 0 || input.len() < self.part_size {
+            let append_samples = cmp::min(self.part_size - self.samples_buffered, input.len());
+            for (c, inp_pcm) in input.iter_channels() {
+                self.buf_frame.ensure_channel(c)
+                    [self.samples_buffered..(self.samples_buffered + append_samples)]
+                    .copy_from_slice(&mut inp_pcm[0..append_samples]);
             }
 
-            self.samples_buffered += samples_to_write;
-            input_pos += samples_to_write;
+            input_pos += append_samples;
+            self.samples_buffered += append_samples;
 
-            assert!(self.samples_buffered <= self.part_length);
-            if self.samples_buffered == self.part_length {
-                for c in 0..self.channels.len() {
-                    self.channels[c].read(
-                        &mut result.channels[c].pcm[output_pos..(output_pos + self.part_length)],
-                    )?;
-                }
-                self.samples_buffered -= self.part_length;
-                output_pos += self.part_length;
+            if self.samples_buffered == self.part_size {
+                let mut buf_frame =
+                    Frame::new(self.sample_rate as f32, Time::zero(), self.part_size);
+                mem::swap(&mut self.buf_frame, &mut buf_frame);
+                self.process_frame(&mut buf_frame, 0, &mut result, output_pos)?;
+                output_pos += self.part_size;
+                self.samples_buffered = 0;
             }
         }
+
+        // Process whole parts.
+        while input_pos + self.part_size <= input.len() {
+            assert!(self.samples_buffered == 0);
+            self.process_frame(&mut input, input_pos, &mut result, output_pos)?;
+            input_pos += self.part_size;
+            output_pos += self.part_size;
+        }
+
+        // Move rest of the frame to buf_frame.
+        if input_pos < input.len() {
+            assert!(self.samples_buffered == 0);
+            let append_samples = input.len() - input_pos;
+            for (c, inp_pcm) in input.iter_channels() {
+                self.buf_frame.ensure_channel(c)[0..append_samples]
+                    .copy_from_slice(&mut inp_pcm[input_pos..(input_pos + append_samples)]);
+            }
+            self.samples_buffered = append_samples
+        }
+
         assert!(output_pos == result.len());
 
         Ok(result)
@@ -194,12 +234,12 @@ impl BruteFir {
 
     fn reset_internal(&mut self) -> Result<()> {
         for _ in 0..self.parts {
-            let mut buf = vec![0.0; self.part_length];
-            for c in &mut self.channels {
-                c.write(&(buf)[..])?;
+            let mut buf = vec![0.0; self.part_size];
+            for (_c, f) in self.channels.iter() {
+                f.write(&(buf)[..])?;
             }
-            for c in &mut self.channels {
-                c.read(&mut (buf)[..])?;
+            for (_c, f) in self.channels.iter() {
+                f.read(&mut (buf)[..])?;
             }
         }
 
@@ -208,11 +248,11 @@ impl BruteFir {
 }
 
 impl filters::StreamFilter for BruteFir {
-    fn apply(&mut self, frame: Frame) -> Frame {
+    fn apply(&mut self, mut frame: Frame) -> Frame {
         if self.failed {
             return frame;
         }
-        match self.apply_internal(&frame) {
+        match self.apply_internal(&mut frame) {
             Ok(r) => r,
             Err(e) => {
                 println!("ERROR: BruteFir failed: {:?}", e);

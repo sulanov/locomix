@@ -13,20 +13,22 @@ use std::env;
 use std::fs;
 
 fn get_filter_response<F: StreamFilter>(f: &mut F, sample_rate: f32, freq: FCoef) -> FCoef {
-    let mut test_signal = Frame::new(sample_rate, time::Time::now());
-    test_signal
-        .channels
-        .push(ChannelData::new(ChannelPos::FL, 2 * sample_rate as usize));
-    for i in 0..test_signal.len() {
-        test_signal.channels[0].pcm[i] =
-            (i as FCoef / sample_rate as f32 * freq * 2.0 * PI).sin() as f32;
+    let mut test_signal = Frame::new(sample_rate, time::Time::now(), 2 * sample_rate as usize);
+    {
+        let pcm = test_signal.ensure_channel(ChannelPos::FL);
+        for i in 0..pcm.len() {
+            pcm[i] = (i as FCoef / sample_rate as f32 * freq * 2.0 * PI).sin() as f32;
+        }
     }
     f.reset();
     let response = f.apply(test_signal);
 
     let mut p_sum = 0.0;
-    for i in (response.len() / 2)..response.len() {
-        p_sum += (response.channels[0].pcm[i] as FCoef).powi(2);
+    {
+        let pcm = response.get_channel(ChannelPos::FL).unwrap();
+        for i in (pcm.len() / 2)..pcm.len() {
+            p_sum += (pcm[i] as FCoef).powi(2);
+        }
     }
 
     ((p_sum / ((response.len() / 2) as FCoef)) * 2.0).log(10.0) * 10.0
@@ -44,22 +46,28 @@ fn draw_filter_graph<F: StreamFilter>(sample_rate: f32, mut f: F) {
 fn get_crossfeed_response(sample_rate: FCoef, freq: FCoef) -> FCoef {
     let mut f = CrossfeedFilter::new(sample_rate);
     f.set_params(0.3, 0.3);
-    let mut test_signal = Frame::new_stereo(
-        sample_rate,
-        time::Time::now(),
-        (sample_rate as usize) * 2,
-    );
-    for i in 0..test_signal.len() {
-        test_signal.channels[0].pcm[i] = (i as FCoef / sample_rate * freq * 2.0 * PI).sin() as f32;
-        test_signal.channels[1].pcm[i] = (i as FCoef / sample_rate * freq * 2.0 * PI).sin() as f32;
+    let mut test_signal = Frame::new(sample_rate, time::Time::now(), (sample_rate as usize) * 2);
+    {
+        let pcm = test_signal.ensure_channel(ChannelPos::FL);
+        for i in 0..pcm.len() {
+            pcm[i] = (i as FCoef / sample_rate * freq * 2.0 * PI).sin() as f32;
+        }
+    }
+    {
+        let pcm = test_signal.ensure_channel(ChannelPos::FR);
+        for i in 0..pcm.len() {
+            pcm[i] = (i as FCoef / sample_rate * freq * 2.0 * PI).sin() as f32;
+        }
     }
     let response = f.apply(test_signal);
 
     let mut p_sum = 0.0;
-    for i in 0..response.len() {
-        p_sum += (response.channels[0].pcm[i] as FCoef).powi(2);
+    {
+        let pcm = response.get_channel(ChannelPos::FL).unwrap();
+        for i in 0..response.len() {
+            p_sum += (pcm[i] as FCoef).powi(2);
+        }
     }
-
     ((p_sum / (response.len() as FCoef)) * 2.0).log(10.0) * 10.0
 }
 
@@ -72,7 +80,7 @@ fn draw_crossfeed_graph(sample_rate: f32) {
     }
 }
 
-fn load_fir_params(filename: &str) -> Result<Vec<f32>> {
+fn load_fir_params(filename: &str, size: usize) -> Result<FirFilterParams> {
     let mut file = try!(fs::File::open(filename));
     let mut result = Vec::<f32>::new();
     loop {
@@ -81,7 +89,7 @@ fn load_fir_params(filename: &str) -> Result<Vec<f32>> {
             Err(_) => break,
         }
     }
-    Ok(result)
+    Ok(FirFilterParams::new(result, size))
 }
 
 fn print_usage(program: &str, opts: Options) {
@@ -136,13 +144,13 @@ fn run() -> Result<()> {
     };
 
     for filename in matches.opt_strs("F") {
-        let params = try!(load_fir_params(&filename));
-
         println!("Brute FIR filter {}", filename);
+        let mut f = PerChannel::new();
+        f.set(ChannelPos::FL, filename.clone());
         draw_filter_graph(
             sample_rate,
             BruteFir::new(
-                vec![filename.clone()],
+                f,
                 sample_rate as usize,
                 time::TimeDelta::milliseconds(5),
                 filter_length,
@@ -150,10 +158,12 @@ fn run() -> Result<()> {
         );
 
         println!("FIR filter {}", filename);
-        draw_filter_graph(
-            sample_rate,
-            MultichannelFirFilter::new(vec![reduce_fir(params, filter_length)]),
+        let mut filters = PerChannel::new();
+        filters.set(
+            ChannelPos::FL,
+            try!(load_fir_params(&filename, filter_length)),
         );
+        draw_filter_graph(sample_rate, MultichannelFirFilter::new(filters));
     }
 
     Ok(())

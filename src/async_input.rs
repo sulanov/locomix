@@ -28,7 +28,9 @@ impl AsyncInput {
                 }
                 Ok(None) => (),
                 Ok(Some(frame)) => {
-                    sender.send(PipeMessage::Frame(frame, input.min_delay())).unwrap();
+                    sender
+                        .send(PipeMessage::Frame(frame, input.min_delay()))
+                        .unwrap();
                 }
             }
         });
@@ -44,7 +46,7 @@ impl AsyncInput {
             Ok(PipeMessage::Frame(frame, min_delay)) => {
                 self.min_delay = min_delay;
                 Ok(Some(frame))
-            },
+            }
             Ok(PipeMessage::Error(e)) => Err(e),
             Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
             Err(mpsc::RecvTimeoutError::Disconnected) => Err(base::Error::new("Channel closed")),

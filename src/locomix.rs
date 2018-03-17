@@ -22,6 +22,7 @@ use locomix::state_script;
 use locomix::time::TimeDelta;
 use locomix::ui;
 use locomix::web_ui;
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::io;
@@ -73,6 +74,7 @@ struct InputConfig {
     channel_map: Option<String>,
     default_gain: Option<f32>,
     dynamic_resampling: Option<bool>,
+    enable_a52: Option<bool>,
 
     // Enables sample rate probing. Useful for sound cards that don't
     // detect input rate, e.g. Creative SB X-Fi HD.
@@ -97,8 +99,7 @@ struct OutputConfig {
     dynamic_resampling: Option<bool>,
     default_gain: Option<f32>,
     subwoofer_crossover_frequency: Option<usize>,
-    fir_filters: Option<Vec<String>>,
-    fir_filters_with_sub: Option<Vec<String>>,
+    fir_filters: Option<BTreeMap<String, String>>,
     fir_length: Option<usize>,
     use_brutefir: Option<bool>,
 }
@@ -124,26 +125,35 @@ struct Config {
     control_device: Option<Vec<ControlDeviceConfig>>,
 }
 
+fn parse_channel_id(id: String) -> Result<base::ChannelPos, RunError> {
+    match id.to_uppercase().as_str() {
+        "L" | "FL" | "LEFT" => Ok(base::ChannelPos::FL),
+        "R" | "FR" | "RIGHT" => Ok(base::ChannelPos::FR),
+        "C" | "CENTER" | "CENTRE" => Ok(base::ChannelPos::FC),
+        "SL" | "SURROUND_LEFT" => Ok(base::ChannelPos::SL),
+        "SR" | "SURROUND_RIGHT" => Ok(base::ChannelPos::SR),
+        "S" | "SURROUND" | "SURROUND_CENTER" | "SURROUND_CENTRE" => Ok(base::ChannelPos::SC),
+        "B" | "SUB" | "LFE" => Ok(base::ChannelPos::Sub),
+        "_" => Ok(base::ChannelPos::Other),
+        _ => Err(RunError::new(
+            format!("Invalid channel id: {}", id).as_str(),
+        )),
+    }
+}
+
 fn parse_channel_map(map_str: Option<String>) -> Result<Vec<base::ChannelPos>, RunError> {
-    let mut unrecognized = 0;
     let unwrapped = map_str.unwrap_or("L R".to_string());
-    let result: Vec<base::ChannelPos> = unwrapped
+    let names: Vec<String> = unwrapped
         .as_str()
         .split_whitespace()
-        .map(|c| match c.to_uppercase().as_str() {
-            "L" | "FL" | "LEFT" => base::ChannelPos::FL,
-            "R" | "FR" | "RIGHT" => base::ChannelPos::FR,
-            "S" | "SUB" | "LFE" => base::ChannelPos::Sub,
-            "_" => base::ChannelPos::Other,
-            _ => {
-                unrecognized += 1;
-                println!("WARNING: Unrecognized channel name {}", c);
-                base::ChannelPos::Other
-            }
-        })
+        .map(|s| s.to_string())
         .collect();
+    let mut result: Vec<base::ChannelPos> = vec![];
+    for n in names {
+        result.push(parse_channel_id(n)?);
+    }
 
-    if result.len() < 2 || unrecognized == result.len() {
+    if result.len() < 2 {
         return Err(RunError::new(
             format!("Invalid channel map: {}", unwrapped).as_str(),
         ));
@@ -152,7 +162,7 @@ fn parse_channel_map(map_str: Option<String>) -> Result<Vec<base::ChannelPos>, R
     Ok(result)
 }
 
-fn load_fir_params(filename: &str) -> Result<Vec<f32>, RunError> {
+fn load_fir_params(filename: &str, size: usize) -> Result<filters::FirFilterParams, RunError> {
     let mut file = try!(fs::File::open(filename));
     let mut result = Vec::<f32>::new();
     loop {
@@ -161,40 +171,37 @@ fn load_fir_params(filename: &str) -> Result<Vec<f32>, RunError> {
             Err(_) => break,
         }
     }
-    Ok(result)
+    Ok(filters::FirFilterParams::new(result, size))
 }
 
 fn load_fir_set(
-    files: Option<Vec<String>>,
+    files: Option<BTreeMap<String, String>>,
     length: usize,
     sample_rate: usize,
     period_duration: TimeDelta,
     use_brutefir: bool,
 ) -> Result<Option<Box<filters::StreamFilter>>, RunError> {
-    if files.is_none() {
-        return Ok(None);
-    }
-
-    let files = files.unwrap();
-    if files.len() != 2 {
-        return Err(RunError::new("fir_filters must contain 2 elements."));
+    let mut filters = base::PerChannel::new();
+    match files {
+        None => return Ok(None),
+        Some(map) => for (c, f) in map {
+            filters.set(parse_channel_id(c)?, f)
+        },
     }
 
     if use_brutefir {
         Ok(Some(Box::new(brutefir::BruteFir::new(
-            files,
+            filters,
             sample_rate,
             period_duration,
             length,
         )?)))
     } else {
-        let mut filters = Vec::new();
-        for f in files {
-            filters.push(load_fir_params(&f)?);
+        let mut loaded = base::PerChannel::new();
+        for (c, f) in filters.iter() {
+            loaded.set(c, load_fir_params(&f, length)?);
         }
-        Ok(Some(Box::new(filters::MultichannelFirFilter::new(
-            filters::reduce_fir_set(filters, length),
-        ))))
+        Ok(Some(Box::new(filters::MultichannelFirFilter::new(loaded))))
     }
 }
 
@@ -266,6 +273,7 @@ fn run() -> Result<(), RunError> {
             channels: parse_channel_map(input.channel_map)?,
             delay: TimeDelta::zero(),
             exact_sample_rate: input.dynamic_resampling.unwrap_or(false),
+            enable_a52: input.enable_a52.unwrap_or(false),
         };
         let device: Box<input::Input> = match type_.as_str() {
             "pipe" => pipe_input::PipeInput::open(spec, period_duration),
@@ -310,6 +318,7 @@ fn run() -> Result<(), RunError> {
                     channels: try!(parse_channel_map(channel_map)),
                     delay: TimeDelta::zero(),
                     exact_sample_rate: dynamic_resampling,
+                    enable_a52: false,
                 },
             ],
             (None, None, Some(devices)) => {
@@ -322,6 +331,7 @@ fn run() -> Result<(), RunError> {
                         channels: try!(parse_channel_map(d.channel_map)),
                         delay: TimeDelta::milliseconds_f(d.delay.unwrap_or(0.0)),
                         exact_sample_rate: dynamic_resampling,
+                        enable_a52: false,
                     });
                 }
                 result
@@ -385,13 +395,6 @@ fn run() -> Result<(), RunError> {
             period_duration,
             use_brutefir,
         )?;
-        let fir_filters_with_sub = load_fir_set(
-            output.fir_filters_with_sub,
-            fir_length,
-            sample_rate,
-            period_duration,
-            use_brutefir,
-        )?;
 
         let default_gain = output
             .default_gain
@@ -406,7 +409,6 @@ fn run() -> Result<(), RunError> {
         let out = output::AsyncOutput::new(mixer::FilteredOutput::new(
             output::AsyncOutput::new(out),
             fir_filters,
-            fir_filters_with_sub,
             sub_config,
             &shared_state,
         ));

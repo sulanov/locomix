@@ -61,17 +61,10 @@ impl InputMixer {
                 mixed_frame.len() - pos,
             );
 
-            for channel in &mut mixed_frame.channels {
-                let src = match self.current_frame
-                    .channels
-                    .iter()
-                    .find(|c| c.pos == channel.pos)
-                {
-                    Some(c) => c,
-                    None => continue,
-                };
+            for (c, src_pcm) in self.current_frame.iter_channels() {
+                let dst_pcm = mixed_frame.ensure_channel(c);
                 for i in 0..samples {
-                    channel.pcm[pos + i] += multiplier * src.pcm[self.current_frame_pos + i];
+                    dst_pcm[pos + i] += multiplier * src_pcm[self.current_frame_pos + i];
                 }
             }
 
@@ -86,7 +79,6 @@ impl InputMixer {
 pub struct FilteredOutput {
     output: Box<output::Output>,
     fir_filter: Option<Box<StreamFilter>>,
-    fir_filter_with_sub: Option<Box<StreamFilter>>,
     subwoofer_config: Option<ui::SubwooferConfig>,
 
     drc_enabled: bool,
@@ -99,7 +91,6 @@ impl FilteredOutput {
     pub fn new(
         output: Box<output::Output>,
         fir_filter: Option<Box<StreamFilter>>,
-        fir_filter_with_sub: Option<Box<StreamFilter>>,
         subwoofer_config: Option<ui::SubwooferConfig>,
         shared_state: &ui::SharedState,
     ) -> Box<output::Output> {
@@ -112,7 +103,6 @@ impl FilteredOutput {
         let mut result = Box::new(FilteredOutput {
             output: output,
             fir_filter: fir_filter,
-            fir_filter_with_sub: fir_filter_with_sub,
             subwoofer_config: subwoofer_config,
 
             drc_enabled: enable_drc,
@@ -158,18 +148,10 @@ impl output::Output for FilteredOutput {
         if need_reset {
             self.update_crossover();
             self.fir_filter.as_mut().map(|f| f.reset());
-            self.fir_filter_with_sub.as_mut().map(|f| f.reset());
         }
 
-        let frame = match (
-            self.drc_enabled,
-            self.crossover.is_some(),
-            self.fir_filter.as_mut(),
-            self.fir_filter_with_sub.as_mut(),
-        ) {
-            (true, false, Some(f), _) => f.apply(frame),
-            (true, true, _, Some(f)) => f.apply(frame),
-            (true, true, Some(f), None) => f.apply(frame),
+        let frame = match (self.drc_enabled, self.fir_filter.as_mut()) {
+            (true, Some(f)) => f.apply(frame),
             _ => frame,
         };
 
@@ -225,8 +207,10 @@ pub fn run_mixer_loop(
     let mut state = ui::StreamState::Active;
     let mut selected_output = 0;
 
-    let mut loudness_filter =
-        MultichannelFilter::<LoudnessFilter>::new(SimpleFilterParams::new(sample_rate as f32, 10.0));
+    let mut loudness_filter = MultichannelFilter::<LoudnessFilter>::new(SimpleFilterParams::new(
+        sample_rate as f32,
+        10.0,
+    ));
     let mut crossfeed_filter = CrossfeedFilter::new(sample_rate as f32);
 
     let mut exclusive_mux_mode = true;
@@ -242,7 +226,8 @@ pub fn run_mixer_loop(
             .fold(TimeDelta::zero(), |max, i| cmp::max(max, i.min_delay()));
         let mix_delay = min_input_delay + period_duration * 2;
 
-        let frame_timestamp = get_sample_timestamp(stream_start_time, sample_rate as f32, stream_pos);
+        let frame_timestamp =
+            get_sample_timestamp(stream_start_time, sample_rate as f32, stream_pos);
         let mut frame = Frame::new_stereo(sample_rate as f32, frame_timestamp, period_size);
         stream_pos += frame.len() as i64;
 
@@ -309,7 +294,8 @@ pub fn run_mixer_loop(
                 }
                 ui::UiMessage::SetMasterVolume { volume, loudness } => {
                     output_gain = volume;
-                    loudness_filter.set_params(SimpleFilterParams::new(sample_rate as f32, loudness.db));
+                    loudness_filter
+                        .set_params(SimpleFilterParams::new(sample_rate as f32, loudness.db));
                 }
                 ui::UiMessage::SetInputGain { device, gain } => {
                     mixers[device as usize].set_gain(gain);

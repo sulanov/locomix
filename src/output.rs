@@ -2,7 +2,6 @@ extern crate alsa;
 extern crate nix;
 
 use base::*;
-use std::collections::BTreeMap;
 use std::cmp;
 use std::ffi::CString;
 use std::sync::mpsc;
@@ -86,8 +85,8 @@ impl AlsaWriteLoop {
                     // Drop this frame - it's too old
                     continue;
                 } else {
-                    self.buffer =
-                        frame.to_buffer_with_channel_map(self.format, self.spec.channels.as_slice());
+                    self.buffer = frame
+                        .to_buffer_with_channel_map(self.format, self.spec.channels.as_slice());
                     self.buffer.drain(..samples_to_skip * self.bytes_per_frame);
                 }
             } else {
@@ -104,12 +103,14 @@ impl AlsaWriteLoop {
         let now = Time::now();
         let (avail, mut delay) = try!(self.pcm.avail_delay());
 
-
         if self.buffer_pos >= self.buffer.len() {
             let stream_time =
                 now + samples_to_timedelta(self.sample_rate as f32, delay as i64) + self.spec.delay;
-            let deadline =
-                now + samples_to_timedelta(self.sample_rate as f32, self.period_size as i64 - avail as i64);
+            let deadline = now
+                + samples_to_timedelta(
+                    self.sample_rate as f32,
+                    self.period_size as i64 - avail as i64,
+                );
             if self.next_buffer(stream_time, deadline) == LoopState::Stop {
                 return Ok(LoopState::Stop);
             }
@@ -122,12 +123,17 @@ impl AlsaWriteLoop {
         if self.spec.exact_sample_rate {
             let current_rate = self.rate_detector.update(
                 frames_written,
-                now + samples_to_timedelta(self.sample_rate as f32, delay as i64 + frames_written as i64));
+                now
+                    + samples_to_timedelta(
+                        self.sample_rate as f32,
+                        delay as i64 + frames_written as i64,
+                    ),
+            );
             if now - self.last_rate_update > TimeDelta::milliseconds(RATE_UPDATE_PERIOD_MS) {
                 self.last_rate_update = now;
-                self.feedback_sender.send(AlsaWriteLoopFeedback::CurrentRate(current_rate.rate))
+                self.feedback_sender
+                    .send(AlsaWriteLoopFeedback::CurrentRate(current_rate.rate))
                     .expect("Failed to send rate update");
-
             }
         }
 
@@ -404,7 +410,7 @@ impl Output for ResilientAlsaOutput {
     fn min_delay(&self) -> TimeDelta {
         self.min_delay
     }
- }
+}
 
 pub struct ResamplingOutput {
     output: Box<Output>,
@@ -413,10 +419,7 @@ pub struct ResamplingOutput {
 
 impl ResamplingOutput {
     pub fn new(output: Box<Output>, window_size: usize) -> Box<Output> {
-        let resampler = resampler::StreamResampler::new(
-            output.sample_rate() as f32,
-            window_size,
-        );
+        let resampler = resampler::StreamResampler::new(output.sample_rate() as f32, window_size);
         Box::new(ResamplingOutput {
             output: output,
             resampler: resampler,
@@ -430,7 +433,8 @@ impl Output for ResamplingOutput {
             return self.output.write(frame);
         }
 
-        self.resampler.set_output_sample_rate(self.output.sample_rate());
+        self.resampler
+            .set_output_sample_rate(self.output.sample_rate());
 
         match self.resampler.resample(frame) {
             None => Ok(()),
@@ -562,8 +566,8 @@ impl Output for AsyncOutput {
 }
 
 pub struct CompositeOutput {
-    outputs: Vec<Box<Output>>,
-    channel_map: BTreeMap<ChannelPos, usize>,
+    outputs: Vec<(Vec<ChannelPos>, Box<Output>)>,
+    num_outs: PerChannel<usize>,
 }
 
 impl CompositeOutput {
@@ -574,19 +578,22 @@ impl CompositeOutput {
     ) -> Result<Box<Output>> {
         let mut result = CompositeOutput {
             outputs: vec![],
-            channel_map: BTreeMap::new(),
+            num_outs: PerChannel::new(),
         };
 
         for d in devices {
-            let index = result.outputs.len();
-            for &c in d.channels.iter() {
-                result.channel_map.entry(c).or_insert(index);
+            let mut channels: Vec<ChannelPos> = vec![];
+            for c in d.channels.iter() {
+                if !channels.contains(&c) {
+                    channels.push(*c);
+                    *result.num_outs.get_or_insert(*c, || 0) += 1;
+                }
             }
 
             let out = ResilientAlsaOutput::new(d, period_duration);
             let out = ResamplingOutput::new(out, resampler_window);
 
-            result.outputs.push(out);
+            result.outputs.push((channels, out));
         }
 
         Ok(Box::new(result))
@@ -596,26 +603,33 @@ impl CompositeOutput {
 impl Output for CompositeOutput {
     fn write(&mut self, mut frame: Frame) -> Result<()> {
         if self.outputs.len() == 1 {
-            self.outputs[0].write(frame)
+            self.outputs[0].1.write(frame)
         } else {
-            let mut frames: Vec<Frame> = (0..self.outputs.len())
-                .map(|_| Frame::new(frame.sample_rate, frame.timestamp))
-                .collect();
-            for c in frame.channels.drain(..) {
-                self.channel_map
-                    .get(&c.pos)
-                    .map(|&i| frames[i].channels.push(c));
+            let mut num_outs = self.num_outs.clone();
+            for &mut (ref channels, ref mut out) in self.outputs.iter_mut() {
+                let mut out_frame = Frame::new(frame.sample_rate, frame.timestamp, frame.len());
+                for c in channels {
+                    let no = num_outs.get_mut(*c).unwrap();
+                    *no -= 1;
+                    if *no > 0 {
+                        frame
+                            .get_channel(*c)
+                            .map(|pcm| out_frame.set_channel(*c, pcm.to_vec()));
+                    } else {
+                        frame
+                            .take_channel(*c)
+                            .map(|pcm| out_frame.set_channel(*c, pcm));
+                    }
+                }
+                out.write(out_frame)?;
             }
-            let result = (0..frames.len())
-                .zip(frames.drain(..))
-                .fold(Ok(()), |r, (i, f)| r.and(self.outputs[i].write(f)));
-            result
+            Ok(())
         }
     }
 
     fn deactivate(&mut self) {
         for mut out in self.outputs.iter_mut() {
-            out.deactivate();
+            out.1.deactivate();
         }
     }
 
@@ -626,7 +640,7 @@ impl Output for CompositeOutput {
     fn min_delay(&self) -> TimeDelta {
         self.outputs
             .iter()
-            .map(|o| o.min_delay())
+            .map(|o| o.1.min_delay())
             .max()
             .unwrap_or(TimeDelta::zero())
     }

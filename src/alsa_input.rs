@@ -7,6 +7,7 @@ use std::ffi::CString;
 use std::error;
 use time::{Time, TimeDelta};
 use base::*;
+use a52_decoder;
 
 use super::input::*;
 
@@ -14,11 +15,6 @@ const CHANNELS: usize = 2;
 
 const ACCEPTED_RATES: [usize; 4] = [44100, 48000, 88200, 96000];
 const MAX_SAMPLE_RATE_ERROR: f32 = 1000.0;
-
-enum State {
-    Inactive,
-    Active { silent_samples: usize },
-}
 
 pub struct AlsaInput {
     spec: DeviceSpec,
@@ -28,13 +24,18 @@ pub struct AlsaInput {
     period_size: usize,
     rate_detector: RateDetector,
     exact_rate_detector: RateDetector,
-    state: State,
-    current_rate: DetectedRate,
+    active: bool,
+    last_non_silent_time: Time,
+    current_rate: f32,
     last_rate_update: Time,
+
+    a52_decoder: a52_decoder::A52Decoder,
+    a52_stream: bool,
+    last_a52_frame: Time,
 }
 
 // Deactivate input after 5 seconds of silence.
-const SILENCE_PERIOD_SECONDS: usize = 5;
+const SILENCE_PERIOD_SECONDS: i64 = 5;
 
 impl AlsaInput {
     pub fn open(spec: DeviceSpec, period_duration: TimeDelta) -> Result<Box<AlsaInput>> {
@@ -96,6 +97,7 @@ impl AlsaInput {
             );
         }
 
+        let now = Time::now();
         Ok(Box::new(AlsaInput {
             spec: spec,
             pcm: pcm,
@@ -104,9 +106,13 @@ impl AlsaInput {
             period_size: period_size,
             rate_detector: RateDetector::new(MAX_SAMPLE_RATE_ERROR),
             exact_rate_detector: RateDetector::new(1.0),
-            state: State::Inactive,
-            current_rate: DetectedRate { rate: sample_rate as f32, error: sample_rate as f32 },
-            last_rate_update: Time::now(),
+            active: false,
+            last_non_silent_time: now,
+            current_rate: sample_rate as f32,
+            last_rate_update: now,
+            a52_decoder: a52_decoder::A52Decoder::new(),
+            a52_stream: false,
+            last_a52_frame: now,
         }))
     }
 }
@@ -137,11 +143,67 @@ impl Input for AlsaInput {
         assert!(samples > 0);
 
         let now = Time::now();
-        let timestamp = now - samples_to_timedelta(self.sample_rate as f32,
-                                                   try!(self.pcm.avail_update()) as i64);
-        let rate = self.rate_detector.update(samples, timestamp);
-        if (self.sample_rate as f32 - rate.rate).abs() > MAX_SAMPLE_RATE_ERROR &&
-           rate.error < MAX_SAMPLE_RATE_ERROR {
+        let timestamp = now
+            - samples_to_timedelta(
+                self.sample_rate as f32,
+                try!(self.pcm.avail_update()) as i64 + samples as i64,
+            );
+
+        let bytes = samples * CHANNELS * self.format.bytes_per_sample();
+
+        let mut all_zeros = true;
+        for i in 0..bytes {
+            if buf[i] != 0 {
+                all_zeros = false;
+                break;
+            }
+        }
+
+        if !all_zeros {
+            self.active = true;
+            self.last_non_silent_time = now;
+        } else if self.active
+            && now - self.last_non_silent_time > TimeDelta::seconds(SILENCE_PERIOD_SECONDS)
+        {
+            self.active = false;
+        }
+
+        if !self.active {
+            return Ok(None);
+        }
+
+        if self.spec.enable_a52 {
+            self.a52_decoder
+                .add_data(&buf[0..bytes], self.format.bytes_per_sample());
+            if self.a52_decoder.have_frame() {
+                self.a52_stream = true;
+                self.exact_rate_detector.reset();
+            } else {
+                if self.a52_stream && !self.a52_decoder.have_frame()
+                    && (now - self.last_a52_frame) > TimeDelta::seconds(1)
+                {
+                    self.a52_stream = false;
+                    self.exact_rate_detector.reset();
+                }
+            }
+        }
+
+        let mut frame = if self.a52_stream {
+            match self.a52_decoder.get_frame() {
+                None => return Ok(None),
+                Some(frame) => {
+                    self.last_a52_frame = now;
+                    frame
+                }
+            }
+        } else {
+            Frame::from_buffer_stereo(self.format, self.current_rate, &buf[0..bytes], timestamp)
+        };
+
+        let rate = self.rate_detector.update(samples, frame.end_timestamp());
+        if (self.sample_rate as f32 - rate.rate).abs() > MAX_SAMPLE_RATE_ERROR
+            && rate.error < MAX_SAMPLE_RATE_ERROR
+        {
             let mut new_rate = 0;
             for r in &ACCEPTED_RATES[..] {
                 if (rate.rate - *r as f32).abs() < MAX_SAMPLE_RATE_ERROR {
@@ -155,7 +217,7 @@ impl Input for AlsaInput {
                     &self.spec.name, new_rate
                 );
                 self.sample_rate = new_rate;
-                self.current_rate = DetectedRate { rate: new_rate as f32, error: MAX_SAMPLE_RATE_ERROR };
+                self.current_rate = new_rate as f32;
                 self.exact_rate_detector.reset();
             } else if rate.error < 100.0 {
                 println!(
@@ -166,50 +228,18 @@ impl Input for AlsaInput {
         }
 
         if self.spec.exact_sample_rate {
-            let rate = self.exact_rate_detector.update(samples, timestamp);
+            let rate = self.exact_rate_detector
+                .update(samples, frame.end_timestamp());
 
             if (now - self.last_rate_update) > TimeDelta::milliseconds(500) {
-               self.last_rate_update = now;
-               if rate.error < 10.0 {
-                    self.current_rate = rate;
-               }
-            }
-        }
-
-
-        let bytes = samples * CHANNELS * self.format.bytes_per_sample();
-
-        let mut all_zeros = true;
-        for i in 0..bytes {
-            if buf[i] != 0 {
-                all_zeros = false;
-                break;
-            }
-        }
-
-        self.state = match (&self.state, all_zeros) {
-            (_, false) => State::Active { silent_samples: 0 },
-            (&State::Active { silent_samples }, true) => {
-                let silence = silent_samples + samples;
-                if silence > SILENCE_PERIOD_SECONDS * self.sample_rate {
-                    State::Inactive
-                } else {
-                    State::Active {
-                        silent_samples: silence,
-                    }
+                self.last_rate_update = now;
+                if rate.error < 10.0 {
+                    self.current_rate = rate.rate;
                 }
             }
-            (&State::Inactive, true) => State::Inactive,
-        };
-
-        match self.state {
-            State::Inactive => return Ok(None),
-            _ => (),
         }
 
-        let mut frame = Frame::from_buffer_stereo(
-            self.format, self.current_rate.rate, &buf[0..bytes], timestamp);
-        frame.timestamp -= frame.duration();
+        frame.sample_rate = self.current_rate;
 
         Ok(Some(frame))
     }
@@ -235,7 +265,11 @@ pub struct ResilientAlsaInput {
 }
 
 impl ResilientAlsaInput {
-    pub fn new(spec: DeviceSpec, period_duration: TimeDelta, probe_sample_rate: bool) -> Box<ResilientAlsaInput> {
+    pub fn new(
+        spec: DeviceSpec,
+        period_duration: TimeDelta,
+        probe_sample_rate: bool,
+    ) -> Box<ResilientAlsaInput> {
         Box::new(ResilientAlsaInput {
             spec: spec,
             period_duration: period_duration,
@@ -281,8 +315,9 @@ impl Input for ResilientAlsaInput {
                     Some(frame)
                 }
                 Ok(None) => {
-                    if self.probe_sample_rate &&
-                       Time::now() - self.last_active > TimeDelta::milliseconds(PROBE_TIME_MS) {
+                    if self.probe_sample_rate
+                        && Time::now() - self.last_active > TimeDelta::milliseconds(PROBE_TIME_MS)
+                    {
                         reset = true;
                     }
                     None
