@@ -1,8 +1,9 @@
 use async_input::AsyncInput;
 use base::*;
 use crossover;
-use time::*;
+use downmixer;
 use filters::*;
+use time::*;
 use std;
 use std::cmp;
 use output;
@@ -83,6 +84,8 @@ pub struct FilteredOutput {
 
     drc_enabled: bool,
     subwoofer_enabled: bool,
+
+    downmixer: downmixer::Downmixer,
     crossover: Option<crossover::CrossoverFilter>,
     ui_msg_receiver: ui::UiMessageReceiver,
 }
@@ -90,6 +93,7 @@ pub struct FilteredOutput {
 impl FilteredOutput {
     pub fn new(
         output: Box<output::Output>,
+        out_channels: PerChannel<bool>,
         fir_filter: Option<Box<StreamFilter>>,
         subwoofer_config: Option<ui::SubwooferConfig>,
         shared_state: &ui::SharedState,
@@ -107,6 +111,8 @@ impl FilteredOutput {
 
             drc_enabled: enable_drc,
             subwoofer_enabled: enable_subwoofer,
+
+            downmixer: downmixer::Downmixer::new(out_channels),
             crossover: None,
             ui_msg_receiver: shared_state.lock().add_observer(),
         });
@@ -150,14 +156,16 @@ impl output::Output for FilteredOutput {
             self.fir_filter.as_mut().map(|f| f.reset());
         }
 
-        let frame = match (self.drc_enabled, self.fir_filter.as_mut()) {
-            (true, Some(f)) => f.apply(frame),
-            _ => frame,
-        };
+        let frame = self.downmixer.process(frame);
 
         let frame = match self.crossover.as_mut() {
             Some(c) => c.apply(frame),
             None => frame,
+        };
+
+        let frame = match (self.drc_enabled, self.fir_filter.as_mut()) {
+            (true, Some(f)) => f.apply(frame),
+            _ => frame,
         };
 
         self.output.write(frame)

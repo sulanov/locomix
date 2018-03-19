@@ -353,9 +353,14 @@ fn run() -> Result<(), RunError> {
             }
         };
 
-        let have_subwoofer = devices
-            .iter()
-            .any(|d| d.channels.iter().any(|c| *c == base::ChannelPos::Sub));
+        let mut channels = base::PerChannel::new();
+        for d in devices.iter() {
+            for c in d.channels.iter() {
+                channels.set(*c, true);
+            }
+        }
+
+        let have_subwoofer = channels.get(base::ChannelPos::Sub) == Some(&true);
 
         let out = try!(output::CompositeOutput::new(
             devices,
@@ -408,6 +413,7 @@ fn run() -> Result<(), RunError> {
 
         let out = output::AsyncOutput::new(mixer::FilteredOutput::new(
             output::AsyncOutput::new(out),
+            channels,
             fir_filters,
             sub_config,
             &shared_state,

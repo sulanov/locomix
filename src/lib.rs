@@ -11,6 +11,7 @@ pub mod base;
 pub mod brutefir;
 pub mod control;
 pub mod crossover;
+pub mod downmixer;
 pub mod filters;
 pub mod input;
 pub mod input_device;
