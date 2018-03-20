@@ -129,11 +129,11 @@ fn parse_channel_id(id: String) -> Result<base::ChannelPos, RunError> {
     match id.to_uppercase().as_str() {
         "L" | "FL" | "LEFT" => Ok(base::ChannelPos::FL),
         "R" | "FR" | "RIGHT" => Ok(base::ChannelPos::FR),
-        "C" | "CENTER" | "CENTRE" => Ok(base::ChannelPos::FC),
+        "C" | "FC" | "CENTER" | "CENTRE" => Ok(base::ChannelPos::FC),
         "SL" | "SURROUND_LEFT" => Ok(base::ChannelPos::SL),
         "SR" | "SURROUND_RIGHT" => Ok(base::ChannelPos::SR),
-        "S" | "SURROUND" | "SURROUND_CENTER" | "SURROUND_CENTRE" => Ok(base::ChannelPos::SC),
-        "B" | "SUB" | "LFE" => Ok(base::ChannelPos::Sub),
+        "SUR" | "SURROUND" | "SURROUND_CENTER" | "SURROUND_CENTRE" => Ok(base::ChannelPos::SC),
+        "S" | "B" | "SUB" | "LFE" => Ok(base::ChannelPos::Sub),
         "_" => Ok(base::ChannelPos::Other),
         _ => Err(RunError::new(
             format!("Invalid channel id: {}", id).as_str(),
@@ -356,7 +356,9 @@ fn run() -> Result<(), RunError> {
         let mut channels = base::PerChannel::new();
         for d in devices.iter() {
             for c in d.channels.iter() {
-                channels.set(*c, true);
+                if *c != base::ChannelPos::Other {
+                    channels.set(*c, true);
+                }
             }
         }
 

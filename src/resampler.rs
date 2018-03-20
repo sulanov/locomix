@@ -300,6 +300,15 @@ impl StreamResampler {
             result.set_channel(c, pcm);
         }
 
+        let removed_channels: Vec<base::ChannelPos> = self.resamplers
+            .iter()
+            .map(|(c, _)| c)
+            .filter(|c| !frame.have_channel(*c))
+            .collect();
+        for c in removed_channels {
+            self.resamplers.take(c);
+        }
+
         if result.len() > 0 {
             Some(result)
         } else {

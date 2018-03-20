@@ -550,8 +550,6 @@ impl CrossfeedFilter {
     }
 
     pub fn apply(&mut self, mut frame: Frame) -> Frame {
-        assert!(frame.is_stereo());
-
         if self.level == 0.0 {
             return frame;
         }

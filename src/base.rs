@@ -379,11 +379,6 @@ impl Frame {
         self.timestamp + self.duration()
     }
 
-    // pub fn to_buffer(&self, format: SampleFormat) -> Vec<u8> {
-    //     let chmap: Vec<ChannelPos> = self.channels.iter().map(|c| c.pos).collect();
-    //     self.to_buffer_with_channel_map(format, chmap.as_slice())
-    // }
-
     pub fn to_buffer_with_channel_map(
         &self,
         format: SampleFormat,
@@ -476,11 +471,6 @@ impl Frame {
 
     pub fn have_channel(&self, pos: ChannelPos) -> bool {
         self.channels.have_channel(pos)
-    }
-
-    pub fn is_stereo(&self) -> bool {
-        self.channels() == 2 && self.have_channel(ChannelPos::FL)
-            && self.have_channel(ChannelPos::FR)
     }
 }
 
@@ -609,7 +599,8 @@ mod tests {
         }
 
         let frame = Frame::from_buffer_stereo(SampleFormat::S16LE, 44100.0, &buf[..], Time::now());
-        let buf2 = frame.to_buffer(SampleFormat::S16LE);
+        let buf2 = frame
+            .to_buffer_with_channel_map(SampleFormat::S16LE, &[ChannelPos::FL, ChannelPos::FR]);
 
         assert_eq!(buf.len(), buf2.len());
         for i in 0..buf.len() {
@@ -620,10 +611,11 @@ mod tests {
     #[test]
     fn clamping() {
         let mut frame = Frame::new_stereo(100.0, Time::now(), 1);
-        frame.channels[0].pcm[0] = 1.5;
-        frame.channels[1].pcm[0] = -1.5;
+        frame.ensure_channel(ChannelPos::FL)[0] = 1.5;
+        frame.ensure_channel(ChannelPos::FR)[0] = -1.5;
 
-        let buf16 = frame.to_buffer(SampleFormat::S16LE);
+        let buf16 = frame
+            .to_buffer_with_channel_map(SampleFormat::S16LE, &[ChannelPos::FL, ChannelPos::FR]);
 
         // 32767
         assert_eq!(buf16[0], 0xff);
@@ -633,7 +625,8 @@ mod tests {
         assert_eq!(buf16[2], 0x00);
         assert_eq!(buf16[3], 0x80);
 
-        let buf24 = frame.to_buffer(SampleFormat::S24LE3);
+        let buf24 = frame
+            .to_buffer_with_channel_map(SampleFormat::S24LE3, &[ChannelPos::FL, ChannelPos::FR]);
 
         assert_eq!(buf24[0], 0xff);
         assert_eq!(buf24[1], 0xff);
@@ -643,7 +636,8 @@ mod tests {
         assert_eq!(buf24[4], 0x00);
         assert_eq!(buf24[5], 0x80);
 
-        let buf32 = frame.to_buffer(SampleFormat::S32LE);
+        let buf32 = frame
+            .to_buffer_with_channel_map(SampleFormat::S32LE, &[ChannelPos::FL, ChannelPos::FR]);
 
         assert_eq!(buf32[0], 0xff);
         assert_eq!(buf32[1], 0xff);
