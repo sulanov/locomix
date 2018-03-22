@@ -113,57 +113,95 @@ impl AlsaInput {
             a52_stream: false,
         }))
     }
-}
 
-impl Input for AlsaInput {
-    fn read(&mut self) -> Result<Option<Frame>> {
-        // If we have a a52 frame then just return it.
-        if self.a52_stream && self.a52_decoder.have_frame() {
-            match self.a52_decoder.get_frame() {
-                a52_decoder::DecodeResult::FallbackToPcm => {
-                    assert!(false);
-                    self.a52_stream = false;
-                }
-                a52_decoder::DecodeResult::NoFrame => return Ok(None),
-                a52_decoder::DecodeResult::Decoded(f) => return Ok(Some(f)),
-            }
-        }
-
+    fn read_raw(&mut self) -> Result<Vec<u8>> {
         let mut buf = vec![0u8; self.period_size * CHANNELS * self.format.bytes_per_sample()];
         let read_result = self.pcm.io().readi(&mut buf[..]);
         let samples = match read_result {
-            Ok(0) => return Ok(None),
+            Ok(0) => return Err(Error::new("snd_pcm_readi returned 0.")),
             Ok(r) => r,
             Err(e) => {
-                if e.errno().unwrap_or(nix::Errno::UnknownErrno) == nix::errno::EWOULDBLOCK {
-                    return Ok(None);
-                }
                 println!("Recovering AlsaInput {}: {:?}", &self.spec.name, e.errno());
                 self.rate_detector.reset();
                 self.exact_rate_detector.reset();
                 match self.pcm
                     .recover(e.errno().unwrap_or(nix::Errno::UnknownErrno) as i32, true)
                 {
-                    Ok(_) => return self.read(),
+                    Ok(_) => return self.read_raw(),
                     Err(_) => return Err(Error::new(error::Error::description(&e))),
                 }
             }
         };
-
         assert!(samples > 0);
 
-        let now = Time::now();
-        let timestamp = now
-            - samples_to_timedelta(
-                self.sample_rate as f32,
-                try!(self.pcm.avail_update()) as i64 + samples as i64,
-            );
-
         let bytes = samples * CHANNELS * self.format.bytes_per_sample();
+        buf.resize(bytes, 0);
+
+        if self.spec.enable_a52 {
+            self.a52_decoder
+                .add_data(&buf[..], self.format.bytes_per_sample());
+        }
+
+        Ok(buf)
+    }
+
+    fn read_pcm(&mut self) -> Result<Option<Frame>> {
+        let buf = self.read_raw()?;
+
+        // Check if we want to switch to A52.
+        if self.spec.enable_a52 {
+            if self.a52_decoder.have_sync() {
+                self.a52_stream = true;
+                return self.read_a52();
+            }
+        }
+
+        let now = Time::now();
+        let samples = buf.len() / (CHANNELS * self.format.bytes_per_sample());
+        let end_timestamp =
+            now - samples_to_timedelta(self.current_rate, try!(self.pcm.avail_update()) as i64);
+        let timestamp = end_timestamp - samples_to_timedelta(self.current_rate, samples as i64);
+
+        let rate = self.rate_detector.update(samples, end_timestamp);
+        if (self.sample_rate as f32 - rate.rate).abs() > MAX_SAMPLE_RATE_ERROR
+            && rate.error < MAX_SAMPLE_RATE_ERROR
+        {
+            let mut new_rate = 0;
+            for r in &ACCEPTED_RATES[..] {
+                if (rate.rate - *r as f32).abs() < MAX_SAMPLE_RATE_ERROR {
+                    new_rate = *r;
+                }
+            }
+
+            if new_rate > 0 {
+                println!(
+                    "INFO: rate changed for input device {}: {}",
+                    &self.spec.name, new_rate
+                );
+                self.sample_rate = new_rate;
+                self.current_rate = new_rate as f32;
+                self.exact_rate_detector.reset();
+            } else if rate.error < 100.0 {
+                println!(
+                    "WARNING: Unknown sample rate for {}: {}",
+                    &self.spec.name, rate.rate
+                );
+            }
+        }
+
+        if self.spec.exact_sample_rate {
+            let rate = self.exact_rate_detector.update(samples, end_timestamp);
+            if (now - self.last_rate_update) > TimeDelta::milliseconds(500) {
+                self.last_rate_update = now;
+                if rate.error < 10.0 {
+                    self.current_rate = rate.rate;
+                }
+            }
+        }
 
         let mut all_zeros = true;
-        for i in 0..bytes {
-            if buf[i] != 0 {
+        for &v in buf.iter() {
+            if v != 0 {
                 all_zeros = false;
                 break;
             }
@@ -182,76 +220,34 @@ impl Input for AlsaInput {
             return Ok(None);
         }
 
-        if self.spec.enable_a52 {
-            self.a52_decoder
-                .add_data(&buf[0..bytes], self.format.bytes_per_sample());
-            if !self.a52_stream && self.a52_decoder.have_sync() {
-                self.a52_stream = true;
+        Ok(Some(Frame::from_buffer_stereo(
+            self.format,
+            self.current_rate,
+            &buf[..],
+            timestamp,
+        )))
+    }
+
+    fn read_a52(&mut self) -> Result<Option<Frame>> {
+        // Read data until we have a frame.
+        while !self.a52_decoder.have_frame() {
+            self.read_raw()?;
+            if self.a52_decoder.fallback_to_pcm() {
+                self.a52_stream = false;
+                return Ok(None);
             }
         }
 
+        Ok(self.a52_decoder.get_frame())
+    }
+}
+
+impl Input for AlsaInput {
+    fn read(&mut self) -> Result<Option<Frame>> {
         if self.a52_stream {
-            match self.a52_decoder.get_frame() {
-                a52_decoder::DecodeResult::FallbackToPcm => {
-                    self.rate_detector.reset();
-                    self.exact_rate_detector.reset();
-                    self.a52_stream = false;
-                    Ok(None)
-                }
-                a52_decoder::DecodeResult::NoFrame => Ok(None),
-                a52_decoder::DecodeResult::Decoded(f) => Ok(Some(f)),
-            }
+            self.read_a52()
         } else {
-            let mut frame = Frame::from_buffer_stereo(
-                self.format,
-                self.current_rate,
-                &buf[0..bytes],
-                timestamp,
-            );
-
-            let rate = self.rate_detector
-                .update(frame.len(), frame.end_timestamp());
-            if (self.sample_rate as f32 - rate.rate).abs() > MAX_SAMPLE_RATE_ERROR
-                && rate.error < MAX_SAMPLE_RATE_ERROR
-            {
-                let mut new_rate = 0;
-                for r in &ACCEPTED_RATES[..] {
-                    if (rate.rate - *r as f32).abs() < MAX_SAMPLE_RATE_ERROR {
-                        new_rate = *r;
-                    }
-                }
-
-                if new_rate > 0 {
-                    println!(
-                        "INFO: rate changed for input device {}: {}",
-                        &self.spec.name, new_rate
-                    );
-                    self.sample_rate = new_rate;
-                    self.current_rate = new_rate as f32;
-                    self.exact_rate_detector.reset();
-                } else if rate.error < 100.0 {
-                    println!(
-                        "WARNING: Unknown sample rate for {}: {}",
-                        &self.spec.name, rate.rate
-                    );
-                }
-            }
-
-            if self.spec.exact_sample_rate {
-                let rate = self.exact_rate_detector
-                    .update(frame.len(), frame.end_timestamp());
-
-                if (now - self.last_rate_update) > TimeDelta::milliseconds(500) {
-                    self.last_rate_update = now;
-                    if rate.error < 10.0 {
-                        self.current_rate = rate.rate;
-                    }
-                }
-            }
-
-            frame.sample_rate = self.current_rate;
-
-            Ok(Some(frame))
+            self.read_pcm()
         }
     }
 

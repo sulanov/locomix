@@ -63,73 +63,75 @@ const SPDIF_NULL: u8 = 0;
 const SPDIF_AC3: u8 = 1;
 const SPDIF_PAUSE: u8 = 3;
 
-static CHMAP_MONO: &'static [base::ChannelPos] = &[base::ChannelPos::FC];
-static CHMAP_MONO_LFE: &'static [base::ChannelPos] = &[base::ChannelPos::Sub, base::ChannelPos::FC];
+type ChannelMap = &'static [base::ChannelPos];
 
-static CHMAP_STEREO: &'static [base::ChannelPos] = &[base::ChannelPos::FL, base::ChannelPos::FR];
-static CHMAP_STEREO_LFE: &'static [base::ChannelPos] = &[
+static CHMAP_MONO: ChannelMap = &[base::ChannelPos::FC];
+static CHMAP_MONO_LFE: ChannelMap = &[base::ChannelPos::Sub, base::ChannelPos::FC];
+
+static CHMAP_STEREO: ChannelMap = &[base::ChannelPos::FL, base::ChannelPos::FR];
+static CHMAP_STEREO_LFE: ChannelMap = &[
     base::ChannelPos::Sub,
     base::ChannelPos::FL,
-    base::ChannelPos::FR,
-];
-
-static CHMAP_3F: &'static [base::ChannelPos] = &[
-    base::ChannelPos::FL,
-    base::ChannelPos::FC,
-    base::ChannelPos::FR,
-];
-static CHMAP_3F_LFE: &'static [base::ChannelPos] = &[
-    base::ChannelPos::Sub,
-    base::ChannelPos::FL,
-    base::ChannelPos::FC,
     base::ChannelPos::FR,
 ];
 
-static CHMAP_2F1R: &'static [base::ChannelPos] = &[
+static CHMAP_3F: ChannelMap = &[
+    base::ChannelPos::FL,
+    base::ChannelPos::FC,
+    base::ChannelPos::FR,
+];
+static CHMAP_3F_LFE: ChannelMap = &[
+    base::ChannelPos::Sub,
+    base::ChannelPos::FL,
+    base::ChannelPos::FC,
+    base::ChannelPos::FR,
+];
+
+static CHMAP_2F1R: ChannelMap = &[
     base::ChannelPos::FL,
     base::ChannelPos::FR,
     base::ChannelPos::SC,
 ];
-static CHMAP_2F1R_LFE: &'static [base::ChannelPos] = &[
+static CHMAP_2F1R_LFE: ChannelMap = &[
     base::ChannelPos::Sub,
     base::ChannelPos::FL,
     base::ChannelPos::FR,
     base::ChannelPos::SC,
 ];
-static CHMAP_3F1R: &'static [base::ChannelPos] = &[
+static CHMAP_3F1R: ChannelMap = &[
     base::ChannelPos::FL,
     base::ChannelPos::FC,
     base::ChannelPos::FR,
     base::ChannelPos::SC,
 ];
-static CHMAP_3F1R_LFE: &'static [base::ChannelPos] = &[
+static CHMAP_3F1R_LFE: ChannelMap = &[
     base::ChannelPos::Sub,
     base::ChannelPos::FL,
     base::ChannelPos::FC,
     base::ChannelPos::FR,
     base::ChannelPos::SC,
 ];
-static CHMAP_2F2R: &'static [base::ChannelPos] = &[
+static CHMAP_2F2R: ChannelMap = &[
     base::ChannelPos::FL,
     base::ChannelPos::FR,
     base::ChannelPos::SL,
     base::ChannelPos::SR,
 ];
-static CHMAP_2F2R_LFE: &'static [base::ChannelPos] = &[
+static CHMAP_2F2R_LFE: ChannelMap = &[
     base::ChannelPos::Sub,
     base::ChannelPos::FL,
     base::ChannelPos::FR,
     base::ChannelPos::SL,
     base::ChannelPos::SR,
 ];
-static CHMAP_3F2R: &'static [base::ChannelPos] = &[
+static CHMAP_3F2R: ChannelMap = &[
     base::ChannelPos::FL,
     base::ChannelPos::FC,
     base::ChannelPos::FR,
     base::ChannelPos::SL,
     base::ChannelPos::SR,
 ];
-static CHMAP_3F2R_LFE: &'static [base::ChannelPos] = &[
+static CHMAP_3F2R_LFE: ChannelMap = &[
     base::ChannelPos::Sub,
     base::ChannelPos::FL,
     base::ChannelPos::FC,
@@ -137,6 +139,9 @@ static CHMAP_3F2R_LFE: &'static [base::ChannelPos] = &[
     base::ChannelPos::SL,
     base::ChannelPos::SR,
 ];
+
+// Each frame contains 6 parts, 256 samples for each frame.
+const PARTS_PER_FRAME: usize = 6;
 
 fn get_channel_map(flags: c_int) -> Option<&'static [base::ChannelPos]> {
     match flags & 0x17 {
@@ -161,20 +166,17 @@ fn get_channel_map(flags: c_int) -> Option<&'static [base::ChannelPos]> {
 // Fallback to PCM after 9600 bytes without sync, about 50ms.
 const FALLBACK_TO_PCM_INTERVAL: i32 = 9600;
 
-pub enum DecodeResult {
-    FallbackToPcm,
-    Decoded(base::Frame),
-    NoFrame,
+struct DecodedState {
+    sample_rate: usize,
+    parts_left: usize,
+    channel_map: ChannelMap,
+    timestamp: time::Time,
 }
 
-enum FrameType {
+enum FrameState {
     Skip,
     A52 { flags: c_int, sample_rate: usize },
-}
-
-struct FrameInfo {
-    frame_size: usize,
-    type_: FrameType,
+    A52Decoded(DecodedState),
 }
 
 pub struct A52Decoder {
@@ -182,7 +184,8 @@ pub struct A52Decoder {
     buf: Vec<u8>,
     buf_pos: usize,
     last_sync_pos: i32,
-    frame_info: Option<FrameInfo>,
+    frame_state: Option<FrameState>,
+    frame_size: usize,
 }
 
 unsafe impl Send for A52Decoder {}
@@ -195,7 +198,8 @@ impl A52Decoder {
                 buf: vec![0],
                 buf_pos: 0,
                 last_sync_pos: 0,
-                frame_info: None,
+                frame_state: None,
+                frame_size: 0,
             }
         }
     }
@@ -223,7 +227,7 @@ impl A52Decoder {
     }
 
     fn synchronize(&mut self) {
-        while self.frame_info.is_none() && self.buf_pos + HEADER_SIZE <= self.buf.len() {
+        while self.frame_state.is_none() && self.buf_pos + HEADER_SIZE <= self.buf.len() {
             if self.buf[self.buf_pos..(self.buf_pos + SPDIF_SYNC_SIZE)] != SPDIF_SYNC {
                 self.buf_pos += 1;
                 continue;
@@ -235,10 +239,8 @@ impl A52Decoder {
                     println!("WARNING: unknown SPDIF format: {}", format);
                 }
 
-                self.frame_info = Some(FrameInfo {
-                    frame_size: 16,
-                    type_: FrameType::Skip,
-                });
+                self.frame_size = 16;
+                self.frame_state = Some(FrameState::Skip);
                 break;
             }
 
@@ -256,43 +258,34 @@ impl A52Decoder {
             };
             if a52_frame_size <= 0 {
                 println!("WARNING: Failed to parse A52 header: {}", a52_frame_size);
-                self.frame_info = Some(FrameInfo {
-                    frame_size: 16,
-                    type_: FrameType::Skip,
-                });
+                self.frame_size = 16;
+                self.frame_state = Some(FrameState::Skip);
                 break;
             }
 
             // We have a frame.
-            self.frame_info = Some(FrameInfo {
-                frame_size: SPDIF_HEADER_SIZE + a52_frame_size as usize,
-                type_: FrameType::A52 {
-                    flags: flags,
-                    sample_rate: sample_rate as usize,
-                },
+            self.frame_size = SPDIF_HEADER_SIZE + a52_frame_size as usize;
+            self.frame_state = Some(FrameState::A52 {
+                flags: flags,
+                sample_rate: sample_rate as usize,
             });
             break;
         }
 
-        if self.frame_info.is_some() {
+        if self.frame_state.is_some() {
             self.last_sync_pos = self.buf_pos as i32;
         }
     }
 
     pub fn have_sync(&self) -> bool {
-        self.frame_info.is_some()
+        self.frame_state.is_some()
     }
 
     pub fn have_frame(&self) -> bool {
-        match self.frame_info.as_ref() {
-            None => false,
-            Some(info) => self.buf.len() >= self.buf_pos + info.frame_size,
-        }
+        self.frame_state.is_some() && (self.buf.len() >= self.buf_pos + self.frame_size)
     }
 
-    fn decode_frame(&mut self, flags: c_int, sample_rate: usize) -> DecodeResult {
-        let mut frame = base::Frame::new(sample_rate as f32, time::Time::now(), 6 * 256);
-
+    fn decode_frame(&mut self, flags: c_int) -> Option<ChannelMap> {
         let mut flags: c_int = flags;
         let mut level: sample_t = 1.0;
         let bias: sample_t = 0.0;
@@ -307,56 +300,85 @@ impl A52Decoder {
         };
         if r < 0 {
             println!("WARNING: Failed to decode A52 frame.");
-            return DecodeResult::NoFrame;
+            return None;
         }
 
-        let channel_map = match get_channel_map(flags) {
-            None => {
-                println!("WARNING: Unknown channel configuration. flags={}", flags);
-                return DecodeResult::NoFrame;
-            }
-            Some(map) => map,
-        };
-
-        for i in 0..6 {
-            unsafe {
-                a52_dynrng(self.state, None, 0 as *mut c_void);
-
-                if a52_block(self.state) != 0 {
-                    println!("WARNING: A52 decoding failed.");
-                    return DecodeResult::NoFrame;
-                }
-
-                let mut samples = a52_samples(self.state);
-                for c in channel_map {
-                    frame.ensure_channel(*c)[i * 256..(i + 1) * 256]
-                        .copy_from_slice(slice::from_raw_parts(samples, 256));
-                    samples = samples.offset(256);
-                }
-            }
+        let channel_map = get_channel_map(flags);
+        if channel_map.is_none() {
+            println!("WARNING: Unknown channel configuration. flags={}", flags);
         }
 
-        DecodeResult::Decoded(frame)
+        channel_map
     }
 
-    pub fn get_frame(&mut self) -> DecodeResult {
-        if !self.have_frame() {
-            if (self.buf_pos as i32 - self.last_sync_pos) > FALLBACK_TO_PCM_INTERVAL {
-                return DecodeResult::FallbackToPcm;
-            } else {
-                return DecodeResult::NoFrame;
+    fn get_next_frame(&mut self, state: &DecodedState) -> Option<base::Frame> {
+        let mut frame = base::Frame::new(state.sample_rate as f32, state.timestamp, 256);
+
+        unsafe {
+            a52_dynrng(self.state, None, 0 as *mut c_void);
+
+            if a52_block(self.state) != 0 {
+                println!("WARNING: A52 decoding failed.");
+                return None;
+            }
+
+            let mut samples = a52_samples(self.state);
+            for &c in state.channel_map {
+                frame.ensure_channel(c)[..].copy_from_slice(slice::from_raw_parts(samples, 256));
+                samples = samples.offset(256);
             }
         }
 
-        let frame_info = self.frame_info.take().unwrap();
+        Some(frame)
+    }
 
-        let result = match frame_info.type_ {
-            FrameType::A52 { flags, sample_rate } => self.decode_frame(flags, sample_rate),
-            FrameType::Skip => DecodeResult::NoFrame,
+    pub fn fallback_to_pcm(&self) -> bool {
+        (self.buf_pos as i32 - self.last_sync_pos) > FALLBACK_TO_PCM_INTERVAL
+    }
+
+    fn get_frame_internal(&mut self) -> Option<base::Frame> {
+        let mut state = match self.frame_state.take() {
+            None => return None,
+            Some(FrameState::A52 { flags, sample_rate }) => {
+                let channel_map = match self.decode_frame(flags) {
+                    None => return None,
+                    Some(c) => c,
+                };
+
+                DecodedState {
+                    sample_rate: sample_rate,
+                    parts_left: PARTS_PER_FRAME,
+                    channel_map: channel_map,
+                    timestamp: time::Time::now(),
+                }
+            }
+            Some(FrameState::A52Decoded(state)) => state,
+            Some(FrameState::Skip) => return None,
         };
 
-        self.buf_pos += frame_info.frame_size;
-        self.synchronize();
+        let frame = match self.get_next_frame(&state) {
+            None => return None,
+            Some(f) => f,
+        };
+
+        state.parts_left -= 1;
+        state.timestamp = frame.end_timestamp();
+        if state.parts_left > 0 {
+            // Keep decoding this frame.
+            self.frame_state = Some(FrameState::A52Decoded(state));
+        }
+
+        Some(frame)
+    }
+
+    pub fn get_frame(&mut self) -> Option<base::Frame> {
+        let result = self.get_frame_internal();
+
+        if self.frame_state.is_none() {
+            // Done with the current frame. Move to the next one.
+            self.buf_pos += self.frame_size;
+            self.synchronize();
+        }
 
         result
     }
@@ -391,10 +413,10 @@ mod tests {
             }
             dec.add_data(&test_input[..bytes_read], 4);
             'decode_loop: loop {
+                assert!(!dec.fallbak_to_pcm());
                 match dec.get_frame() {
-                    a52_decoder::DecodeResult::FallbackToPcm => assert!(false),
-                    a52_decoder::DecodeResult::NoFrame => break 'decode_loop,
-                    a52_decoder::DecodeResult::Decoded(frame) => {
+                    None => break 'decode_loop,
+                    Some(frame) => {
                         samples_out += frame.len();
                         assert!(frame.channels() == 6);
                     }

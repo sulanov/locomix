@@ -257,6 +257,10 @@ impl StreamResampler {
         }
     }
 
+    pub fn reset(&mut self) {
+        self.resamplers = base::PerChannel::new();
+    }
+
     pub fn set_output_sample_rate(&mut self, output_sample_rate: f32) {
         if self.output_sample_rate == output_sample_rate {
             return;

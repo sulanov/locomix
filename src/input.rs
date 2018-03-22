@@ -25,7 +25,10 @@ impl Input for InputResampler {
     fn read(&mut self) -> Result<Option<Frame>> {
         Ok(match try!(self.input.read()) {
             Some(f) => self.resampler.resample(f),
-            None => None,
+            None => {
+                self.resampler.reset();
+                None
+            }
         })
     }
 
