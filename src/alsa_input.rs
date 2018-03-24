@@ -125,7 +125,7 @@ impl AlsaInput {
                 self.rate_detector.reset();
                 self.exact_rate_detector.reset();
                 match self.pcm
-                    .recover(e.errno().unwrap_or(nix::Errno::UnknownErrno) as i32, true)
+                    .recover(e.errno().map(|x| x as i32).unwrap_or(0), true)
                 {
                     Ok(_) => return self.read_raw(),
                     Err(_) => return Err(Error::new(error::Error::description(&e))),

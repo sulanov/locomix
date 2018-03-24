@@ -149,7 +149,7 @@ impl AlsaWriteLoop {
                     println!("Recovering output {} after error ({})", self.spec.name, e);
                     self.rate_detector.reset();
                     match self.pcm
-                        .recover(e.errno().unwrap_or(nix::Errno::UnknownErrno) as i32, true)
+                        .recover(e.errno().map(|x| x as i32).unwrap_or(0), true)
                     {
                         Ok(()) => (),
                         Err(e) => {
