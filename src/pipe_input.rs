@@ -77,7 +77,10 @@ impl PipeInput {
                         _ => (),
                     }
 
-                    match fcntl::fcntl(f.as_raw_fd(), fcntl::FcntlArg::F_SETFL(fcntl::OFlag::O_NONBLOCK)) {
+                    match fcntl::fcntl(
+                        f.as_raw_fd(),
+                        fcntl::FcntlArg::F_SETFL(fcntl::OFlag::O_NONBLOCK),
+                    ) {
                         Err(e) => {
                             println!("ERROR: failed to set O_NONBLOCK: {}", e);
                             return;

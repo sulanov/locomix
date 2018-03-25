@@ -1,4 +1,5 @@
 extern crate alsa;
+extern crate libc;
 extern crate nix;
 
 use base::*;
@@ -24,18 +25,22 @@ enum AlsaWriteLoopFeedback {
     CurrentRate(f32),
 }
 
+struct InterleavedFrame {
+    timestamp: Time,
+    buf: Vec<u8>,
+}
+
 struct AlsaWriteLoop {
     spec: DeviceSpec,
     pcm: alsa::PCM,
     sample_rate: usize,
-    format: SampleFormat,
     period_size: usize,
     bytes_per_frame: usize,
     rate_detector: RateDetector,
 
-    frame_receiver: mpsc::Receiver<Frame>,
+    frame_receiver: mpsc::Receiver<InterleavedFrame>,
     feedback_sender: mpsc::Sender<AlsaWriteLoopFeedback>,
-    cur_frame: Option<Frame>,
+    cur_frame: Option<InterleavedFrame>,
     buffer: Vec<u8>,
     buffer_pos: usize,
     last_rate_update: Time,
@@ -81,17 +86,16 @@ impl AlsaWriteLoop {
             } else if time - frame.timestamp > max_deviation {
                 let samples_to_skip = ((time - frame.timestamp) * self.sample_rate as i64
                     / TimeDelta::seconds(1)) as usize;
-                if samples_to_skip >= frame.len() {
-                    // Drop this frame - it's too old
+                let frame_len = frame.buf.len() / self.bytes_per_frame;
+                if samples_to_skip >= frame_len {
+                    // Drop this frame - it's too old.
                     continue;
                 } else {
-                    self.buffer = frame
-                        .to_buffer_with_channel_map(self.format, self.spec.channels.as_slice());
-                    self.buffer.drain(..samples_to_skip * self.bytes_per_frame);
+                    self.buffer = frame.buf;
+                    self.buffer_pos = samples_to_skip * self.bytes_per_frame;
                 }
             } else {
-                self.buffer =
-                    frame.to_buffer_with_channel_map(self.format, self.spec.channels.as_slice());
+                self.buffer = frame.buf;
             }
             break;
         }
@@ -141,6 +145,13 @@ impl AlsaWriteLoop {
     }
 
     fn run_loop(&mut self) {
+        unsafe {
+            let sched_param = libc::sched_param { sched_priority: 99 };
+            if libc::sched_setscheduler(0, libc::SCHED_RR, &sched_param) < 0 {
+                println!("WARNING: Failed to set RR priority for the output thread.");
+            }
+        }
+
         loop {
             match self.do_write() {
                 Ok(LoopState::Stop) => return,
@@ -164,10 +175,12 @@ impl AlsaWriteLoop {
 }
 
 pub struct AlsaOutput {
+    spec: DeviceSpec,
     sample_rate: f32,
     min_delay: TimeDelta,
+    format: SampleFormat,
 
-    frame_sender: mpsc::Sender<Frame>,
+    frame_sender: mpsc::Sender<InterleavedFrame>,
     feedback_receiver: mpsc::Receiver<AlsaWriteLoopFeedback>,
 }
 
@@ -265,13 +278,11 @@ impl AlsaOutput {
         let (sender, receiver) = mpsc::channel();
         let (feedback_sender, feedback_receiver) = mpsc::channel();
 
-        let num_channels = spec.channels.len();
         let mut loop_ = AlsaWriteLoop {
-            spec: spec,
+            spec: spec.clone(),
             pcm: pcm,
             sample_rate: sample_rate,
-            format: format,
-            bytes_per_frame: num_channels * format.bytes_per_sample(),
+            bytes_per_frame: spec.channels.len() * format.bytes_per_sample(),
             period_size: period_size,
             rate_detector: RateDetector::new(1.0),
 
@@ -288,7 +299,9 @@ impl AlsaOutput {
         });
 
         Ok(AlsaOutput {
+            spec: spec,
             sample_rate: sample_rate as f32,
+            format: format,
             min_delay: min_delay,
             frame_sender: sender,
             feedback_receiver: feedback_receiver,
@@ -298,7 +311,10 @@ impl AlsaOutput {
 
 impl Output for AlsaOutput {
     fn write(&mut self, frame: Frame) -> Result<()> {
-        match self.frame_sender.send(frame) {
+        match self.frame_sender.send(InterleavedFrame {
+            timestamp: frame.timestamp,
+            buf: frame.to_buffer_with_channel_map(self.format, self.spec.channels.as_slice()),
+        }) {
             Ok(()) => (),
             Err(_) => return Err(Error::new("Output was closed.")),
         }

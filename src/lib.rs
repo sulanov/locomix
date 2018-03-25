@@ -4,6 +4,8 @@ extern crate rustc_serialize;
 
 #[macro_use]
 extern crate rouille;
+#[macro_use]
+extern crate serde_derive;
 
 pub mod alsa_input;
 pub mod async_input;

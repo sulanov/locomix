@@ -8,7 +8,7 @@ pub const VOLUME_MAX: f32 = 0.0;
 
 pub type DeviceId = usize;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Serialize)]
 pub struct Gain {
     pub db: f32,
 }
@@ -19,18 +19,18 @@ impl rustc_serialize::Encodable for Gain {
     }
 }
 
-#[derive(RustcEncodable)]
+#[derive(Serialize)]
 pub struct InputState {
     pub name: String,
     pub gain: Gain,
 }
 
-#[derive(RustcEncodable, Copy, Clone)]
+#[derive(Serialize, Copy, Clone)]
 pub struct SubwooferConfig {
     pub crossover_frequency: f32,
 }
 
-#[derive(RustcEncodable)]
+#[derive(Serialize)]
 pub struct OutputState {
     pub name: String,
     pub gain: Gain,
@@ -38,7 +38,7 @@ pub struct OutputState {
     pub drc_supported: bool,
 }
 
-#[derive(RustcEncodable, Copy, Clone)]
+#[derive(Serialize, Copy, Clone)]
 pub struct LoudnessConfig {
     pub enabled: bool,
     pub auto: bool,
@@ -69,7 +69,7 @@ impl LoudnessConfig {
     }
 }
 
-#[derive(RustcEncodable, Copy, Clone)]
+#[derive(Serialize, Copy, Clone)]
 pub struct CrossfeedConfig {
     pub enabled: bool,
     pub level: f32,
@@ -94,13 +94,13 @@ impl CrossfeedConfig {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, RustcEncodable, RustcDecodable)]
+#[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MuxMode {
     Exclusive,
     Mixer,
 }
 
-#[derive(RustcEncodable)]
+#[derive(Serialize)]
 pub struct State {
     pub inputs: Vec<InputState>,
     pub outputs: Vec<OutputState>,

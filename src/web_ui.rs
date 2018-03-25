@@ -13,7 +13,7 @@ fn load_file(filename: &str) -> Result<String> {
     Ok(content)
 }
 
-#[derive(RustcEncodable)]
+#[derive(Serialize)]
 struct EmptyResponse {}
 
 fn serve_web(address: &str, shared_state: SharedState) {
@@ -33,21 +33,21 @@ fn serve_web(address: &str, shared_state: SharedState) {
                         Response::json(state_controller.state())
                     },
                     (POST) (/api/state) => {
-                         #[derive(RustcDecodable)]
+                         #[derive(Deserialize)]
                          struct LoudnessParams {
                              enabled: Option<bool>,
                              auto: Option<bool>,
                              level: Option<f32>,
                          }
 
-                         #[derive(RustcDecodable)]
+                         #[derive(Deserialize)]
                          struct CrossfeedParams {
                              enabled: Option<bool>,
                              level: Option<f32>,
                              delay_ms: Option<f32>,
                          }
 
-                         #[derive(RustcDecodable)]
+                         #[derive(Deserialize)]
                          struct RequestParams {
                              volume: Option<f32>,
                              output: Option<usize>,
@@ -121,7 +121,7 @@ fn serve_web(address: &str, shared_state: SharedState) {
                         Response::json(&EmptyResponse{})
                     },
                     (POST) (/api/inputs/{id: usize}) => {
-                         #[derive(RustcDecodable)]
+                         #[derive(Deserialize)]
                          struct RequestParams {
                              gain: f32,
                          }
