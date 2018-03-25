@@ -1,6 +1,6 @@
 #![feature(duration_from_micros)]
 
-extern crate rustc_serialize;
+extern crate serde;
 
 #[macro_use]
 extern crate rouille;

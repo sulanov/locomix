@@ -1,6 +1,6 @@
+use serde;
 use std::sync::Arc;
 use std::sync::{Mutex, MutexGuard};
-use rustc_serialize;
 use std::sync::mpsc;
 
 pub const VOLUME_MIN: f32 = -60.0;
@@ -8,14 +8,16 @@ pub const VOLUME_MAX: f32 = 0.0;
 
 pub type DeviceId = usize;
 
-#[derive(Copy, Clone, Serialize)]
+#[derive(Copy, Clone)]
 pub struct Gain {
     pub db: f32,
 }
 
-impl rustc_serialize::Encodable for Gain {
-    fn encode<S: rustc_serialize::Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
-        s.emit_f32(self.db)
+impl serde::ser::Serialize for Gain {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where S: serde::ser::Serializer
+    {
+        serializer.serialize_f32(self.db)
     }
 }
 
