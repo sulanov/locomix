@@ -118,24 +118,24 @@ function makeRequest (opts) {
 
 function autoupdate_slider(slider_container, update_callback) {
   let slider = slider_container.querySelector(".slider");
-  let value = slider_container.querySelector("value");
 
   var update_pending = false;
   function update() {
     if (update_pending) {
       return;
     }
-    let volume = slider.value;
+    let value = parseFloat(slider.value);
     update_pending = true;
-    update_callback(volume)
+    update_callback(value)
     .then(() => {
       update_pending = false;
-      if (volume != slider.value) {
+      if (value != parseFloat(slider.value)) {
         update();
       }
     })
   }
 
+  let value = slider_container.querySelector("value");
   slider.oninput = () => {
     value.innerText = slider.value;
     update();
