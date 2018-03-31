@@ -15,7 +15,8 @@ pub struct Gain {
 
 impl serde::ser::Serialize for Gain {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where S: serde::ser::Serializer
+    where
+        S: serde::ser::Serializer,
     {
         serializer.serialize_f32(self.db)
     }

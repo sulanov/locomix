@@ -26,6 +26,10 @@ impl TimeDelta {
         TimeDelta(secs * NANOS_PER_SEC)
     }
 
+    pub fn seconds_f(secs: f64) -> TimeDelta {
+        TimeDelta((secs * NANOS_PER_SEC as f64) as i64)
+    }
+
     pub fn milliseconds(ms: i64) -> TimeDelta {
         TimeDelta(ms * NANOS_PER_MILLI)
     }

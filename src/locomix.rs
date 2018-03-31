@@ -87,6 +87,7 @@ struct CompositeOutputEntry {
     sample_rate: Option<usize>,
     channel_map: Option<String>,
     delay: Option<f32>,
+    dynamic_resampling: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -330,7 +331,7 @@ fn run() -> Result<(), RunError> {
                         sample_rate: d.sample_rate.or(output.sample_rate),
                         channels: try!(parse_channel_map(d.channel_map)),
                         delay: TimeDelta::milliseconds_f(d.delay.unwrap_or(0.0)),
-                        exact_sample_rate: dynamic_resampling,
+                        exact_sample_rate: d.dynamic_resampling.unwrap_or(dynamic_resampling),
                         enable_a52: false,
                     });
                 }

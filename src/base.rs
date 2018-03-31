@@ -527,7 +527,7 @@ pub struct DeviceSpec {
     pub enable_a52: bool,
 }
 
-const TIME_PRECISION_US: i64 = 1000;
+const TIME_PRECISION_US: i64 = 100;
 const MAX_SAMPLE_RATE: f32 = 96000.0;
 
 pub struct RateDetector {
@@ -578,6 +578,43 @@ impl RateDetector {
     pub fn reset(&mut self) {
         self.history.clear();
         self.sum = 0;
+    }
+}
+
+pub struct SeriesStats {
+    window: usize,
+    values: VecDeque<f64>,
+    sum: f64,
+}
+
+impl SeriesStats {
+    pub fn new(window: usize) -> SeriesStats {
+        return SeriesStats {
+            window: window,
+            values: VecDeque::new(),
+            sum: 0.0f64,
+        };
+    }
+
+    pub fn average(&self) -> Option<f64> {
+        if self.values.is_empty() {
+            None
+        } else {
+            Some(self.sum / self.values.len() as f64)
+        }
+    }
+
+    pub fn push(&mut self, v: f64) {
+        self.values.push_back(v);
+        self.sum += v;
+        if self.values.len() > self.window {
+            self.sum -= self.values.pop_front().unwrap();
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.values.clear();
+        self.sum = 0.0;
     }
 }
 
