@@ -1,10 +1,10 @@
 extern crate libc;
 
 use std;
-use std::fmt;
-use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 use std::cmp::{Ord, Ordering};
+use std::fmt;
 use std::iter::Sum;
+use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 
 const NANOS_PER_SEC: i64 = 1_000_000_000;
 const NANOS_PER_MILLI: i64 = 1_000_000;

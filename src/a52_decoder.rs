@@ -4,9 +4,9 @@
 extern crate libc;
 use self::libc::{c_int, c_void, uint32_t, uint8_t};
 use base;
-use time;
 use std::cmp;
 use std::slice;
+use time;
 
 const A52_MONO: c_int = 1;
 const A52_STEREO: c_int = 2;

@@ -3,10 +3,10 @@ use base::*;
 use crossover;
 use downmixer;
 use filters::*;
-use time::*;
+use output;
 use std;
 use std::cmp;
-use output;
+use time::*;
 use ui;
 
 struct InputMixer {

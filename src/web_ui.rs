@@ -1,10 +1,10 @@
 use base::*;
 use rouille;
 use rouille::Response;
-use ui::*;
 use std::fs::File;
 use std::io::Read;
 use std::thread;
+use ui::*;
 
 fn load_file(filename: &str) -> Result<String> {
     let mut file = try!(File::open(filename));

@@ -3,10 +3,10 @@ extern crate libc;
 use base::*;
 use std::fs::File;
 use std::fs::OpenOptions;
-use std::os::unix::io::AsRawFd;
 use std::io::Read;
 use std::io::Write;
 use std::mem;
+use std::os::unix::io::AsRawFd;
 use std::slice;
 
 const EVIOCSREP: libc::c_ulong = 0x40084503;

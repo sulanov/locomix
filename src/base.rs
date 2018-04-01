@@ -4,13 +4,13 @@ extern crate simd;
 
 use self::byteorder::{ByteOrder, LittleEndian};
 use self::simd::f32x4;
+use std::collections::VecDeque;
 use std::error;
 use std::fmt;
 use std::io;
-use std::slice;
 use std::iter::Enumerate;
 use std::result;
-use std::collections::VecDeque;
+use std::slice;
 use time::{Time, TimeDelta};
 
 #[derive(Clone, Copy, Debug)]
@@ -527,7 +527,7 @@ pub struct DeviceSpec {
     pub enable_a52: bool,
 }
 
-const TIME_PRECISION_US: i64 = 100;
+const TIME_PRECISION_US: i64 = 200;
 const MAX_SAMPLE_RATE: f32 = 96000.0;
 
 pub struct RateDetector {

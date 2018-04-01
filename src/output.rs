@@ -3,12 +3,12 @@ extern crate libc;
 extern crate nix;
 
 use base::*;
+use resampler;
 use std::cmp;
 use std::ffi::CString;
 use std::sync::mpsc;
 use std::thread;
 use time::{Time, TimeDelta};
-use resampler;
 
 pub trait Output: Send {
     fn write(&mut self, frame: Frame) -> Result<()>;
@@ -69,8 +69,8 @@ impl OutputPosTracker {
         self.samples_pos += samples as f64;
     }
 
-    fn reset(&mut self) {
-        self.base_time = Time::zero();
+    fn reset(&mut self, base_time: Time) {
+        self.base_time = base_time;
         self.samples_pos = 0.0;
         self.offset.reset();
     }
@@ -101,24 +101,21 @@ struct AlsaWriteLoop {
 
 #[derive(PartialEq)]
 enum LoopState {
-    Continue,
+    Running,
     Stop,
 }
 
 impl AlsaWriteLoop {
-    fn next_buffer(&mut self, time: Time, deadline: Time) -> LoopState {
+    fn next_buffer(&mut self, time: Time) -> LoopState {
         self.buffer_pos = 0;
 
         loop {
             if self.cur_frame.is_none() {
-                let timeout = deadline - Time::now();
-                if timeout >= TimeDelta::zero() {
-                    self.cur_frame = match self.frame_receiver.recv_timeout(timeout.as_duration()) {
-                        Ok(frame) => Some(frame),
-                        Err(mpsc::RecvTimeoutError::Timeout) => None,
-                        Err(mpsc::RecvTimeoutError::Disconnected) => return LoopState::Stop,
-                    };
-                }
+                self.cur_frame = match self.frame_receiver.try_recv() {
+                    Ok(frame) => Some(frame),
+                    Err(mpsc::TryRecvError::Empty) => None,
+                    Err(mpsc::TryRecvError::Disconnected) => return LoopState::Stop,
+                };
             }
 
             if self.cur_frame.is_none() {
@@ -153,27 +150,38 @@ impl AlsaWriteLoop {
             break;
         }
 
-        LoopState::Continue
+        LoopState::Running
+    }
+
+    fn start_device(&mut self) -> alsa::Result<()> {
+        let buf = vec![0u8; self.bytes_per_frame * self.period_size];
+        for _ in 0..BUFFER_PERIODS {
+            self.pcm.io().writei(&buf[..])?;
+        }
+        self.pcm.start()?;
+        for _ in 0..BUFFER_PERIODS {
+            self.pcm.io().writei(&buf[..])?;
+        }
+
+        self.rate_detector.reset();
+        let stream_time_estimate = self.stream_time_estimate()?;
+        self.pos_tracker.reset(stream_time_estimate);
+
+        Ok(())
+    }
+
+    fn stream_time_estimate(&mut self) -> alsa::Result<Time> {
+        let now1 = Time::now();
+        let (_avail, delay) = self.pcm.avail_delay()?;
+        let now2 = Time::now();
+        let now = now1 + (now2 - now1) / 2;
+        Ok(now + samples_to_timedelta(self.sample_rate as f32, delay as i64) + self.spec.delay)
     }
 
     fn do_write(&mut self) -> alsa::Result<LoopState> {
-        let now1 = Time::now();
-        let (avail, delay) = try!(self.pcm.avail_delay());
-        let now2 = Time::now();
-        let now = now1 + (now2 - now1) / 2;
-
-        let stream_time_estimate =
-            now + samples_to_timedelta(self.sample_rate as f32, delay as i64) + self.spec.delay;
-        self.pos_tracker.pos_estimate(stream_time_estimate);
-
         if self.buffer_pos >= self.buffer.len() {
-            let stream_time = self.pos_tracker.pos();
-            let deadline = now
-                + samples_to_timedelta(
-                    self.sample_rate as f32,
-                    self.period_size as i64 - avail as i64,
-                );
-            if self.next_buffer(stream_time, deadline) == LoopState::Stop {
+            let stream_pos = self.pos_tracker.pos();
+            if self.next_buffer(stream_pos) == LoopState::Stop {
                 return Ok(LoopState::Stop);
             }
         }
@@ -181,22 +189,47 @@ impl AlsaWriteLoop {
         let frames_written = try!(self.pcm.io().writei(&self.buffer[self.buffer_pos..])) as usize;
         self.buffer_pos += frames_written * self.bytes_per_frame;
 
+        let stream_time_estimate = self.stream_time_estimate()?;
         self.pos_tracker.add_samples(frames_written);
+        self.pos_tracker.pos_estimate(stream_time_estimate);
 
         if self.spec.exact_sample_rate {
-            let end_time = stream_time_estimate
-                + samples_to_timedelta(self.sample_rate as f32, frames_written as i64);
-            let current_rate = self.rate_detector.update(frames_written, end_time);
+            let current_rate = self.rate_detector
+                .update(frames_written, stream_time_estimate);
+            let now = Time::now();
             if now - self.last_rate_update > TimeDelta::milliseconds(RATE_UPDATE_PERIOD_MS) {
                 self.last_rate_update = now;
-                self.feedback_sender
-                    .send(AlsaWriteLoopFeedback::CurrentRate(current_rate.rate))
-                    .expect("Failed to send rate update");
-                self.pos_tracker.set_sample_rate(current_rate.rate as f64);
+                if (current_rate.rate - self.sample_rate as f32).abs()
+                    < 0.01 * self.sample_rate as f32
+                {
+                    self.feedback_sender
+                        .send(AlsaWriteLoopFeedback::CurrentRate(current_rate.rate))
+                        .expect("Failed to send rate update");
+                    self.pos_tracker.set_sample_rate(current_rate.rate as f64);
+                } else {
+                    println!("WARNING: Erroneous output rate {}.", current_rate.rate);
+                }
             }
         }
 
-        Ok(LoopState::Continue)
+        Ok(LoopState::Running)
+    }
+
+    fn run_loop_err(&mut self) -> alsa::Result<()> {
+        self.start_device()?;
+
+        loop {
+            match self.do_write() {
+                Ok(LoopState::Stop) => return Ok(()),
+                Ok(LoopState::Running) => continue,
+                Err(e) => {
+                    println!("Recovering output {} after error ({})", self.spec.name, e);
+                    self.pcm
+                        .recover(e.errno().map(|x| x as i32).unwrap_or(0), true)?;
+                    self.start_device()?
+                }
+            }
+        }
     }
 
     fn run_loop(&mut self) {
@@ -207,25 +240,9 @@ impl AlsaWriteLoop {
             }
         }
 
-        loop {
-            match self.do_write() {
-                Ok(LoopState::Stop) => return,
-                Ok(LoopState::Continue) => continue,
-                Err(e) => {
-                    println!("Recovering output {} after error ({})", self.spec.name, e);
-                    self.rate_detector.reset();
-                    self.pos_tracker.reset();
-                    match self.pcm
-                        .recover(e.errno().map(|x| x as i32).unwrap_or(0), true)
-                    {
-                        Ok(()) => (),
-                        Err(e) => {
-                            println!("snd_pcm_recover() failed for {}: {}", self.spec.name, e);
-                            return;
-                        }
-                    }
-                }
-            }
+        match self.run_loop_err() {
+            Ok(()) => (),
+            Err(e) => println!("Output device {} error: {}", self.spec.name, e),
         }
     }
 }
@@ -325,11 +342,16 @@ impl AlsaOutput {
                 spec.channels.len(),
                 try!(pcm.get_chmap())
             );
+
+            // Stop automatic start.
+            let swp = pcm.sw_params_current()?;
+            swp.set_start_threshold(alsa::pcm::Frames::max_value())?;
+            pcm.sw_params(&swp)?
         }
 
         let (_, device_delay) = try!(pcm.avail_delay());
         let min_delay = samples_to_timedelta(sample_rate as f32, device_delay as i64)
-            + period_duration * (BUFFER_PERIODS as i64 - 1) + spec.delay;
+            + period_duration * BUFFER_PERIODS as i64 + spec.delay;
 
         let (sender, receiver) = mpsc::channel();
         let (feedback_sender, feedback_receiver) = mpsc::channel();

@@ -5,11 +5,11 @@ extern crate locomix;
 use self::byteorder::{NativeEndian, ReadBytesExt};
 use getopts::Options;
 use locomix::base::*;
-use locomix::filters::*;
 use locomix::brutefir::*;
+use locomix::filters::*;
 use locomix::time;
-use std::f32::consts::PI;
 use std::env;
+use std::f32::consts::PI;
 use std::fs;
 
 fn get_filter_response<F: StreamFilter>(f: &mut F, sample_rate: f32, freq: FCoef) -> FCoef {

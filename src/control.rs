@@ -1,6 +1,6 @@
 use input_device::*;
-use ui::*;
 use std;
+use ui::*;
 
 fn try_open(device_path: &str, log_error: bool) -> Option<InputDevice> {
     match InputDevice::new(device_path) {

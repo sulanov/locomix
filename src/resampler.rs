@@ -1,8 +1,8 @@
+use base;
+use base::convolve;
 use std::cmp;
 use std::f32::consts::PI;
 use std::sync::Arc;
-use base;
-use base::convolve;
 use time::TimeDelta;
 
 const NUM_SUB_INTERVALS: usize = 32;

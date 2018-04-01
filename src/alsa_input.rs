@@ -2,12 +2,12 @@ extern crate alsa;
 extern crate libc;
 extern crate nix;
 
-use std;
-use std::ffi::CString;
-use std::error;
-use time::{Time, TimeDelta};
-use base::*;
 use a52_decoder;
+use base::*;
+use std;
+use std::error;
+use std::ffi::CString;
+use time::{Time, TimeDelta};
 
 use super::input::*;
 

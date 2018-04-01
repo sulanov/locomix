@@ -1,7 +1,7 @@
 use serde;
 use std::sync::Arc;
-use std::sync::{Mutex, MutexGuard};
 use std::sync::mpsc;
+use std::sync::{Mutex, MutexGuard};
 
 pub const VOLUME_MIN: f32 = -60.0;
 pub const VOLUME_MAX: f32 = 0.0;

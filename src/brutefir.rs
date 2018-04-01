@@ -1,14 +1,14 @@
 extern crate tempfile;
 
 use base::*;
+use filters;
+use std;
 use std::cmp;
 use std::io::Read;
 use std::io::Write;
-use std::process::{Child, Command, Stdio};
-use std;
 use std::mem;
+use std::process::{Child, Command, Stdio};
 use time::{Time, TimeDelta};
-use filters;
 
 use self::tempfile::NamedTempFile;
 
