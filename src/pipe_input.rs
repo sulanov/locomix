@@ -17,7 +17,7 @@ const FILE_REOPEN_FREQUENCY_SECS: i64 = 2;
 
 pub struct PipeInput {
     spec: DeviceSpec,
-    sample_rate: f32,
+    sample_rate: f64,
     file: Option<File>,
 
     last_open_time: Time,
@@ -33,7 +33,7 @@ pub struct PipeInput {
 impl PipeInput {
     pub fn open(spec: DeviceSpec, period_duration: TimeDelta) -> Box<PipeInput> {
         let now = Time::now();
-        let sample_rate = spec.sample_rate.unwrap_or(48000) as f32;
+        let sample_rate = spec.sample_rate.unwrap_or(48000) as f64;
         Box::new(PipeInput {
             spec: spec,
             sample_rate: sample_rate,
@@ -102,8 +102,8 @@ impl Input for PipeInput {
 
         let bytes_per_frame = FORMAT.bytes_per_sample() * self.spec.channels.len();
 
-        let size = (self.period_duration * self.sample_rate as i64 / TimeDelta::seconds(1)
-            * bytes_per_frame as i64) as usize / 2;
+        let size =
+            (self.period_duration.in_seconds_f() * self.sample_rate) as usize * bytes_per_frame / 2;
         let mut buffer = vec![0u8; size];
 
         buffer[0..self.leftover.len()].copy_from_slice(&self.leftover[..]);
@@ -135,7 +135,7 @@ impl Input for PipeInput {
 
         let mut frame = Frame::from_buffer(
             FORMAT,
-            self.sample_rate as f32,
+            self.sample_rate as f64,
             &self.spec.channels,
             &buffer[0..bytes_to_use],
             get_sample_timestamp(self.reference_time, self.sample_rate, self.pos),

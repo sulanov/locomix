@@ -9,54 +9,54 @@ use locomix::brutefir::*;
 use locomix::filters::*;
 use locomix::time;
 use std::env;
-use std::f32::consts::PI;
+use std::f64::consts::PI;
 use std::fs;
 
-fn get_filter_response<F: StreamFilter>(f: &mut F, sample_rate: f32, freq: FCoef) -> FCoef {
+fn get_filter_response<F: StreamFilter>(f: &mut F, sample_rate: f64, freq: f64) -> f64 {
     let mut test_signal = Frame::new(sample_rate, time::Time::now(), 2 * sample_rate as usize);
     {
         let pcm = test_signal.ensure_channel(ChannelPos::FL);
         for i in 0..pcm.len() {
-            pcm[i] = (i as FCoef / sample_rate as f32 * freq * 2.0 * PI).sin() as f32;
+            pcm[i] = (i as f64 / sample_rate * freq * 2.0 * PI).sin() as f32;
         }
     }
     f.reset();
     let response = f.apply(test_signal);
 
-    let mut p_sum = 0.0;
+    let mut p_sum = 0.0f64;
     {
         let pcm = response.get_channel(ChannelPos::FL).unwrap();
         for i in (pcm.len() / 2)..pcm.len() {
-            p_sum += (pcm[i] as FCoef).powi(2);
+            p_sum += (pcm[i] as f64).powi(2);
         }
     }
 
-    ((p_sum / ((response.len() / 2) as FCoef)) * 2.0).log(10.0) * 10.0
+    ((p_sum / ((response.len() / 2) as f64)) * 2.0).log(10.0) * 10.0
 }
 
-fn draw_filter_graph<F: StreamFilter>(sample_rate: f32, mut f: F) {
-    let mut freq: FCoef = 20.0;
+fn draw_filter_graph<F: StreamFilter>(sample_rate: f64, mut f: F) {
+    let mut freq = 20.0f64;
     for _ in 0..82 {
         let response = get_filter_response(&mut f, sample_rate, freq);
         println!("{} {}", freq as usize, response);
-        freq = freq * (2.0 as FCoef).powf(0.125);
+        freq = freq * 2.0f64.powf(0.125);
     }
 }
 
-fn get_crossfeed_response(sample_rate: FCoef, freq: FCoef) -> FCoef {
+fn get_crossfeed_response(sample_rate: f64, freq: f64) -> f64 {
     let mut f = CrossfeedFilter::new(sample_rate);
     f.set_params(0.3, 0.3);
     let mut test_signal = Frame::new(sample_rate, time::Time::now(), (sample_rate as usize) * 2);
     {
         let pcm = test_signal.ensure_channel(ChannelPos::FL);
         for i in 0..pcm.len() {
-            pcm[i] = (i as FCoef / sample_rate * freq * 2.0 * PI).sin() as f32;
+            pcm[i] = (i as f64 / sample_rate * freq * 2.0 * PI).sin() as f32;
         }
     }
     {
         let pcm = test_signal.ensure_channel(ChannelPos::FR);
         for i in 0..pcm.len() {
-            pcm[i] = (i as FCoef / sample_rate * freq * 2.0 * PI).sin() as f32;
+            pcm[i] = (i as f64 / sample_rate * freq * 2.0 * PI).sin() as f32;
         }
     }
     let response = f.apply(test_signal);
@@ -65,18 +65,18 @@ fn get_crossfeed_response(sample_rate: FCoef, freq: FCoef) -> FCoef {
     {
         let pcm = response.get_channel(ChannelPos::FL).unwrap();
         for i in 0..response.len() {
-            p_sum += (pcm[i] as FCoef).powi(2);
+            p_sum += (pcm[i] as f64).powi(2);
         }
     }
-    ((p_sum / (response.len() as FCoef)) * 2.0).log(10.0) * 10.0
+    ((p_sum / (response.len() as f64)) * 2.0).log(10.0) * 10.0
 }
 
-fn draw_crossfeed_graph(sample_rate: f32) {
-    let mut freq: FCoef = 20.0;
+fn draw_crossfeed_graph(sample_rate: f64) {
+    let mut freq: f64 = 20.0;
     for _ in 0..82 {
         let response = get_crossfeed_response(sample_rate, freq);
         println!("{} {}", freq as usize, response);
-        freq = freq * (2 as FCoef).powf(0.125);
+        freq = freq * 2f64.powf(0.125);
     }
 }
 
@@ -124,7 +124,7 @@ fn run() -> Result<()> {
 
     let sample_rate = match matches.opt_str("r").map(|x| x.parse::<usize>()) {
         None => 48000.0,
-        Some(Ok(rate)) => rate as f32,
+        Some(Ok(rate)) => rate as f64,
         Some(Err(_)) => return Err(Error::new("Cannot parse sample-rate parameter.")),
     };
 

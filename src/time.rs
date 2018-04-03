@@ -34,8 +34,8 @@ impl TimeDelta {
         TimeDelta(ms * NANOS_PER_MILLI)
     }
 
-    pub fn milliseconds_f(ms: f32) -> TimeDelta {
-        TimeDelta((ms * NANOS_PER_MILLI as f32) as i64)
+    pub fn milliseconds_f(ms: f64) -> TimeDelta {
+        TimeDelta((ms * NANOS_PER_MILLI as f64) as i64)
     }
 
     pub fn microseconds(us: i64) -> TimeDelta {
@@ -113,10 +113,10 @@ impl Mul<i64> for TimeDelta {
     }
 }
 
-impl Mul<f32> for TimeDelta {
+impl Mul<f64> for TimeDelta {
     type Output = TimeDelta;
 
-    fn mul(self, rhs: f32) -> TimeDelta {
+    fn mul(self, rhs: f64) -> TimeDelta {
         TimeDelta((self.0 as f64 * rhs as f64) as i64)
     }
 }

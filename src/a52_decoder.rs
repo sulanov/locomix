@@ -312,7 +312,7 @@ impl A52Decoder {
     }
 
     fn get_next_frame(&mut self, state: &DecodedState) -> Option<base::Frame> {
-        let mut frame = base::Frame::new(state.sample_rate as f32, state.timestamp, 256);
+        let mut frame = base::Frame::new(state.sample_rate as f64, state.timestamp, 256);
 
         unsafe {
             a52_dynrng(self.state, None, 0 as *mut c_void);

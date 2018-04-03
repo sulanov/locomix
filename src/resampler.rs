@@ -228,8 +228,8 @@ impl ResamplerFactory {
 }
 
 pub struct StreamResampler {
-    input_sample_rate: f32,
-    output_sample_rate: f32,
+    input_sample_rate: f64,
+    output_sample_rate: f64,
     resampler_factory: ResamplerFactory,
     resamplers: base::PerChannel<Resampler>,
     delay: TimeDelta,
@@ -237,7 +237,7 @@ pub struct StreamResampler {
 }
 
 impl StreamResampler {
-    pub fn new(output_sample_rate: f32, window_size: usize) -> StreamResampler {
+    pub fn new(output_sample_rate: f64, window_size: usize) -> StreamResampler {
         StreamResampler {
             input_sample_rate: 48000.0,
             output_sample_rate: output_sample_rate,
@@ -261,7 +261,7 @@ impl StreamResampler {
         self.resamplers = base::PerChannel::new();
     }
 
-    pub fn set_output_sample_rate(&mut self, output_sample_rate: f32) {
+    pub fn set_output_sample_rate(&mut self, output_sample_rate: f64) {
         if self.output_sample_rate == output_sample_rate {
             return;
         }

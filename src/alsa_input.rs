@@ -14,7 +14,7 @@ use super::input::*;
 const CHANNELS: usize = 2;
 
 const ACCEPTED_RATES: [usize; 4] = [44100, 48000, 88200, 96000];
-const MAX_SAMPLE_RATE_ERROR: f32 = 1000.0;
+const MAX_SAMPLE_RATE_ERROR: f64 = 1000.0;
 
 pub struct AlsaInput {
     spec: DeviceSpec,
@@ -26,7 +26,7 @@ pub struct AlsaInput {
     exact_rate_detector: RateDetector,
     active: bool,
     last_non_silent_time: Time,
-    current_rate: f32,
+    current_rate: f64,
     last_rate_update: Time,
 
     a52_decoder: a52_decoder::A52Decoder,
@@ -107,7 +107,7 @@ impl AlsaInput {
             exact_rate_detector: RateDetector::new(1.0),
             active: false,
             last_non_silent_time: now,
-            current_rate: sample_rate as f32,
+            current_rate: sample_rate as f64,
             last_rate_update: now,
             a52_decoder: a52_decoder::A52Decoder::new(),
             a52_stream: false,
@@ -163,12 +163,12 @@ impl AlsaInput {
         let timestamp = end_timestamp - samples_to_timedelta(self.current_rate, samples as i64);
 
         let rate = self.rate_detector.update(samples, end_timestamp);
-        if (self.sample_rate as f32 - rate.rate).abs() > MAX_SAMPLE_RATE_ERROR
+        if (self.sample_rate as f64 - rate.rate).abs() > MAX_SAMPLE_RATE_ERROR
             && rate.error < MAX_SAMPLE_RATE_ERROR
         {
             let mut new_rate = 0;
             for r in &ACCEPTED_RATES[..] {
-                if (rate.rate - *r as f32).abs() < MAX_SAMPLE_RATE_ERROR {
+                if (rate.rate - *r as f64).abs() < MAX_SAMPLE_RATE_ERROR {
                     new_rate = *r;
                 }
             }
@@ -179,7 +179,7 @@ impl AlsaInput {
                     &self.spec.name, new_rate
                 );
                 self.sample_rate = new_rate;
-                self.current_rate = new_rate as f32;
+                self.current_rate = new_rate as f64;
                 self.exact_rate_detector.reset();
             } else if rate.error < 100.0 {
                 println!(
@@ -252,7 +252,7 @@ impl Input for AlsaInput {
     }
 
     fn min_delay(&self) -> TimeDelta {
-        samples_to_timedelta(self.sample_rate as f32, self.period_size as i64)
+        samples_to_timedelta(self.sample_rate as f64, self.period_size as i64)
     }
 }
 

@@ -102,7 +102,7 @@ filter 0 {{
 pub struct BruteFir {
     channels: PerChannel<BruteFirChannel>,
     part_size: usize,
-    sample_rate: usize,
+    sample_rate: f64,
     parts: usize,
     samples_buffered: usize,
     buf_frame: Frame,
@@ -136,10 +136,10 @@ impl BruteFir {
         Ok(BruteFir {
             channels: channels,
             part_size: part_size,
-            sample_rate: sample_rate,
+            sample_rate: sample_rate as f64,
             parts: parts,
             samples_buffered: 0,
-            buf_frame: Frame::new(sample_rate as f32, Time::zero(), part_size),
+            buf_frame: Frame::new(sample_rate as f64, Time::zero(), part_size),
             failed: false,
         })
     }
@@ -176,9 +176,8 @@ impl BruteFir {
         let total_samples = input.len() + self.samples_buffered;
         let result_samples = (total_samples / self.part_size) * self.part_size;
         let mut result = Frame::new(
-            self.sample_rate as f32,
-            input.timestamp
-                - samples_to_timedelta(self.sample_rate as f32, self.samples_buffered as i64),
+            self.sample_rate,
+            input.timestamp - samples_to_timedelta(self.sample_rate, self.samples_buffered as i64),
             result_samples,
         );
 
@@ -199,8 +198,7 @@ impl BruteFir {
             self.samples_buffered += append_samples;
 
             if self.samples_buffered == self.part_size {
-                let mut buf_frame =
-                    Frame::new(self.sample_rate as f32, Time::zero(), self.part_size);
+                let mut buf_frame = Frame::new(self.sample_rate, Time::zero(), self.part_size);
                 mem::swap(&mut self.buf_frame, &mut buf_frame);
                 self.process_frame(&mut buf_frame, 0, &mut result, output_pos)?;
                 output_pos += self.part_size;

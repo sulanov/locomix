@@ -13,7 +13,7 @@ pub struct InputResampler {
 }
 
 impl InputResampler {
-    pub fn new(input: Box<Input>, output_rate: f32, window_size: usize) -> InputResampler {
+    pub fn new(input: Box<Input>, output_rate: f64, window_size: usize) -> InputResampler {
         InputResampler {
             input: input,
             resampler: StreamResampler::new(output_rate, window_size),

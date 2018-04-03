@@ -86,7 +86,7 @@ struct CompositeOutputEntry {
     device: String,
     sample_rate: Option<usize>,
     channel_map: Option<String>,
-    delay: Option<f32>,
+    delay: Option<f64>,
     dynamic_resampling: Option<bool>,
 }
 
@@ -292,7 +292,7 @@ fn run() -> Result<(), RunError> {
 
         let async_resampled = async_input::AsyncInput::new(Box::new(input::InputResampler::new(
             device,
-            sample_rate as f32,
+            sample_rate as f64,
             resampler_window,
         )));
 
@@ -330,7 +330,7 @@ fn run() -> Result<(), RunError> {
                         id: d.device,
                         sample_rate: d.sample_rate.or(output.sample_rate),
                         channels: try!(parse_channel_map(d.channel_map)),
-                        delay: TimeDelta::milliseconds_f(d.delay.unwrap_or(0.0)),
+                        delay: TimeDelta::milliseconds_f(d.delay.unwrap_or(0f64)),
                         exact_sample_rate: d.dynamic_resampling.unwrap_or(dynamic_resampling),
                         enable_a52: false,
                     });
@@ -459,7 +459,7 @@ fn run() -> Result<(), RunError> {
     Ok(try!(mixer::run_mixer_loop(
         inputs,
         outputs,
-        sample_rate,
+        sample_rate as f64,
         period_duration,
         shared_state,
     )))
