@@ -267,7 +267,7 @@ document.body.onload = () => {
 
     if (state.outputs.length > 1) {
       let template = document.querySelector(".output_selector .template")
-      for (var output_id in state.outputs) {
+      for (var output_id = 0; output_id < state.outputs.length; output_id++) {
         add_output(state, output_id, template);
       }
     } else {
