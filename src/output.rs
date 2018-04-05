@@ -172,7 +172,7 @@ impl AlsaWriteLoop {
 
     fn stream_time_estimate(&mut self) -> alsa::Result<Time> {
         let now1 = Time::now();
-        let (_avail, delay) = self.pcm.avail_delay()?;
+        let delay = self.pcm.delay()?;
         let now2 = Time::now();
         let now = now1 + (now2 - now1) / 2;
         Ok(now + samples_to_timedelta(self.sample_rate, delay as i64) + self.spec.delay)
@@ -348,7 +348,7 @@ impl AlsaOutput {
             pcm.sw_params(&swp)?
         }
 
-        let (_, device_delay) = try!(pcm.avail_delay());
+        let device_delay = try!(pcm.delay());
         let min_delay = samples_to_timedelta(sample_rate as f64, device_delay as i64)
             + period_duration * BUFFER_PERIODS as i64 + spec.delay;
 
