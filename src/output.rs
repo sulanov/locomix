@@ -19,7 +19,6 @@ pub trait Output: Send {
 
 const MAX_TIMESTAMP_DEVIATION_US: i64 = 500;
 const BUFFER_PERIODS: usize = 4;
-const RATE_UPDATE_PERIOD_MS: i64 = 500;
 
 enum AlsaWriteLoopFeedback {
     CurrentRate(f64),
@@ -30,73 +29,19 @@ struct InterleavedFrame {
     buf: Vec<u8>,
 }
 
-struct OutputPosTracker {
-    base_time: Time,
-    sample_rate: f64,
-    samples_pos: f64,
-    offset: SeriesStats,
-}
-
-impl OutputPosTracker {
-    fn new(sample_rate: f64) -> OutputPosTracker {
-        OutputPosTracker {
-            base_time: Time::zero(),
-            sample_rate: sample_rate,
-            samples_pos: 0.0,
-            offset: SeriesStats::new(100),
-        }
-    }
-
-    fn pos_no_offset(&self) -> Time {
-        assert!(self.base_time != Time::zero());
-        self.base_time + TimeDelta::seconds_f(self.samples_pos / self.sample_rate)
-    }
-
-    fn pos(&self) -> Time {
-        self.pos_no_offset() + TimeDelta::seconds_f(self.offset.average().unwrap_or(0.0))
-    }
-
-    fn pos_estimate(&mut self, time: Time) {
-        if self.base_time == Time::zero() {
-            self.base_time = time;
-            self.samples_pos = 0.0;
-        }
-        let new_offset = (time - self.pos_no_offset()).in_seconds_f();
-        self.offset.push(new_offset);
-    }
-
-    fn add_samples(&mut self, samples: usize) {
-        self.samples_pos += samples as f64;
-    }
-
-    fn reset(&mut self, base_time: Time) {
-        self.base_time = base_time;
-        self.samples_pos = 0.0;
-        self.offset.reset();
-    }
-
-    fn set_sample_rate(&mut self, sample_rate: f64) {
-        self.base_time = self.pos_no_offset();
-        self.sample_rate = sample_rate;
-        self.samples_pos = 0.0;
-    }
-}
-
 struct AlsaWriteLoop {
     spec: DeviceSpec,
     pcm: alsa::PCM,
     sample_rate: f64,
     period_size: usize,
     bytes_per_frame: usize,
-    pos_tracker: OutputPosTracker,
-    rate_detector: RateDetector,
+    pos_tracker: StreamPositionTracker,
 
     frame_receiver: mpsc::Receiver<InterleavedFrame>,
     feedback_sender: mpsc::Sender<AlsaWriteLoopFeedback>,
     cur_frame: Option<InterleavedFrame>,
     buffer: Vec<u8>,
     buffer_pos: usize,
-    last_rate_update: Time,
 }
 
 #[derive(PartialEq)]
@@ -106,7 +51,7 @@ enum LoopState {
 }
 
 impl AlsaWriteLoop {
-    fn next_buffer(&mut self, time: Time) -> LoopState {
+    fn next_buffer(&mut self) -> LoopState {
         self.buffer_pos = 0;
 
         loop {
@@ -120,22 +65,24 @@ impl AlsaWriteLoop {
 
             if self.cur_frame.is_none() {
                 self.buffer = vec![0u8; self.period_size as usize * self.bytes_per_frame];
+                self.pos_tracker.set_target_pos(None);
                 break;
             }
 
-            let max_deviation = TimeDelta::microseconds(MAX_TIMESTAMP_DEVIATION_US);
             let frame = self.cur_frame.take().unwrap();
-            if frame.timestamp - time > max_deviation {
-                let gap_samples =
-                    ((frame.timestamp - time).in_seconds_f() * self.sample_rate) as usize;
+            let diff = frame.timestamp - self.pos_tracker.pos();
+            let max_deviation = TimeDelta::microseconds(MAX_TIMESTAMP_DEVIATION_US);
+            if diff > max_deviation {
+                let gap_samples = (diff.in_seconds_f() * self.sample_rate) as usize;
+                println!("BOOM {}", gap_samples);
                 let samples_to_fill = cmp::min(self.period_size, gap_samples);
                 self.buffer = vec![0u8; samples_to_fill * self.bytes_per_frame];
 
                 // Keep the frame and use it next time next_buffer() is called.
                 self.cur_frame = Some(frame);
-            } else if time - frame.timestamp > max_deviation {
-                let samples_to_skip =
-                    ((time - frame.timestamp).in_seconds_f() * self.sample_rate) as usize;
+            } else if -diff > max_deviation {
+                let samples_to_skip = ((-diff).in_seconds_f() * self.sample_rate) as usize;
+                println!("SKIP {}", samples_to_skip);
                 let frame_len = frame.buf.len() / self.bytes_per_frame;
                 if samples_to_skip >= frame_len {
                     // Drop this frame - it's too old.
@@ -145,6 +92,7 @@ impl AlsaWriteLoop {
                     self.buffer_pos = samples_to_skip * self.bytes_per_frame;
                 }
             } else {
+                self.pos_tracker.set_target_pos(Some(frame.timestamp));
                 self.buffer = frame.buf;
             }
             break;
@@ -163,9 +111,9 @@ impl AlsaWriteLoop {
             self.pcm.io().writei(&buf[..])?;
         }
 
-        self.rate_detector.reset();
         let stream_time_estimate = self.stream_time_estimate()?;
-        self.pos_tracker.reset(stream_time_estimate);
+        self.pos_tracker
+            .reset(stream_time_estimate, self.sample_rate);
 
         Ok(())
     }
@@ -180,8 +128,7 @@ impl AlsaWriteLoop {
 
     fn do_write(&mut self) -> alsa::Result<LoopState> {
         if self.buffer_pos >= self.buffer.len() {
-            let stream_pos = self.pos_tracker.pos();
-            if self.next_buffer(stream_pos) == LoopState::Stop {
+            if self.next_buffer() == LoopState::Stop {
                 return Ok(LoopState::Stop);
             }
         }
@@ -190,25 +137,17 @@ impl AlsaWriteLoop {
         self.buffer_pos += frames_written * self.bytes_per_frame;
 
         let stream_time_estimate = self.stream_time_estimate()?;
-        self.pos_tracker.add_samples(frames_written);
-        self.pos_tracker.pos_estimate(stream_time_estimate);
+        self.pos_tracker
+            .add_samples(frames_written, stream_time_estimate);
 
-        if self.spec.exact_sample_rate {
-            let current_rate = self.rate_detector
-                .update(frames_written, stream_time_estimate);
-            let now = Time::now();
-            if now - self.last_rate_update > TimeDelta::milliseconds(RATE_UPDATE_PERIOD_MS) {
-                self.last_rate_update = now;
-                if current_rate.error < 0.01 * self.sample_rate {
-                    self.sample_rate = current_rate.rate;
-                    self.pos_tracker.set_sample_rate(current_rate.rate as f64);
-                    self.feedback_sender
-                        .send(AlsaWriteLoopFeedback::CurrentRate(current_rate.rate))
-                        .expect("Failed to send rate update");
-                } else {
-                    println!("WARNING: Erroneous output rate {}.", current_rate.rate);
-                }
+        match self.pos_tracker.update_sample_rate() {
+            Some(new_sample_rate) => {
+                self.sample_rate = new_sample_rate;
+                self.feedback_sender
+                    .send(AlsaWriteLoopFeedback::CurrentRate(self.sample_rate))
+                    .expect("Failed to send rate update");
             }
+            None => (),
         }
 
         Ok(LoopState::Running)
@@ -361,15 +300,13 @@ impl AlsaOutput {
             sample_rate: sample_rate as f64,
             bytes_per_frame: spec.channels.len() * format.bytes_per_sample(),
             period_size: period_size,
-            pos_tracker: OutputPosTracker::new(sample_rate as f64),
-            rate_detector: RateDetector::new(1.0),
+            pos_tracker: StreamPositionTracker::new(sample_rate as f64),
 
             frame_receiver: receiver,
             feedback_sender: feedback_sender,
             cur_frame: None,
             buffer: vec![],
             buffer_pos: 0,
-            last_rate_update: Time::now(),
         };
 
         thread::spawn(move || {

@@ -73,7 +73,6 @@ struct InputConfig {
     sample_rate: Option<usize>,
     channel_map: Option<String>,
     default_gain: Option<f32>,
-    dynamic_resampling: Option<bool>,
     enable_a52: Option<bool>,
 
     // Enables sample rate probing. Useful for sound cards that don't
@@ -87,7 +86,6 @@ struct CompositeOutputEntry {
     sample_rate: Option<usize>,
     channel_map: Option<String>,
     delay: Option<f64>,
-    dynamic_resampling: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -97,7 +95,6 @@ struct OutputConfig {
     devices: Option<Vec<CompositeOutputEntry>>,
     channel_map: Option<String>,
     sample_rate: Option<usize>,
-    dynamic_resampling: Option<bool>,
     default_gain: Option<f32>,
     subwoofer_crossover_frequency: Option<usize>,
     fir_filters: Option<BTreeMap<String, String>>,
@@ -273,7 +270,6 @@ fn run() -> Result<(), RunError> {
             sample_rate: input.sample_rate,
             channels: parse_channel_map(input.channel_map)?,
             delay: TimeDelta::zero(),
-            exact_sample_rate: input.dynamic_resampling.unwrap_or(false),
             enable_a52: input.enable_a52.unwrap_or(false),
         };
         let device: Box<input::Input> = match type_.as_str() {
@@ -308,7 +304,6 @@ fn run() -> Result<(), RunError> {
     for output in config.output {
         index += 1;
         let name = output.name.unwrap_or(format!("Output {}", index));
-        let dynamic_resampling = output.dynamic_resampling.unwrap_or(false);
 
         let devices = match (output.device, output.channel_map, output.devices) {
             (Some(device), channel_map, None) => vec![
@@ -318,7 +313,6 @@ fn run() -> Result<(), RunError> {
                     sample_rate: output.sample_rate,
                     channels: try!(parse_channel_map(channel_map)),
                     delay: TimeDelta::zero(),
-                    exact_sample_rate: dynamic_resampling,
                     enable_a52: false,
                 },
             ],
@@ -331,7 +325,6 @@ fn run() -> Result<(), RunError> {
                         sample_rate: d.sample_rate.or(output.sample_rate),
                         channels: try!(parse_channel_map(d.channel_map)),
                         delay: TimeDelta::milliseconds_f(d.delay.unwrap_or(0f64)),
-                        exact_sample_rate: d.dynamic_resampling.unwrap_or(dynamic_resampling),
                         enable_a52: false,
                     });
                 }

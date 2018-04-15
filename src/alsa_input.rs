@@ -5,6 +5,7 @@ extern crate nix;
 use a52_decoder;
 use base::*;
 use std;
+use std::collections::VecDeque;
 use std::error;
 use std::ffi::CString;
 use time::{Time, TimeDelta};
@@ -16,6 +17,42 @@ const CHANNELS: usize = 2;
 const ACCEPTED_RATES: [usize; 4] = [44100, 48000, 88200, 96000];
 const MAX_SAMPLE_RATE_ERROR: f64 = 1000.0;
 
+struct RateDetector {
+    window: TimeDelta,
+    history: VecDeque<(Time, usize)>,
+    sum: usize,
+}
+
+impl RateDetector {
+    fn new(window: TimeDelta) -> RateDetector {
+        return RateDetector {
+            window: window,
+            history: VecDeque::new(),
+            sum: 0,
+        };
+    }
+
+    fn update(&mut self, samples: usize, t_end: Time) -> f64 {
+        self.sum += samples;
+        self.history.push_back((t_end, samples));
+        while self.history.len() > 0 && t_end - self.history[0].0 >= self.window {
+            self.sum -= self.history.pop_front().unwrap().1;
+        }
+
+        let period = t_end - self.history[0].0;
+        if period <= TimeDelta::zero() {
+            return 48000.0;
+        }
+
+        (self.sum - self.history[0].1) as f64 / period.in_seconds_f()
+    }
+
+    fn reset(&mut self) {
+        self.history.clear();
+        self.sum = 0;
+    }
+}
+
 pub struct AlsaInput {
     spec: DeviceSpec,
     pcm: alsa::PCM,
@@ -23,11 +60,8 @@ pub struct AlsaInput {
     format: SampleFormat,
     period_size: usize,
     rate_detector: RateDetector,
-    exact_rate_detector: RateDetector,
     active: bool,
     last_non_silent_time: Time,
-    current_rate: f64,
-    last_rate_update: Time,
 
     a52_decoder: a52_decoder::A52Decoder,
     a52_stream: bool,
@@ -103,12 +137,9 @@ impl AlsaInput {
             sample_rate: sample_rate,
             format: format,
             period_size: period_size,
-            rate_detector: RateDetector::new(MAX_SAMPLE_RATE_ERROR),
-            exact_rate_detector: RateDetector::new(1.0),
+            rate_detector: RateDetector::new(TimeDelta::milliseconds(500)),
             active: false,
             last_non_silent_time: now,
-            current_rate: sample_rate as f64,
-            last_rate_update: now,
             a52_decoder: a52_decoder::A52Decoder::new(),
             a52_stream: false,
         }))
@@ -123,7 +154,6 @@ impl AlsaInput {
             Err(e) => {
                 println!("Recovering AlsaInput {}: {:?}", &self.spec.name, e.errno());
                 self.rate_detector.reset();
-                self.exact_rate_detector.reset();
                 match self.pcm
                     .recover(e.errno().map(|x| x as i32).unwrap_or(0), true)
                 {
@@ -158,17 +188,18 @@ impl AlsaInput {
 
         let now = Time::now();
         let samples = buf.len() / (CHANNELS * self.format.bytes_per_sample());
-        let end_timestamp =
-            now - samples_to_timedelta(self.current_rate, try!(self.pcm.avail_update()) as i64);
-        let timestamp = end_timestamp - samples_to_timedelta(self.current_rate, samples as i64);
+        let end_timestamp = now - samples_to_timedelta(
+            self.sample_rate as f64,
+            try!(self.pcm.avail_update()) as i64,
+        );
+        let timestamp =
+            end_timestamp - samples_to_timedelta(self.sample_rate as f64, samples as i64);
 
         let rate = self.rate_detector.update(samples, end_timestamp);
-        if (self.sample_rate as f64 - rate.rate).abs() > MAX_SAMPLE_RATE_ERROR
-            && rate.error < MAX_SAMPLE_RATE_ERROR
-        {
+        if (self.sample_rate as f64 - rate).abs() > MAX_SAMPLE_RATE_ERROR {
             let mut new_rate = 0;
             for r in &ACCEPTED_RATES[..] {
-                if (rate.rate - *r as f64).abs() < MAX_SAMPLE_RATE_ERROR {
+                if (rate - *r as f64).abs() < MAX_SAMPLE_RATE_ERROR {
                     new_rate = *r;
                 }
             }
@@ -179,23 +210,6 @@ impl AlsaInput {
                     &self.spec.name, new_rate
                 );
                 self.sample_rate = new_rate;
-                self.current_rate = new_rate as f64;
-                self.exact_rate_detector.reset();
-            } else if rate.error < 100.0 {
-                println!(
-                    "WARNING: Unknown sample rate for {}: {}",
-                    &self.spec.name, rate.rate
-                );
-            }
-        }
-
-        if self.spec.exact_sample_rate {
-            let rate = self.exact_rate_detector.update(samples, end_timestamp);
-            if (now - self.last_rate_update) > TimeDelta::milliseconds(500) {
-                self.last_rate_update = now;
-                if rate.error < 10.0 {
-                    self.current_rate = rate.rate;
-                }
             }
         }
 
@@ -222,7 +236,7 @@ impl AlsaInput {
 
         Ok(Some(Frame::from_buffer_stereo(
             self.format,
-            self.current_rate,
+            self.sample_rate as f64,
             &buf[..],
             timestamp,
         )))
@@ -277,13 +291,14 @@ impl ResilientAlsaInput {
         period_duration: TimeDelta,
         probe_sample_rate: bool,
     ) -> Box<ResilientAlsaInput> {
+        let now = Time::now();
         Box::new(ResilientAlsaInput {
             spec: spec,
             period_duration: period_duration,
             input: None,
             probe_sample_rate: probe_sample_rate,
-            last_open_attempt: Time::now(),
-            last_active: Time::now(),
+            last_open_attempt: now - TimeDelta::milliseconds(RETRY_PERIOD_MS),
+            last_active: now,
             next_sample_rate_to_probe: 0,
         })
     }

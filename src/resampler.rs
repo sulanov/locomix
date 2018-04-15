@@ -265,7 +265,6 @@ impl StreamResampler {
         if self.output_sample_rate == output_sample_rate {
             return;
         }
-        println!("Output sample rate: {}", output_sample_rate);
         self.output_sample_rate = output_sample_rate;
         self.update_rates();
     }

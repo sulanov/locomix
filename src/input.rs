@@ -10,6 +10,8 @@ pub trait Input: Send {
 pub struct InputResampler {
     input: Box<Input>,
     resampler: StreamResampler,
+    pos_tracker: StreamPositionTracker,
+    input_sample_rate: f64,
 }
 
 impl InputResampler {
@@ -17,14 +19,34 @@ impl InputResampler {
         InputResampler {
             input: input,
             resampler: StreamResampler::new(output_rate, window_size),
+            pos_tracker: StreamPositionTracker::new(output_rate),
+            input_sample_rate: 0.0,
         }
+    }
+
+    fn update_frame(&mut self, mut frame: Frame) -> Frame {
+        if self.input_sample_rate != frame.sample_rate
+            || (self.pos_tracker.pos() - frame.timestamp).abs() > TimeDelta::milliseconds(20)
+        {
+            self.input_sample_rate = frame.sample_rate;
+            self.pos_tracker.reset(frame.timestamp, frame.sample_rate);
+        }
+        let estimated_end = frame.end_timestamp();
+
+        frame.timestamp = self.pos_tracker.pos();
+        self.pos_tracker.add_samples(frame.len(), estimated_end);
+
+        frame
     }
 }
 
 impl Input for InputResampler {
     fn read(&mut self) -> Result<Option<Frame>> {
         Ok(match try!(self.input.read()) {
-            Some(f) => self.resampler.resample(f),
+            Some(f) => {
+                let updated = self.update_frame(f);
+                self.resampler.resample(updated)
+            }
             None => {
                 self.resampler.reset();
                 None

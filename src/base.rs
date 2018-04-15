@@ -521,64 +521,9 @@ pub struct DeviceSpec {
     pub name: String,
     pub id: String,
     pub sample_rate: Option<usize>,
-    pub exact_sample_rate: bool,
     pub channels: Vec<ChannelPos>,
     pub delay: TimeDelta,
     pub enable_a52: bool,
-}
-
-const TIME_PRECISION_US: i64 = 1000;
-const MAX_SAMPLE_RATE: f64 = 96000.0;
-
-pub struct RateDetector {
-    window: TimeDelta,
-    history: VecDeque<(Time, usize)>,
-    sum: usize,
-}
-
-#[derive(Clone, Copy)]
-pub struct DetectedRate {
-    pub rate: f64,
-    pub error: f64,
-}
-
-impl RateDetector {
-    pub fn new(target_precision: f64) -> RateDetector {
-        return RateDetector {
-            window: TimeDelta::microseconds(TIME_PRECISION_US)
-                * (2.0 * MAX_SAMPLE_RATE / target_precision),
-            history: VecDeque::new(),
-            sum: 0,
-        };
-    }
-
-    pub fn update(&mut self, samples: usize, t_end: Time) -> DetectedRate {
-        self.sum += samples;
-        self.history.push_back((t_end, samples));
-        while self.history.len() > 0 && t_end - self.history[0].0 >= self.window {
-            self.sum -= self.history.pop_front().unwrap().1;
-        }
-
-        let period = t_end - self.history[0].0;
-        if period <= TimeDelta::zero() {
-            return DetectedRate {
-                rate: MAX_SAMPLE_RATE / 2.0,
-                error: MAX_SAMPLE_RATE / 2.0,
-            };
-        }
-
-        let samples = (self.sum - self.history[0].1) as f64;
-        let rate = samples / period.in_seconds_f();
-        DetectedRate {
-            rate: rate,
-            error: (rate * (TIME_PRECISION_US as f64 / 1_000_000.0) / period.in_seconds_f()),
-        }
-    }
-
-    pub fn reset(&mut self) {
-        self.history.clear();
-        self.sum = 0;
-    }
 }
 
 pub struct SeriesStats {
@@ -615,6 +560,99 @@ impl SeriesStats {
     pub fn reset(&mut self) {
         self.values.clear();
         self.sum = 0.0;
+    }
+}
+
+pub struct StreamPositionTracker {
+    base_time: Time,
+    sample_rate: f64,
+    samples_pos: f64,
+    offset: SeriesStats,
+
+    prev_clock_drift: Option<TimeDelta>,
+    clock_drift: Option<TimeDelta>,
+}
+
+const RATE_UPDATE_PERIOD_S: f64 = 2.0;
+
+impl StreamPositionTracker {
+    pub fn new(sample_rate: f64) -> StreamPositionTracker {
+        StreamPositionTracker {
+            base_time: Time::zero(),
+            sample_rate: sample_rate,
+            samples_pos: 0.0,
+            offset: SeriesStats::new(200),
+            prev_clock_drift: None,
+            clock_drift: None,
+        }
+    }
+
+    pub fn offset(&self) -> f64 {
+        self.offset.average().unwrap_or(0.0)
+    }
+
+    pub fn pos_no_offset(&self) -> Time {
+        let pos_s = self.samples_pos / self.sample_rate;
+        self.base_time + TimeDelta::seconds_f(pos_s)
+    }
+
+    pub fn pos(&self) -> Time {
+        let pos_s = self.samples_pos / self.sample_rate + self.offset.average().unwrap_or(0.0);
+        self.base_time + TimeDelta::seconds_f(pos_s)
+    }
+
+    pub fn set_target_pos(&mut self, target_pos: Option<Time>) {
+        self.clock_drift = target_pos.map(|t| t - self.pos());
+    }
+
+    pub fn add_samples(&mut self, samples: usize, pos_estimate: Time) {
+        if self.base_time == Time::zero() {
+            self.base_time = pos_estimate;
+            self.samples_pos = 0.0;
+        } else {
+            self.samples_pos += samples as f64;
+            let new_offset = (pos_estimate - self.base_time).in_seconds_f()
+                - self.samples_pos / self.sample_rate;
+            self.offset.push(new_offset);
+        }
+    }
+
+    pub fn reset(&mut self, base_time: Time, sample_rate: f64) {
+        self.base_time = base_time;
+        self.sample_rate = sample_rate;
+        self.samples_pos = 0.0;
+        self.offset.reset();
+        self.clock_drift = None;
+        self.prev_clock_drift = None;
+    }
+
+    pub fn update_sample_rate(&mut self) -> Option<f64> {
+        if self.samples_pos < RATE_UPDATE_PERIOD_S * self.sample_rate {
+            return None;
+        }
+
+        let diff = match (self.clock_drift, self.prev_clock_drift) {
+            (Some(clock_drift), Some(prev_clock_drift)) => {
+                (clock_drift - prev_clock_drift + clock_drift / 5).in_seconds_f()
+            }
+            _ => 0.0,
+        };
+        let new_sample_rate =
+            self.sample_rate + diff * self.sample_rate * self.sample_rate / self.samples_pos / 2.0;
+
+        println!(
+            "offset {} diff {} new_rate {}.",
+            self.offset() * 1000.0,
+            diff * 1000.0,
+            new_sample_rate
+        );
+
+        self.prev_clock_drift = self.clock_drift;
+        self.base_time = self.pos_no_offset();
+        self.samples_pos = 0.0;
+        self.sample_rate = new_sample_rate;
+
+        Some(new_sample_rate)
     }
 }
 

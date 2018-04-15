@@ -4,7 +4,7 @@ use std;
 use std::cmp::{Ord, Ordering};
 use std::fmt;
 use std::iter::Sum;
-use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
+use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 const NANOS_PER_SEC: i64 = 1_000_000_000;
 const NANOS_PER_MILLI: i64 = 1_000_000;
@@ -96,6 +96,14 @@ impl Sub for TimeDelta {
 
     fn sub(self, rhs: TimeDelta) -> TimeDelta {
         TimeDelta(self.0 - rhs.0)
+    }
+}
+
+impl Neg for TimeDelta {
+    type Output = TimeDelta;
+
+    fn neg(self) -> TimeDelta {
+        TimeDelta(-self.0)
     }
 }
 

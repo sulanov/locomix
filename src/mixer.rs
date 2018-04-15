@@ -24,7 +24,7 @@ impl InputMixer {
     fn new(input: AsyncInput, gain: ui::Gain) -> InputMixer {
         InputMixer {
             input: input,
-            current_frame: Frame::new_stereo(1.0, Time::zero(), 0),
+            current_frame: Frame::new(1.0, Time::zero(), 0),
             current_frame_pos: 0,
             gain: gain,
         }
@@ -32,6 +32,47 @@ impl InputMixer {
 
     fn set_gain(&mut self, gain: ui::Gain) {
         self.gain = gain;
+    }
+
+    fn receive_frame(&mut self, deadline: Time, stream_time: Time) -> Result<bool> {
+        loop {
+            match self.input.read(deadline - Time::now())? {
+                None => return Ok(false),
+                Some(frame) => {
+                    // If the frame is too old then drop it.
+                    if frame.end_timestamp() < stream_time {
+                        println!("WARNING: Dropping old frame.");
+                        continue;
+                    }
+                    self.current_frame = frame;
+                    self.current_frame_pos = 0;
+                    return Ok(true);
+                }
+            }
+        }
+    }
+
+    fn get_frame(
+        &mut self,
+        deadline: Time,
+        stream_time: Time,
+        out_gain: ui::Gain,
+    ) -> Result<Option<Frame>> {
+        if !self.receive_frame(deadline, stream_time)? {
+            return Ok(None);
+        }
+        let mut frame = Frame::new(1.0, Time::zero(), 0);
+        std::mem::swap(&mut frame, &mut self.current_frame);
+        self.current_frame_pos = 0;
+
+        let multiplier = get_multiplier(self.gain, out_gain);
+        for (_channel, pcm) in frame.iter_channels() {
+            for i in 0..pcm.len() {
+                pcm[i] *= multiplier;
+            }
+        }
+
+        Ok(Some(frame))
     }
 
     fn mix_into(
@@ -44,16 +85,8 @@ impl InputMixer {
         let mut pos = 0;
         while pos < mixed_frame.len() {
             if self.current_frame_pos >= self.current_frame.len() {
-                match try!(self.input.read(deadline - Time::now())) {
-                    None => return Ok(pos > 0),
-                    Some(frame) => {
-                        // If the frame is too old then drop it.
-                        if frame.timestamp < mixed_frame.timestamp {
-                            continue;
-                        }
-                        self.current_frame = frame;
-                        self.current_frame_pos = 0;
-                    }
+                if !self.receive_frame(deadline, mixed_frame.timestamp)? {
+                    return Ok(pos > 0);
                 }
             }
 
@@ -230,31 +263,40 @@ pub fn run_mixer_loop(
         let min_input_delay = inputs
             .iter()
             .fold(TimeDelta::zero(), |max, i| cmp::max(max, i.min_delay()));
-        let mix_delay = min_input_delay + period_duration * 2;
 
-        let frame_timestamp = get_sample_timestamp(stream_start_time, sample_rate, stream_pos);
-        let mut frame = Frame::new_stereo(sample_rate, frame_timestamp, period_size);
-        stream_pos += frame.len() as i64;
-
-        let mut have_data = false;
-        let mut mix_deadline = frame.end_timestamp() + mix_delay;
+        let stream_time = get_sample_timestamp(stream_start_time, sample_rate, stream_pos);
+        let mix_delay = min_input_delay + period_duration * 3;
+        let mix_deadline = stream_time + mix_delay;
 
         let now = Time::now();
         if now > mix_deadline + period_duration {
-            println!(
-                "ERROR: Mixer missed deadline. Resetting stream. {:?}",
-                now - mix_deadline
-            );
-            frame.timestamp = frame.end_timestamp();
-            stream_pos += frame.len() as i64;
-            mix_deadline = frame.end_timestamp() + mix_delay;
+            println!("ERROR: Mixer missed deadline. Resetting stream.");
+            stream_start_time = now;
+            stream_pos = 0;
+            continue;
         }
 
-        for m in mixers.iter_mut() {
-            have_data |= try!(m.mix_into(&mut frame, mix_deadline, output_gain));
-            if have_data && exclusive_mux_mode {
-                break;
+        let mut frame = Frame::new(sample_rate, stream_time, period_size);
+        let mut have_data = false;
+
+        if exclusive_mux_mode {
+            for m in mixers.iter_mut() {
+                match m.get_frame(mix_deadline, stream_time, output_gain)? {
+                    Some(f) => {
+                        frame = f;
+                        have_data = true;
+                        break;
+                    }
+                    None => (),
+                }
             }
+            stream_start_time = frame.end_timestamp();
+            stream_pos = 0;
+        } else {
+            for m in mixers.iter_mut() {
+                have_data |= try!(m.mix_into(&mut frame, mix_deadline, output_gain));
+            }
+            stream_pos += frame.len() as i64;
         }
 
         let new_state = match (have_data, (Time::now() - last_data_time).in_seconds()) {

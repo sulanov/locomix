@@ -142,6 +142,7 @@ static CHMAP_3F2R_LFE: ChannelMap = &[
 
 // Each frame contains 6 parts, 256 samples for each frame.
 const PARTS_PER_FRAME: usize = 6;
+const SAMPLES_PER_PART: usize = 256;
 
 fn get_channel_map(flags: c_int) -> Option<&'static [base::ChannelPos]> {
     match flags & 0x17 {
@@ -312,7 +313,8 @@ impl A52Decoder {
     }
 
     fn get_next_frame(&mut self, state: &DecodedState) -> Option<base::Frame> {
-        let mut frame = base::Frame::new(state.sample_rate as f64, state.timestamp, 256);
+        let mut frame =
+            base::Frame::new(state.sample_rate as f64, state.timestamp, SAMPLES_PER_PART);
 
         unsafe {
             a52_dynrng(self.state, None, 0 as *mut c_void);
@@ -324,8 +326,9 @@ impl A52Decoder {
 
             let mut samples = a52_samples(self.state);
             for &c in state.channel_map {
-                frame.ensure_channel(c)[..].copy_from_slice(slice::from_raw_parts(samples, 256));
-                samples = samples.offset(256);
+                frame.ensure_channel(c)[..]
+                    .copy_from_slice(slice::from_raw_parts(samples, SAMPLES_PER_PART));
+                samples = samples.offset(SAMPLES_PER_PART as isize);
             }
         }
 
