@@ -293,13 +293,6 @@ impl Frame {
         }
     }
 
-    pub fn new_stereo(sample_rate: f64, timestamp: Time, len: usize) -> Frame {
-        let mut result = Frame::new(sample_rate, timestamp, len);
-        result.ensure_channel(ChannelPos::FL);
-        result.ensure_channel(ChannelPos::FR);
-        result
-    }
-
     pub fn get_channel(&self, pos: ChannelPos) -> Option<&[f32]> {
         self.channels.get(pos).map(|c| &c[..])
     }
@@ -323,6 +316,10 @@ impl Frame {
     }
 
     pub fn set_channel(&mut self, pos: ChannelPos, samples: Vec<f32>) {
+        if self.num_channels == 0 && self.len == 0 {
+            self.len = samples.len();
+        }
+
         assert!(samples.len() == self.len);
         if !self.channels.have_channel(pos) {
             self.num_channels += 1;
@@ -461,7 +458,8 @@ impl Frame {
                     data[i] = read_sample_s32le(&buffer[i * bytes_per_sample + c * 4..]);
                 },
                 SampleFormat::F32LE => for i in 0..samples {
-                    data[i] = LittleEndian::read_f32(&buffer[i * bytes_per_sample + c * 4..]);
+                    data[i] =
+                        LittleEndian::read_f32(&buffer[i * bytes_per_sample + c * 4..]) + 1e-10f32;
                 },
             }
         }
@@ -685,7 +683,7 @@ mod tests {
 
     #[test]
     fn clamping() {
-        let mut frame = Frame::new_stereo(100.0, Time::now(), 1);
+        let mut frame = Frame::new(100.0, Time::now(), 1);
         frame.ensure_channel(ChannelPos::FL)[0] = 1.5;
         frame.ensure_channel(ChannelPos::FR)[0] = -1.5;
 

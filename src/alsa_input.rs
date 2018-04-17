@@ -266,7 +266,11 @@ impl Input for AlsaInput {
     }
 
     fn min_delay(&self) -> TimeDelta {
-        samples_to_timedelta(self.sample_rate as f64, self.period_size as i64)
+        let mut r = samples_to_timedelta(self.sample_rate as f64, self.period_size as i64);
+        if self.a52_stream {
+            r += self.a52_decoder.delay()
+        }
+        r
     }
 }
 

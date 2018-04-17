@@ -40,7 +40,7 @@ impl InputMixer {
                 None => return Ok(false),
                 Some(frame) => {
                     // If the frame is too old then drop it.
-                    if frame.end_timestamp() < stream_time {
+                    if frame < stream_time {
                         println!("WARNING: Dropping old frame.");
                         continue;
                     }
@@ -50,6 +50,10 @@ impl InputMixer {
                 }
             }
         }
+    }
+
+    fn min_delay(&self) -> TimeDelta {
+        self.input.min_delay()
     }
 
     fn get_frame(
@@ -260,12 +264,12 @@ pub fn run_mixer_loop(
     let mut stream_pos: i64 = 0;
 
     loop {
-        let min_input_delay = inputs
+        let min_input_delay = mixers
             .iter()
             .fold(TimeDelta::zero(), |max, i| cmp::max(max, i.min_delay()));
 
         let stream_time = get_sample_timestamp(stream_start_time, sample_rate, stream_pos);
-        let mix_delay = min_input_delay + period_duration * 3;
+        let mix_delay = min_input_delay + period_duration * 2;
         let mix_deadline = stream_time + mix_delay;
 
         let now = Time::now();
@@ -325,7 +329,7 @@ pub fn run_mixer_loop(
             frame = crossfeed_filter.apply(frame);
 
             frame.timestamp +=
-                mix_delay + period_duration * 3 + outputs[selected_output].min_delay();
+                mix_delay + period_duration * 4 + outputs[selected_output].min_delay();
             try!(outputs[selected_output].write(frame));
         } else {
             std::thread::sleep(TimeDelta::milliseconds(500).as_duration());

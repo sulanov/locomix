@@ -297,9 +297,6 @@ impl StreamResampler {
             if pcm.len() == 0 {
                 continue;
             }
-            if result.len() == 0 {
-                result = base::Frame::new(result.sample_rate, result.timestamp, pcm.len());
-            }
             result.set_channel(c, pcm);
         }
 

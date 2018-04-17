@@ -408,7 +408,7 @@ fn run() -> Result<(), RunError> {
         });
 
         let out = output::AsyncOutput::new(mixer::FilteredOutput::new(
-            output::AsyncOutput::new(out),
+            out,
             channels,
             fir_filters,
             sub_config,

@@ -143,6 +143,7 @@ static CHMAP_3F2R_LFE: ChannelMap = &[
 // Each frame contains 6 parts, 256 samples for each frame.
 const PARTS_PER_FRAME: usize = 6;
 const SAMPLES_PER_PART: usize = 256;
+const SAMPLES_PER_FRAME: usize = PARTS_PER_FRAME * SAMPLES_PER_PART;
 
 fn get_channel_map(flags: c_int) -> Option<&'static [base::ChannelPos]> {
     match flags & 0x17 {
@@ -168,7 +169,6 @@ fn get_channel_map(flags: c_int) -> Option<&'static [base::ChannelPos]> {
 const FALLBACK_TO_PCM_INTERVAL: i32 = 9600;
 
 struct DecodedState {
-    sample_rate: usize,
     parts_left: usize,
     channel_map: ChannelMap,
     timestamp: time::Time,
@@ -176,7 +176,7 @@ struct DecodedState {
 
 enum FrameState {
     Skip,
-    A52 { flags: c_int, sample_rate: usize },
+    A52 { flags: c_int },
     A52Decoded(DecodedState),
 }
 
@@ -187,6 +187,7 @@ pub struct A52Decoder {
     last_sync_pos: i32,
     frame_state: Option<FrameState>,
     frame_size: usize,
+    sample_rate: f64,
 }
 
 unsafe impl Send for A52Decoder {}
@@ -201,6 +202,7 @@ impl A52Decoder {
                 last_sync_pos: 0,
                 frame_state: None,
                 frame_size: 0,
+                sample_rate: 48000f64,
             }
         }
     }
@@ -265,11 +267,9 @@ impl A52Decoder {
             }
 
             // We have a frame.
+            self.sample_rate = sample_rate as f64;
             self.frame_size = SPDIF_HEADER_SIZE + a52_frame_size as usize;
-            self.frame_state = Some(FrameState::A52 {
-                flags: flags,
-                sample_rate: sample_rate as usize,
-            });
+            self.frame_state = Some(FrameState::A52 { flags: flags });
             break;
         }
 
@@ -313,8 +313,7 @@ impl A52Decoder {
     }
 
     fn get_next_frame(&mut self, state: &DecodedState) -> Option<base::Frame> {
-        let mut frame =
-            base::Frame::new(state.sample_rate as f64, state.timestamp, SAMPLES_PER_PART);
+        let mut frame = base::Frame::new(self.sample_rate, state.timestamp, SAMPLES_PER_PART);
 
         unsafe {
             a52_dynrng(self.state, None, 0 as *mut c_void);
@@ -342,17 +341,16 @@ impl A52Decoder {
     fn get_frame_internal(&mut self) -> Option<base::Frame> {
         let mut state = match self.frame_state.take() {
             None => return None,
-            Some(FrameState::A52 { flags, sample_rate }) => {
+            Some(FrameState::A52 { flags }) => {
                 let channel_map = match self.decode_frame(flags) {
                     None => return None,
                     Some(c) => c,
                 };
 
                 DecodedState {
-                    sample_rate: sample_rate,
                     parts_left: PARTS_PER_FRAME,
                     channel_map: channel_map,
-                    timestamp: time::Time::now(),
+                    timestamp: time::Time::now() - self.delay(),
                 }
             }
             Some(FrameState::A52Decoded(state)) => state,
@@ -384,6 +382,10 @@ impl A52Decoder {
         }
 
         result
+    }
+
+    pub fn delay(&self) -> time::TimeDelta {
+        base::samples_to_timedelta(self.sample_rate, SAMPLES_PER_FRAME as i64)
     }
 }
 
