@@ -17,7 +17,7 @@ pub trait Output: Send {
     fn min_delay(&self) -> TimeDelta;
 }
 
-const MAX_TIMESTAMP_DEVIATION_US: i64 = 500;
+const MAX_TIMESTAMP_DEVIATION_US: i64 = 3000;
 const BUFFER_PERIODS: usize = 4;
 
 enum AlsaWriteLoopFeedback {

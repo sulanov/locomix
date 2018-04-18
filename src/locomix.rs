@@ -130,7 +130,7 @@ fn parse_channel_id(id: String) -> Result<base::ChannelPos, RunError> {
         "C" | "FC" | "CENTER" | "CENTRE" => Ok(base::ChannelPos::FC),
         "SL" | "SURROUND_LEFT" => Ok(base::ChannelPos::SL),
         "SR" | "SURROUND_RIGHT" => Ok(base::ChannelPos::SR),
-        "SUR" | "SURROUND" | "SURROUND_CENTER" | "SURROUND_CENTRE" => Ok(base::ChannelPos::SC),
+        "SC" | "SURROUND" | "SURROUND_CENTER" | "SURROUND_CENTRE" => Ok(base::ChannelPos::SC),
         "S" | "B" | "SUB" | "LFE" => Ok(base::ChannelPos::Sub),
         "_" => Ok(base::ChannelPos::Other),
         _ => Err(RunError::new(
@@ -245,7 +245,7 @@ fn run() -> Result<(), RunError> {
         ));
     }
 
-    let resampler_window = config.resampler_window.unwrap_or(100);
+    let resampler_window = config.resampler_window.unwrap_or(32);
     if resampler_window < 2 || resampler_window > 2000 {
         return Err(RunError::new(
             format!("Invalid resampler_window: {}", resampler_window).as_str(),

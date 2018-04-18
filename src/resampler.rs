@@ -55,12 +55,13 @@ fn sinc(x: f32) -> f32 {
 }
 
 fn window(x: f32) -> f32 {
-    // Lanczos window.
-    if x.abs() > 1.0 {
-        0.0
-    } else {
-        sinc(x * PI)
-    }
+    // Blackman–Nuttall window
+    const A0: f32 = 0.3635819;
+    const A1: f32 = 0.4891775;
+    const A2: f32 = 0.1365995;
+    const A3: f32 = 0.0106411;
+    let y = (x as f32 + 1.0) / 2.0;
+    A0 - A1 * (2.0 * PI * y).cos() + A2 * (4.0 * PI * y).cos() -  A3 * (6.0 * PI * y).cos()
 }
 
 fn kernel(x: f32, size: usize) -> f32 {
@@ -348,7 +349,7 @@ mod tests {
             buf.push(v as f32);
         }
 
-        let mut factory = resampler::ResamplerFactory::new(200);
+        let mut factory = resampler::ResamplerFactory::new(32);
         let mut r = factory.create_resampler(irate as f64, orate as f64);
         let mut out = Vec::new();
 

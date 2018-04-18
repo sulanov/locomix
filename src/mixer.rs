@@ -40,7 +40,7 @@ impl InputMixer {
                 None => return Ok(false),
                 Some(frame) => {
                     // If the frame is too old then drop it.
-                    if frame < stream_time {
+                    if frame.end_timestamp() < stream_time {
                         println!("WARNING: Dropping old frame.");
                         continue;
                     }

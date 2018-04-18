@@ -563,6 +563,7 @@ impl SeriesStats {
 
 pub struct StreamPositionTracker {
     base_time: Time,
+    base_sample_rate: f64,
     sample_rate: f64,
     samples_pos: f64,
     offset: SeriesStats,
@@ -573,10 +574,15 @@ pub struct StreamPositionTracker {
 
 const RATE_UPDATE_PERIOD_S: f64 = 2.0;
 
+// How much measured sample rate is allowed to deviate from the expected value.
+// For 48kHz 0.3% is 144, i.e. sample rate can change between 47856 and 48144.
+const MAX_RATE_DEVIATION: f64 = 0.003;
+
 impl StreamPositionTracker {
     pub fn new(sample_rate: f64) -> StreamPositionTracker {
         StreamPositionTracker {
             base_time: Time::zero(),
+            base_sample_rate: sample_rate,
             sample_rate: sample_rate,
             samples_pos: 0.0,
             offset: SeriesStats::new(200),
@@ -615,9 +621,10 @@ impl StreamPositionTracker {
         }
     }
 
-    pub fn reset(&mut self, base_time: Time, sample_rate: f64) {
+    pub fn reset(&mut self, base_time: Time, base_sample_rate: f64) {
         self.base_time = base_time;
-        self.sample_rate = sample_rate;
+        self.base_sample_rate = base_sample_rate;
+        self.sample_rate = self.base_sample_rate;
         self.samples_pos = 0.0;
         self.offset.reset();
         self.clock_drift = None;
@@ -635,8 +642,17 @@ impl StreamPositionTracker {
             }
             _ => 0.0,
         };
-        let new_sample_rate =
+        let mut new_sample_rate =
             self.sample_rate + diff * self.sample_rate * self.sample_rate / self.samples_pos / 2.0;
+
+        let min = self.base_sample_rate * (1.0 - MAX_RATE_DEVIATION);
+        if new_sample_rate < min {
+            new_sample_rate = min;
+        }
+        let max = self.base_sample_rate * (1.0 + MAX_RATE_DEVIATION);
+        if new_sample_rate > max {
+            new_sample_rate = max;
+        }
 
         println!(
             "offset {} diff {} new_rate {}.",

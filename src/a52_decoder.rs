@@ -197,7 +197,7 @@ impl A52Decoder {
         unsafe {
             A52Decoder {
                 state: a52_init(0),
-                buf: vec![0],
+                buf: vec![0u8; 0],
                 buf_pos: 0,
                 last_sync_pos: 0,
                 frame_state: None,
@@ -339,6 +339,12 @@ impl A52Decoder {
     }
 
     fn get_frame_internal(&mut self) -> Option<base::Frame> {
+        assert!(self.frame_state.is_some());
+        if self.buf_pos + self.frame_size > self.buf.len() {
+            // Waiting for full frame.
+            return None;
+        }
+
         let mut state = match self.frame_state.take() {
             None => return None,
             Some(FrameState::A52 { flags }) => {
@@ -373,8 +379,12 @@ impl A52Decoder {
     }
 
     pub fn get_frame(&mut self) -> Option<base::Frame> {
-        let result = self.get_frame_internal();
+        if !self.have_sync() {
+            return None;
+        }
 
+        let result = self.get_frame_internal();
+ 
         if self.frame_state.is_none() {
             // Done with the current frame. Move to the next one.
             self.buf_pos += self.frame_size;
@@ -400,9 +410,8 @@ impl Drop for A52Decoder {
 #[cfg(test)]
 mod tests {
     use a52_decoder;
-    use base;
     use std::fs;
-    use std::io::{Read, Write};
+    use std::io::{Read};
 
     fn test_file(file: &str, samples_min: usize, samples_max: usize) {
         let mut dec = a52_decoder::A52Decoder::new();
@@ -418,7 +427,7 @@ mod tests {
             }
             dec.add_data(&test_input[..bytes_read], 4);
             'decode_loop: loop {
-                assert!(!dec.fallbak_to_pcm());
+                assert!(!dec.fallback_to_pcm());
                 match dec.get_frame() {
                     None => break 'decode_loop,
                     Some(frame) => {

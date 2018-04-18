@@ -15,7 +15,7 @@ use super::input::*;
 const CHANNELS: usize = 2;
 
 const ACCEPTED_RATES: [usize; 4] = [44100, 48000, 88200, 96000];
-const MAX_SAMPLE_RATE_ERROR: f64 = 1000.0;
+const MAX_SAMPLE_RATE_ERROR: i32 = 1000;
 
 struct RateDetector {
     window: TimeDelta,
@@ -32,7 +32,7 @@ impl RateDetector {
         };
     }
 
-    fn update(&mut self, samples: usize, t_end: Time) -> f64 {
+    fn update(&mut self, samples: usize, t_end: Time) -> usize {
         self.sum += samples;
         self.history.push_back((t_end, samples));
         while self.history.len() > 0 && t_end - self.history[0].0 >= self.window {
@@ -41,10 +41,10 @@ impl RateDetector {
 
         let period = t_end - self.history[0].0;
         if period <= TimeDelta::zero() {
-            return 48000.0;
+            return 48000;
         }
 
-        (self.sum - self.history[0].1) as f64 / period.in_seconds_f()
+        (self.sum - self.history[0].1) * 1000 / (period.in_milliseconds() as usize)
     }
 
     fn reset(&mut self) {
@@ -59,6 +59,7 @@ pub struct AlsaInput {
     sample_rate: usize,
     format: SampleFormat,
     period_size: usize,
+    device_delay: usize,
     rate_detector: RateDetector,
     active: bool,
     last_non_silent_time: Time,
@@ -81,6 +82,7 @@ impl AlsaInput {
         let mut sample_rate = spec.sample_rate.unwrap_or(48000);
         let period_size;
         let format;
+        let device_delay;
         {
             let hwp = try!(alsa::pcm::HwParams::any(&pcm));
             try!(hwp.set_channels(CHANNELS as u32));
@@ -119,6 +121,8 @@ impl AlsaInput {
                 fmt => return Err(Error::new(&format!("Unknown format: {:?}", fmt))),
             };
 
+            device_delay = (pcm.avail_delay()?).1 as usize + period_size * 2;
+
             println!(
                 "INFO: Reading {} ({}). Buffer size: {}x{}. {} {}",
                 spec.id,
@@ -137,6 +141,7 @@ impl AlsaInput {
             sample_rate: sample_rate,
             format: format,
             period_size: period_size,
+            device_delay: device_delay,
             rate_detector: RateDetector::new(TimeDelta::milliseconds(500)),
             active: false,
             last_non_silent_time: now,
@@ -186,31 +191,32 @@ impl AlsaInput {
             }
         }
 
+        let delay = (self.pcm.avail_delay()?).1;
         let now = Time::now();
         let samples = buf.len() / (CHANNELS * self.format.bytes_per_sample());
-        let end_timestamp = now - samples_to_timedelta(
-            self.sample_rate as f64,
-            try!(self.pcm.avail_update()) as i64,
-        );
+        let end_timestamp = now - samples_to_timedelta(self.sample_rate as f64, delay as i64);
         let timestamp =
             end_timestamp - samples_to_timedelta(self.sample_rate as f64, samples as i64);
 
         let rate = self.rate_detector.update(samples, end_timestamp);
-        if (self.sample_rate as f64 - rate).abs() > MAX_SAMPLE_RATE_ERROR {
-            let mut new_rate = 0;
-            for r in &ACCEPTED_RATES[..] {
-                if (rate - *r as f64).abs() < MAX_SAMPLE_RATE_ERROR {
-                    new_rate = *r;
-                }
+        let mut locked_rate = 0;
+        for r in &ACCEPTED_RATES[..] {
+            if (rate as i32 - *r as i32).abs() < MAX_SAMPLE_RATE_ERROR {
+                locked_rate = *r;
             }
+        }
 
-            if new_rate > 0 {
-                println!(
-                    "INFO: rate changed for input device {}: {}",
-                    &self.spec.name, new_rate
-                );
-                self.sample_rate = new_rate;
-            }
+        if locked_rate == 0 {
+            self.active = false;
+            return Ok(None);
+        }
+
+        if locked_rate != self.sample_rate {
+            self.sample_rate = locked_rate;
+            println!(
+                "INFO: rate changed for input device {}: {}",
+                &self.spec.name, self.sample_rate
+            );
         }
 
         let mut all_zeros = true;
@@ -266,7 +272,10 @@ impl Input for AlsaInput {
     }
 
     fn min_delay(&self) -> TimeDelta {
-        let mut r = samples_to_timedelta(self.sample_rate as f64, self.period_size as i64);
+        let mut r = samples_to_timedelta(
+            self.sample_rate as f64,
+            (self.device_delay + self.period_size) as i64,
+        );
         if self.a52_stream {
             r += self.a52_decoder.delay()
         }
