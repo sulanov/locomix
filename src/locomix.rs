@@ -245,7 +245,7 @@ fn run() -> Result<(), RunError> {
         ));
     }
 
-    let resampler_window = config.resampler_window.unwrap_or(32);
+    let resampler_window = config.resampler_window.unwrap_or(24);
     if resampler_window < 2 || resampler_window > 2000 {
         return Err(RunError::new(
             format!("Invalid resampler_window: {}", resampler_window).as_str(),

@@ -384,7 +384,7 @@ impl A52Decoder {
         }
 
         let result = self.get_frame_internal();
- 
+
         if self.frame_state.is_none() {
             // Done with the current frame. Move to the next one.
             self.buf_pos += self.frame_size;
@@ -411,7 +411,7 @@ impl Drop for A52Decoder {
 mod tests {
     use a52_decoder;
     use std::fs;
-    use std::io::{Read};
+    use std::io::Read;
 
     fn test_file(file: &str, samples_min: usize, samples_max: usize) {
         let mut dec = a52_decoder::A52Decoder::new();

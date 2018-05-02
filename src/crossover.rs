@@ -48,7 +48,7 @@ impl CrossoverFilter {
 
         filter.apply_multi(&mut bass[..]);
 
-        frame.mix_channel(ChannelPos::Sub, bass);
+        frame.mix_channel(ChannelPos::Sub, bass, 1.0 / SUBWOOFER_LEVEL);
 
         frame
     }

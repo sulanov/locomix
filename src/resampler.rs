@@ -61,7 +61,7 @@ fn window(x: f32) -> f32 {
     const A2: f32 = 0.1365995;
     const A3: f32 = 0.0106411;
     let y = (x as f32 + 1.0) / 2.0;
-    A0 - A1 * (2.0 * PI * y).cos() + A2 * (4.0 * PI * y).cos() -  A3 * (6.0 * PI * y).cos()
+    A0 - A1 * (2.0 * PI * y).cos() + A2 * (4.0 * PI * y).cos() - A3 * (6.0 * PI * y).cos()
 }
 
 fn kernel(x: f32, size: usize) -> f32 {
@@ -349,7 +349,7 @@ mod tests {
             buf.push(v as f32);
         }
 
-        let mut factory = resampler::ResamplerFactory::new(32);
+        let mut factory = resampler::ResamplerFactory::new(24);
         let mut r = factory.create_resampler(irate as f64, orate as f64);
         let mut out = Vec::new();
 
@@ -379,8 +379,8 @@ mod tests {
             let nsr = noise / signal;
             let nsr_db = 10.0 * nsr.log(10.0);
             println!("{} {} {} {}", signal, noise, 1.0 / nsr, nsr_db);
-            // Target: -96
-            assert!(nsr_db < -96.0);
+            // Target: -100
+            assert!(nsr_db < -100.0);
         }
     }
 }

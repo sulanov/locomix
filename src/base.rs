@@ -13,6 +13,10 @@ use std::result;
 use std::slice;
 use time::{Time, TimeDelta};
 
+// Subwoofer channel is expected to be reproduced 10dB louder
+// than other channels.
+pub const SUBWOOFER_LEVEL: f32 = 3.16227766017;
+
 #[derive(Clone, Copy, Debug)]
 pub enum SampleFormat {
     S16LE,
@@ -327,16 +331,16 @@ impl Frame {
         self.channels.set(pos, samples);
     }
 
-    pub fn mix_channel(&mut self, pos: ChannelPos, samples: Vec<f32>) {
+    pub fn mix_channel(&mut self, pos: ChannelPos, samples: Vec<f32>, level: f32) {
         assert!(samples.len() == self.len);
 
-        if !self.channels.have_channel(pos) {
+        if !self.channels.have_channel(pos) && level == 1.0 {
             self.num_channels += 1;
             self.channels.set(pos, samples);
         } else {
-            let data = self.channels.get_mut(pos).unwrap();
+            let data = self.ensure_channel(pos);
             for i in 0..data.len() {
-                data[i] += samples[i];
+                data[i] += samples[i] * level;
             }
         }
     }

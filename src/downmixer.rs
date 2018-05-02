@@ -40,7 +40,10 @@ impl Downmixer {
         self.downmix_channel(
             &mut frame,
             ChannelPos::Sub,
-            &[(ChannelPos::FL, 0.5), (ChannelPos::FL, 0.5)],
+            &[
+                (ChannelPos::FL, 0.5 * SUBWOOFER_LEVEL),
+                (ChannelPos::FL, 0.5 * SUBWOOFER_LEVEL),
+            ],
         );
         self.downmix_channel(
             &mut frame,
