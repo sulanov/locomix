@@ -612,7 +612,7 @@ impl CompositeOutput {
         for d in devices {
             let mut channels: Vec<ChannelPos> = vec![];
             for c in d.channels.iter() {
-                if !channels.contains(&c) {
+                if *c != ChannelPos::Other && !channels.contains(&c) {
                     channels.push(*c);
                     *result.num_outs.get_or_insert(*c, || 0) += 1;
                 }
