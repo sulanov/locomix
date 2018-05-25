@@ -538,8 +538,12 @@ impl CrossfeedFilter {
         }
 
         if prev.len() > 0 {
-            assert!(prev.len() > delay);
-            for i in 0..delay {
+            let s = if prev.len() >= delay {
+                0
+            } else {
+                delay - prev.len()
+            };
+            for i in s..delay {
                 out[i] += cross_filter.apply_one(prev[prev.len() - delay + i]) * level;
             }
         }
