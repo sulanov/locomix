@@ -537,19 +537,19 @@ impl CrossfeedFilter {
             out[i] = straight_filter.apply_one(inp[i])
         }
 
-        if prev.len() > 0 {
-            let s = if prev.len() >= delay {
-                0
-            } else {
-                delay - prev.len()
-            };
-            for i in s..delay {
-                out[i] += cross_filter.apply_one(prev[prev.len() - delay + i]) * level;
-            }
+        let mut out_pos = 0;
+        if prev.len() < delay {
+            out_pos = delay - prev.len()
         }
 
-        for i in delay..out.len() {
-            out[i] += cross_filter.apply_one(other[i - delay]) * level;
+        while out_pos < out.len() && out_pos < delay {
+            out[out_pos] += cross_filter.apply_one(prev[prev.len() + out_pos - delay]) * level;
+            out_pos += 1;
+        }
+
+        while out_pos < out.len() {
+            out[out_pos] += cross_filter.apply_one(other[out_pos - delay]) * level;
+            out_pos += 1;
         }
     }
 
@@ -560,7 +560,6 @@ impl CrossfeedFilter {
         let mut out = Frame::new(frame.sample_rate, frame.timestamp, frame.len());
 
         let delay = (self.delay_ms * frame.sample_rate as f32 / 1000.0) as usize;
-        assert!(delay < out.len());
 
         frame.ensure_channel(ChannelPos::FL);
         frame.ensure_channel(ChannelPos::FR);
