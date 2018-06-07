@@ -340,7 +340,7 @@ pub fn run_mixer_loop(
         for msg in ui_channel.try_iter() {
             match msg {
                 ui::UiMessage::SelectOutput { output } => {
-                    outputs[output].deactivate();
+                    outputs[selected_output].deactivate();
                     selected_output = output;
                 }
                 ui::UiMessage::SetMasterVolume { volume, loudness } => {
