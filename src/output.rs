@@ -70,7 +70,8 @@ impl AlsaWriteLoop {
             }
 
             let frame = self.cur_frame.take().unwrap();
-            let diff = frame.timestamp - self.pos_tracker.pos();
+            let input_timestamp = frame.timestamp + self.spec.delay;
+            let diff = input_timestamp - self.pos_tracker.pos();
             let max_deviation = TimeDelta::microseconds(MAX_TIMESTAMP_DEVIATION_US);
             if diff > max_deviation {
                 let gap_samples = (diff.in_seconds_f() * self.sample_rate) as usize;
@@ -92,7 +93,7 @@ impl AlsaWriteLoop {
                     self.buffer_pos = samples_to_skip * self.bytes_per_frame;
                 }
             } else {
-                self.pos_tracker.set_target_pos(Some(frame.timestamp));
+                self.pos_tracker.set_target_pos(Some(input_timestamp));
                 self.buffer = frame.buf;
             }
             break;
@@ -123,7 +124,7 @@ impl AlsaWriteLoop {
         let (_avail, delay) = self.pcm.avail_delay()?;
         let now2 = Time::now();
         let now = now1 + (now2 - now1) / 2;
-        Ok(now + samples_to_timedelta(self.sample_rate, delay as i64) + self.spec.delay)
+        Ok(now + samples_to_timedelta(self.sample_rate, delay as i64))
     }
 
     fn do_write(&mut self) -> alsa::Result<LoopState> {
