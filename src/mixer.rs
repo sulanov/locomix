@@ -124,7 +124,7 @@ pub struct FilteredOutput {
 
     downmixer: downmixer::Downmixer,
     crossover: Option<crossover::CrossoverFilter>,
-    ui_msg_receiver: ui::UiMessageReceiver,
+    state_observer: ui::StateObserver,
 }
 
 impl FilteredOutput {
@@ -151,7 +151,7 @@ impl FilteredOutput {
 
             downmixer: downmixer::Downmixer::new(out_channels),
             crossover: None,
-            ui_msg_receiver: shared_state.lock().add_observer(),
+            state_observer: shared_state.lock().add_observer(),
         });
         result.update_crossover();
         result
@@ -174,13 +174,13 @@ impl FilteredOutput {
 impl output::Output for FilteredOutput {
     fn write(&mut self, frame: Frame) -> Result<()> {
         let mut need_reset = false;
-        for msg in self.ui_msg_receiver.try_iter() {
+        for msg in self.state_observer.try_iter() {
             match msg {
-                ui::UiMessage::SetEnableDrc { enable } => {
+                ui::StateChange::SetEnableDrc { enable } => {
                     self.drc_enabled = enable;
                     need_reset = true;
                 }
-                ui::UiMessage::SetEnableSubwoofer { enable } => {
+                ui::StateChange::SetEnableSubwoofer { enable } => {
                     self.subwoofer_enabled = enable;
                     need_reset = true;
                 }
@@ -316,7 +316,7 @@ pub fn run_mixer_loop(
         if state != new_state {
             state = new_state;
             println!("INFO: state: {}", state.as_str());
-            shared_state.lock().on_stream_state(state);
+            shared_state.lock().set_stream_state(state);
             if state != ui::StreamState::Active {
                 for ref mut out in &mut outputs {
                     out.deactivate();
@@ -339,24 +339,27 @@ pub fn run_mixer_loop(
 
         for msg in ui_channel.try_iter() {
             match msg {
-                ui::UiMessage::SelectOutput { output } => {
+                ui::StateChange::SelectOutput { output } => {
                     outputs[selected_output].deactivate();
                     selected_output = output;
                 }
-                ui::UiMessage::SetMasterVolume { volume, loudness } => {
+                ui::StateChange::SetMasterVolume { volume, loudness } => {
                     output_gain = volume;
                     loudness_filter.set_params(SimpleFilterParams::new(sample_rate, loudness.db));
                 }
-                ui::UiMessage::SetInputGain { device, gain } => {
+                ui::StateChange::SetInputGain { device, gain } => {
                     mixers[device as usize].set_gain(gain);
                 }
-                ui::UiMessage::SetEnableDrc { enable: _ } => (),
-                ui::UiMessage::SetEnableSubwoofer { enable: _ } => (),
-                ui::UiMessage::SetCrossfeed { config } => {
+                ui::StateChange::SetEnableDrc { enable: _ } => (),
+                ui::StateChange::SetEnableSubwoofer { enable: _ } => (),
+                ui::StateChange::SetCrossfeed { config } => {
                     crossfeed_filter.set_params(config.get_level(), config.delay_ms);
                 }
-                ui::UiMessage::SetMuxMode { mux_mode } => {
+                ui::StateChange::SetMuxMode { mux_mode } => {
                     exclusive_mux_mode = mux_mode == ui::MuxMode::Exclusive;
+                }
+                ui::StateChange::SetStreamState { stream_state } => {
+                    state = stream_state;
                 }
             }
         }

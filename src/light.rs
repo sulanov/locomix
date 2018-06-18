@@ -9,7 +9,7 @@ struct LightController {
     device_path: String,
     dev: Option<InputDevice>,
     state: SharedState,
-    ui_receiver: UiMessageReceiver,
+    state_observer: StateObserver,
     last_open_attempt: Time,
 }
 
@@ -20,7 +20,7 @@ impl LightController {
             device_path: String::from(device_path),
             dev: None,
             state: state,
-            ui_receiver: receiver,
+            state_observer: receiver,
             last_open_attempt: Time::now() - TimeDelta::seconds(REOPEN_PERIOD_SECONDS),
         }
     }
@@ -76,13 +76,13 @@ impl LightController {
         self.try_open(true);
 
         loop {
-            match self.ui_receiver.recv() {
+            match self.state_observer.recv() {
                 Ok(_) => (),
                 Err(_) => return,
             }
 
             // Skip all pending messages if there were more than one.
-            for _ in self.ui_receiver.try_iter() {}
+            for _ in self.state_observer.try_iter() {}
 
             let volume = self.state.lock().volume().db;
 

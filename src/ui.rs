@@ -103,32 +103,7 @@ pub enum MuxMode {
     Mixer,
 }
 
-#[derive(Serialize)]
-pub struct State {
-    pub inputs: Vec<InputState>,
-    pub outputs: Vec<OutputState>,
-    pub output: usize,
-    pub mux_mode: MuxMode,
-    pub loudness: LoudnessConfig,
-    pub enable_drc: Option<bool>,
-    pub enable_subwoofer: Option<bool>,
-    pub crossfeed: Option<CrossfeedConfig>,
-}
-
-#[derive(Copy, Clone)]
-pub enum UiMessage {
-    SelectOutput { output: usize },
-    SetMasterVolume { volume: Gain, loudness: Gain },
-    SetInputGain { device: DeviceId, gain: Gain },
-    SetMuxMode { mux_mode: MuxMode },
-    SetEnableDrc { enable: bool },
-    SetEnableSubwoofer { enable: bool },
-    SetCrossfeed { config: CrossfeedConfig },
-}
-
-pub type UiMessageReceiver = mpsc::Receiver<UiMessage>;
-
-#[derive(Eq, PartialEq, Clone, Copy)]
+#[derive(Eq, PartialEq, Clone, Copy, Serialize)]
 pub enum StreamState {
     Active,
     Inactive,
@@ -145,12 +120,36 @@ impl StreamState {
     }
 }
 
-pub type StreamStateReceiver = mpsc::Receiver<StreamState>;
+#[derive(Serialize)]
+pub struct State {
+    pub inputs: Vec<InputState>,
+    pub outputs: Vec<OutputState>,
+    pub output: usize,
+    pub mux_mode: MuxMode,
+    pub loudness: LoudnessConfig,
+    pub enable_drc: Option<bool>,
+    pub enable_subwoofer: Option<bool>,
+    pub crossfeed: Option<CrossfeedConfig>,
+    pub stream_state: StreamState,
+}
+
+#[derive(Copy, Clone)]
+pub enum StateChange {
+    SelectOutput { output: usize },
+    SetMasterVolume { volume: Gain, loudness: Gain },
+    SetInputGain { device: DeviceId, gain: Gain },
+    SetMuxMode { mux_mode: MuxMode },
+    SetEnableDrc { enable: bool },
+    SetEnableSubwoofer { enable: bool },
+    SetCrossfeed { config: CrossfeedConfig },
+    SetStreamState { stream_state: StreamState },
+}
+
+pub type StateObserver = mpsc::Receiver<StateChange>;
 
 pub struct StateController {
     state: State,
-    observers: Vec<mpsc::Sender<UiMessage>>,
-    stream_observers: Vec<mpsc::Sender<StreamState>>,
+    observers: Vec<mpsc::Sender<StateChange>>,
 }
 
 impl StateController {
@@ -165,8 +164,8 @@ impl StateController {
                 enable_drc: None,
                 enable_subwoofer: None,
                 crossfeed: None,
+                stream_state: StreamState::Active,
             },
-            stream_observers: Vec::new(),
             observers: Vec::new(),
         }
     }
@@ -201,27 +200,21 @@ impl StateController {
         self.current_output().gain
     }
 
-    fn get_volume_message(&self) -> UiMessage {
-        UiMessage::SetMasterVolume {
+    fn get_volume_message(&self) -> StateChange {
+        StateChange::SetMasterVolume {
             volume: self.volume(),
             loudness: self.state.loudness.get_level(self.volume()),
         }
     }
 
-    pub fn add_observer(&mut self) -> UiMessageReceiver {
+    pub fn add_observer(&mut self) -> StateObserver {
         let (sender, receiver) = mpsc::channel();
         sender.send(self.get_volume_message()).unwrap();
         self.observers.push(sender);
         receiver
     }
 
-    pub fn add_stream_observer(&mut self) -> StreamStateReceiver {
-        let (sender, receiver) = mpsc::channel();
-        self.stream_observers.push(sender);
-        receiver
-    }
-
-    fn broadcast(&mut self, msg: UiMessage) {
+    fn broadcast(&mut self, msg: StateChange) {
         for o in self.observers.iter() {
             o.send(msg).unwrap();
         }
@@ -246,7 +239,7 @@ impl StateController {
 
     pub fn select_output(&mut self, output: usize) {
         self.state.output = output;
-        let message = UiMessage::SelectOutput {
+        let message = StateChange::SelectOutput {
             output: self.state.output,
         };
         self.broadcast(message);
@@ -260,13 +253,13 @@ impl StateController {
 
     pub fn set_mux_mode(&mut self, mux_mode: MuxMode) {
         self.state.mux_mode = mux_mode;
-        self.broadcast(UiMessage::SetMuxMode { mux_mode: mux_mode });
+        self.broadcast(StateChange::SetMuxMode { mux_mode: mux_mode });
     }
 
     pub fn set_enable_drc(&mut self, enable: bool) {
         if self.state.enable_drc.is_some() {
             self.state.enable_drc = Some(enable);
-            self.broadcast(UiMessage::SetEnableDrc { enable });
+            self.broadcast(StateChange::SetEnableDrc { enable });
         }
     }
 
@@ -277,7 +270,7 @@ impl StateController {
 
     pub fn set_input_gain(&mut self, input_id: usize, gain: Gain) {
         self.state.inputs[input_id].gain = gain;
-        self.broadcast(UiMessage::SetInputGain {
+        self.broadcast(StateChange::SetInputGain {
             device: input_id,
             gain: gain,
         });
@@ -286,19 +279,18 @@ impl StateController {
     pub fn set_enable_subwoofer(&mut self, enable: bool) {
         if self.state.enable_subwoofer.is_some() {
             self.state.enable_subwoofer = Some(enable);
-            self.broadcast(UiMessage::SetEnableSubwoofer { enable });
+            self.broadcast(StateChange::SetEnableSubwoofer { enable });
         }
     }
 
     pub fn set_crossfeed(&mut self, crossfeed: CrossfeedConfig) {
         self.state.crossfeed = Some(crossfeed);
-        self.broadcast(UiMessage::SetCrossfeed { config: crossfeed });
+        self.broadcast(StateChange::SetCrossfeed { config: crossfeed });
     }
 
-    pub fn on_stream_state(&self, state: StreamState) {
-        for o in self.stream_observers.iter() {
-            o.send(state).unwrap();
-        }
+    pub fn set_stream_state(&mut self, stream_state: StreamState) {
+        self.state.stream_state = stream_state;
+        self.broadcast(StateChange::SetStreamState { stream_state });
     }
 }
 

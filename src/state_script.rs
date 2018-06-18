@@ -4,26 +4,43 @@ use ui::*;
 
 struct StateScript {
     script_path: String,
-    state_receiver: StreamStateReceiver,
+    state: SharedState,
+    state_observer: StateObserver,
 }
 
 impl StateScript {
     fn new(script_path: &str, state: SharedState) -> StateScript {
-        let receiver = state.lock().add_stream_observer();
+        let receiver = state.lock().add_observer();
         StateScript {
             script_path: String::from(script_path),
-            state_receiver: receiver,
+            state: state,
+            state_observer: receiver,
         }
     }
 
     fn run(&mut self) {
+        let mut state = StreamState::Active;
+        let mut output: String = {
+            let l = self.state.lock();
+            let s = l.state();
+            s.outputs[s.output].name.clone()
+        };
         loop {
-            let state = match self.state_receiver.recv() {
-                Ok(s) => s,
+            match self.state_observer.recv() {
+                Ok(StateChange::SelectOutput { output: o }) => {
+                    output = self.state.lock().state().outputs[o].name.clone();
+                }
+                Ok(StateChange::SetStreamState { stream_state }) => {
+                    state = stream_state;
+                }
+                Ok(_) => continue,
                 Err(_) => return,
             };
 
-            let result = Command::new(&self.script_path).arg(state.as_str()).status();
+            let result = Command::new(&self.script_path)
+                .arg(state.as_str())
+                .arg(output.as_str())
+                .status();
             match result {
                 Ok(status) => if !status.success() {
                     println!(
