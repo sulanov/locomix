@@ -18,13 +18,35 @@ impl StateScript {
         }
     }
 
+    fn run_script(&self, state: StreamState, output: &str) {
+        let result = Command::new(&self.script_path)
+            .arg(state.as_str())
+            .arg(output)
+            .status();
+        match result {
+            Ok(status) => if !status.success() {
+                println!(
+                    "ERROR: {} {} failed with error code {}",
+                    self.script_path,
+                    state.as_str(),
+                    status.code().unwrap_or(0)
+                );
+            },
+            Err(e) => println!("ERROR: Failed to run {}: {}", self.script_path, e),
+        }
+    }
+
     fn run(&mut self) {
-        let mut state = StreamState::Active;
-        let mut output: String = {
+        let mut state;
+        let mut output: String;
+        {
             let l = self.state.lock();
             let s = l.state();
-            s.outputs[s.output].name.clone()
+            output = s.outputs[s.output].name.clone();
+            state = s.stream_state;
         };
+        self.run_script(state, output.as_str());
+
         loop {
             match self.state_observer.recv() {
                 Ok(StateChange::SelectOutput { output: o }) => {
@@ -37,21 +59,7 @@ impl StateScript {
                 Err(_) => return,
             };
 
-            let result = Command::new(&self.script_path)
-                .arg(state.as_str())
-                .arg(output.as_str())
-                .status();
-            match result {
-                Ok(status) => if !status.success() {
-                    println!(
-                        "ERROR: {} {} failed with error code {}",
-                        self.script_path,
-                        state.as_str(),
-                        status.code().unwrap_or(0)
-                    );
-                },
-                Err(e) => println!("ERROR: Failed to run {}: {}", self.script_path, e),
-            }
+            self.run_script(state, output.as_str());
         }
     }
 }
