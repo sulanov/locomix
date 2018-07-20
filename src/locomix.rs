@@ -260,7 +260,7 @@ fn run() -> Result<(), RunError> {
         let default_gain = input.default_gain.unwrap_or(0.0);
         shared_state.lock().add_input(ui::InputState {
             name: name.clone(),
-            gain: ui::Gain { db: default_gain },
+            gain: base::Gain { db: default_gain },
         });
 
         let type_ = input.type_.unwrap_or("alsa".to_string());
@@ -306,16 +306,14 @@ fn run() -> Result<(), RunError> {
         let name = output.name.unwrap_or(format!("Output {}", index));
 
         let devices = match (output.device, output.channel_map, output.devices) {
-            (Some(device), channel_map, None) => vec![
-                base::DeviceSpec {
-                    name: name.clone(),
-                    id: device,
-                    sample_rate: output.sample_rate,
-                    channels: try!(parse_channel_map(channel_map)),
-                    delay: TimeDelta::zero(),
-                    enable_a52: false,
-                },
-            ],
+            (Some(device), channel_map, None) => vec![base::DeviceSpec {
+                name: name.clone(),
+                id: device,
+                sample_rate: output.sample_rate,
+                channels: try!(parse_channel_map(channel_map)),
+                delay: TimeDelta::zero(),
+                enable_a52: false,
+            }],
             (None, None, Some(devices)) => {
                 let mut result = vec![];
                 for d in devices {
@@ -402,7 +400,7 @@ fn run() -> Result<(), RunError> {
             .unwrap_or((ui::VOLUME_MIN + ui::VOLUME_MAX) / 2.0);
         shared_state.lock().add_output(ui::OutputState {
             name: name.clone(),
-            gain: ui::Gain { db: default_gain },
+            gain: base::Gain { db: default_gain },
             drc_supported: fir_filters.is_some(),
             subwoofer: sub_config,
         });

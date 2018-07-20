@@ -1,3 +1,4 @@
+use base::Gain;
 use input_device::*;
 use std;
 use ui::*;

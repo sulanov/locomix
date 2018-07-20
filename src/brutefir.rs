@@ -181,6 +181,8 @@ impl BruteFir {
             result_samples,
         );
 
+        result.gain = input.gain;
+
         let mut input_pos = 0;
         let mut output_pos = 0;
 

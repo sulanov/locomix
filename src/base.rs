@@ -9,6 +9,7 @@ use std::error;
 use std::fmt;
 use std::io;
 use std::iter::Enumerate;
+use std::ops::{Add, AddAssign};
 use std::result;
 use std::slice;
 use time::{Time, TimeDelta};
@@ -217,7 +218,9 @@ fn read_sample_s24le4(buf: &[u8]) -> f32 {
 }
 
 fn read_sample_s32le(buf: &[u8]) -> f32 {
-    (((((buf[0] as u32) << 0) | ((buf[1] as u32) << 8) | ((buf[2] as u32) << 16)
+    (((((buf[0] as u32) << 0)
+        | ((buf[1] as u32) << 8)
+        | ((buf[2] as u32) << 16)
         | ((buf[3] as u32) << 24)) as i32 as f64 + 0.5) / 2147483648f64) as f32
 }
 
@@ -251,8 +254,15 @@ pub fn convolve(v1: &[f32], v2: &[f32]) -> f32 {
         pos += 1;
     }
 
-    sum1.extract(0) + sum1.extract(1) + sum1.extract(2) + sum1.extract(3) + sum2.extract(0)
-        + sum2.extract(1) + sum2.extract(2) + sum2.extract(3) + sum_end
+    sum1.extract(0)
+        + sum1.extract(1)
+        + sum1.extract(2)
+        + sum1.extract(3)
+        + sum2.extract(0)
+        + sum2.extract(1)
+        + sum2.extract(2)
+        + sum2.extract(3)
+        + sum_end
 }
 
 pub fn samples_to_timedelta(sample_rate: f64, samples: i64) -> TimeDelta {
@@ -263,9 +273,39 @@ pub fn get_sample_timestamp(start: Time, sample_rate: f64, sample: i64) -> Time 
     start + samples_to_timedelta(sample_rate, sample)
 }
 
+#[derive(Copy, Clone)]
+pub struct Gain {
+    pub db: f32,
+}
+
+impl Gain {
+    pub fn zero() -> Gain {
+        Gain { db: 0.0 }
+    }
+    pub fn get_multiplier(&self) -> f32 {
+        10f32.powf(self.db) / 20.0
+    }
+}
+
+impl Add for Gain {
+    type Output = Gain;
+    fn add(self, other: Gain) -> Gain {
+        Gain {
+            db: self.db + other.db,
+        }
+    }
+}
+
+impl AddAssign for Gain {
+    fn add_assign(&mut self, other: Gain) {
+        self.db += other.db;
+    }
+}
+
 pub struct Frame {
     pub sample_rate: f64,
     pub timestamp: Time,
+    pub gain: Gain,
     channels: PerChannel<Vec<f32>>,
     len: usize,
     num_channels: usize,
@@ -291,6 +331,7 @@ impl Frame {
         Frame {
             sample_rate: sample_rate,
             timestamp: timestamp,
+            gain: Gain::zero(),
             channels: PerChannel::new(),
             len: len,
             num_channels: 0,
@@ -386,6 +427,7 @@ impl Frame {
         out_channels: &[ChannelPos],
     ) -> Vec<u8> {
         let bytes_per_frame = format.bytes_per_sample() * out_channels.len();
+        let multiplier = self.gain.get_multiplier();
         let mut buf = vec![0; bytes_per_frame * self.len()];
         for c in 0..out_channels.len() {
             if out_channels[c] == ChannelPos::Other {
@@ -399,19 +441,34 @@ impl Frame {
             let shift = c * format.bytes_per_sample();
             match format {
                 SampleFormat::S16LE => for i in 0..self.len() {
-                    write_sample_s16le(data[i], &mut buf[i * bytes_per_frame + shift..]);
+                    write_sample_s16le(
+                        data[i] * multiplier,
+                        &mut buf[i * bytes_per_frame + shift..],
+                    );
                 },
                 SampleFormat::S24LE3 => for i in 0..self.len() {
-                    write_sample_s24le3(data[i], &mut buf[i * bytes_per_frame + shift..]);
+                    write_sample_s24le3(
+                        data[i] * multiplier,
+                        &mut buf[i * bytes_per_frame + shift..],
+                    );
                 },
                 SampleFormat::S24LE4 => for i in 0..self.len() {
-                    write_sample_s24le4(data[i], &mut buf[i * bytes_per_frame + shift..]);
+                    write_sample_s24le4(
+                        data[i] * multiplier,
+                        &mut buf[i * bytes_per_frame + shift..],
+                    );
                 },
                 SampleFormat::S32LE => for i in 0..self.len() {
-                    write_sample_s32le(data[i], &mut buf[i * bytes_per_frame + shift..]);
+                    write_sample_s32le(
+                        data[i] * multiplier,
+                        &mut buf[i * bytes_per_frame + shift..],
+                    );
                 },
                 SampleFormat::F32LE => for i in 0..self.len() {
-                    LittleEndian::write_f32(&mut buf[i * bytes_per_frame + shift..], data[i]);
+                    LittleEndian::write_f32(
+                        &mut buf[i * bytes_per_frame + shift..],
+                        data[i] * multiplier,
+                    );
                 },
             }
         }

@@ -13,15 +13,11 @@ struct InputMixer {
     input: AsyncInput,
     current_frame: Frame,
     current_frame_pos: usize,
-    gain: ui::Gain,
-}
-
-fn get_multiplier(input_gain: ui::Gain, output_gain: ui::Gain) -> f32 {
-    10f32.powf((input_gain.db + output_gain.db) / 20.0)
+    gain: Gain,
 }
 
 impl InputMixer {
-    fn new(input: AsyncInput, gain: ui::Gain) -> InputMixer {
+    fn new(input: AsyncInput, gain: Gain) -> InputMixer {
         InputMixer {
             input: input,
             current_frame: Frame::new(1.0, Time::zero(), 0),
@@ -30,7 +26,7 @@ impl InputMixer {
         }
     }
 
-    fn set_gain(&mut self, gain: ui::Gain) {
+    fn set_gain(&mut self, gain: Gain) {
         self.gain = gain;
     }
 
@@ -56,12 +52,7 @@ impl InputMixer {
         self.input.min_delay()
     }
 
-    fn get_frame(
-        &mut self,
-        deadline: Time,
-        stream_time: Time,
-        out_gain: ui::Gain,
-    ) -> Result<Option<Frame>> {
+    fn get_frame(&mut self, deadline: Time, stream_time: Time) -> Result<Option<Frame>> {
         if !self.receive_frame(deadline, stream_time)? {
             return Ok(None);
         }
@@ -69,23 +60,13 @@ impl InputMixer {
         std::mem::swap(&mut frame, &mut self.current_frame);
         self.current_frame_pos = 0;
 
-        let multiplier = get_multiplier(self.gain, out_gain);
-        for (_channel, pcm) in frame.iter_channels() {
-            for i in 0..pcm.len() {
-                pcm[i] *= multiplier;
-            }
-        }
+        frame.gain += self.gain;
 
         Ok(Some(frame))
     }
 
-    fn mix_into(
-        &mut self,
-        mixed_frame: &mut Frame,
-        deadline: Time,
-        out_gain: ui::Gain,
-    ) -> Result<bool> {
-        let multiplier = get_multiplier(self.gain, out_gain);
+    fn mix_into(&mut self, mixed_frame: &mut Frame, deadline: Time) -> Result<bool> {
+        let multiplier = self.gain.get_multiplier();
         let mut pos = 0;
         while pos < mixed_frame.len() {
             if self.current_frame_pos >= self.current_frame.len() {
@@ -285,7 +266,7 @@ pub fn run_mixer_loop(
 
         if exclusive_mux_mode {
             for m in mixers.iter_mut() {
-                match m.get_frame(mix_deadline, stream_time, output_gain)? {
+                match m.get_frame(mix_deadline, stream_time)? {
                     Some(f) => {
                         frame = f;
                         have_data = true;
@@ -298,7 +279,7 @@ pub fn run_mixer_loop(
             stream_pos = 0;
         } else {
             for m in mixers.iter_mut() {
-                have_data |= try!(m.mix_into(&mut frame, mix_deadline, output_gain));
+                have_data |= try!(m.mix_into(&mut frame, mix_deadline));
             }
             stream_pos += frame.len() as i64;
         }
@@ -325,6 +306,8 @@ pub fn run_mixer_loop(
         }
 
         if state == ui::StreamState::Active {
+            frame.gain += output_gain;
+
             frame = loudness_filter.apply(frame);
             frame = crossfeed_filter.apply(frame);
 

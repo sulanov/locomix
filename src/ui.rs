@@ -1,17 +1,13 @@
+use base::Gain;
 use serde;
-use std::sync::Arc;
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::sync::{Mutex, MutexGuard};
 
-pub const VOLUME_MIN: f32 = -60.0;
+pub const VOLUME_MIN: f32 = -90.0;
 pub const VOLUME_MAX: f32 = 0.0;
 
 pub type DeviceId = usize;
-
-#[derive(Copy, Clone)]
-pub struct Gain {
-    pub db: f32,
-}
 
 impl serde::ser::Serialize for Gain {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>

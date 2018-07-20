@@ -183,7 +183,8 @@ impl Resampler {
                     c_sum += convolve(&seq.c[pos..], &input[i_pos..(end - queue_len)]);
                 }
 
-                (a_sum as f64 * interval_pos * interval_pos + b_sum as f64 * interval_pos
+                (a_sum as f64 * interval_pos * interval_pos
+                    + b_sum as f64 * interval_pos
                     + c_sum as f64) as f32
             };
             output.push(result);
@@ -293,6 +294,8 @@ impl StreamResampler {
         }
 
         let mut result = base::Frame::new(self.output_sample_rate, frame.timestamp - self.delay, 0);
+        result.gain = frame.gain;
+
         for (c, pcm) in frame.iter_channels() {
             let pcm = self.resamplers.get_mut(c).unwrap().resample(&pcm);
             if pcm.len() == 0 {
@@ -301,7 +304,8 @@ impl StreamResampler {
             result.set_channel(c, pcm);
         }
 
-        let removed_channels: Vec<base::ChannelPos> = self.resamplers
+        let removed_channels: Vec<base::ChannelPos> = self
+            .resamplers
             .iter()
             .map(|(c, _)| c)
             .filter(|c| !frame.have_channel(*c))

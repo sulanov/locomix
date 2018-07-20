@@ -1,7 +1,7 @@
 use base::*;
 use std::f32::consts::PI;
-use std::sync::Arc;
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 use time;
 
@@ -141,7 +141,8 @@ impl AudioFilter<BiquadFilter> for BiquadFilter {
     }
 
     fn apply_one(&mut self, x0: FCoef) -> FCoef {
-        let z0 = self.p.b0 * x0 + self.p.b1 * self.x1 + self.p.b2 * self.x2 - self.p.a1 * self.z1
+        let z0 = self.p.b0 * x0 + self.p.b1 * self.x1 + self.p.b2 * self.x2
+            - self.p.a1 * self.z1
             - self.p.a2 * self.z2;
         self.z2 = self.z1;
         self.z1 = z0;
@@ -558,6 +559,7 @@ impl CrossfeedFilter {
             return frame;
         }
         let mut out = Frame::new(frame.sample_rate, frame.timestamp, frame.len());
+        out.gain = frame.gain;
 
         let delay = (self.delay_ms * frame.sample_rate as f32 / 1000.0) as usize;
 

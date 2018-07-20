@@ -420,7 +420,8 @@ mod tests {
         let mut samples_out = 0;
         loop {
             let mut test_input = vec![0u8; 1024];
-            let bytes_read = file.read(&mut test_input[..])
+            let bytes_read = file
+                .read(&mut test_input[..])
                 .expect("Failed to read a52-test-input.raw");
             if bytes_read == 0 {
                 break;

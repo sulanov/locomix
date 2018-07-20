@@ -159,7 +159,8 @@ impl AlsaInput {
             Err(e) => {
                 println!("Recovering AlsaInput {}: {:?}", &self.spec.name, e.errno());
                 self.rate_detector.reset();
-                match self.pcm
+                match self
+                    .pcm
                     .recover(e.errno().map(|x| x as i32).unwrap_or(0), true)
                 {
                     Ok(_) => return self.read_raw(),

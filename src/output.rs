@@ -290,7 +290,8 @@ impl AlsaOutput {
 
         let (_, device_delay) = try!(pcm.avail_delay());
         let min_delay = samples_to_timedelta(sample_rate as f64, device_delay as i64)
-            + period_duration * BUFFER_PERIODS as i64 + spec.delay;
+            + period_duration * BUFFER_PERIODS as i64
+            + spec.delay;
 
         let (sender, receiver) = mpsc::channel();
         let (feedback_sender, feedback_receiver) = mpsc::channel();
@@ -638,6 +639,7 @@ impl Output for CompositeOutput {
             let mut num_outs = self.num_outs.clone();
             for &mut (ref channels, ref mut out) in self.outputs.iter_mut() {
                 let mut out_frame = Frame::new(frame.sample_rate, frame.timestamp, frame.len());
+                out_frame.gain = frame.gain();
                 for c in channels {
                     let no = num_outs.get_mut(*c).unwrap();
                     *no -= 1;
