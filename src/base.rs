@@ -1,9 +1,11 @@
 extern crate alsa;
 extern crate byteorder;
+
+#[cfg(feature = "simd")]
 extern crate simd;
 
 use self::byteorder::{ByteOrder, LittleEndian};
-use self::simd::f32x4;
+
 use std::collections::VecDeque;
 use std::error;
 use std::fmt;
@@ -13,6 +15,9 @@ use std::ops::{Add, AddAssign};
 use std::result;
 use std::slice;
 use time::{Time, TimeDelta};
+
+#[cfg(feature = "simd")]
+use self::simd::f32x4;
 
 // Subwoofer channel is expected to be reproduced 10dB louder
 // than other channels.
@@ -225,6 +230,7 @@ fn read_sample_s32le(buf: &[u8]) -> f32 {
 }
 
 // Fast SIMD-optimized convolution. Optimized for NEON on Raspberry PI 3.
+#[cfg(feature = "simd")]
 pub fn convolve(v1: &[f32], v2: &[f32]) -> f32 {
     assert!(v1.len() == v2.len());
 
@@ -263,6 +269,40 @@ pub fn convolve(v1: &[f32], v2: &[f32]) -> f32 {
         + sum2.extract(2)
         + sum2.extract(3)
         + sum_end
+}
+
+#[cfg(not(feature = "simd"))]
+pub fn convolve(v1: &[f32], v2: &[f32]) -> f32 {
+    let mut r = 0.0;
+    let mut block_count = v1.len() / 4;
+    unsafe {
+        let mut p1 = &v1[0] as *const f32;
+        let mut p2 = &v2[0] as *const f32;
+        while block_count > 0 {
+            r += *p1 * *p2;
+            p1 = p1.add(1);
+            p2 = p2.add(1);
+            r += *p1 * *p2;
+            p1 = p1.add(1);
+            p2 = p2.add(1);
+            r += *p1 * *p2;
+            p1 = p1.add(1);
+            p2 = p2.add(1);
+            r += *p1 * *p2;
+            p1 = p1.add(1);
+            p2 = p2.add(1);
+            block_count -= 1;
+        }
+
+        block_count = v1.len() % 4;
+        while block_count > 0 {
+            r += *p1 * *p2;
+            p1 = p1.add(1);
+            p2 = p2.add(1);
+            block_count -= 1;
+        }
+    }
+    r
 }
 
 pub fn samples_to_timedelta(sample_rate: f64, samples: i64) -> TimeDelta {

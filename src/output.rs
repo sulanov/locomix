@@ -271,15 +271,14 @@ impl AlsaOutput {
             };
 
             println!(
-                "INFO: Opened {} ({}). Buffer size: {}x{}. {} {} {}ch. Chmap: {}",
+                "INFO: Opened {} ({}). Buffer size: {}x{}. {} {} {}ch.",
                 spec.name,
                 spec.id,
                 period_size,
                 try!(hwp.get_periods()),
                 sample_rate,
                 format,
-                spec.channels.len(),
-                try!(pcm.get_chmap())
+                spec.channels.len()
             );
 
             // Stop automatic start.
@@ -639,7 +638,7 @@ impl Output for CompositeOutput {
             let mut num_outs = self.num_outs.clone();
             for &mut (ref channels, ref mut out) in self.outputs.iter_mut() {
                 let mut out_frame = Frame::new(frame.sample_rate, frame.timestamp, frame.len());
-                out_frame.gain = frame.gain();
+                out_frame.gain = frame.gain;
                 for c in channels {
                     let no = num_outs.get_mut(*c).unwrap();
                     *no -= 1;
