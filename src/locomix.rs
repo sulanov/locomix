@@ -1,3 +1,5 @@
+#![feature(allocator_api)]
+
 extern crate byteorder;
 extern crate getopts;
 extern crate locomix;
@@ -22,11 +24,15 @@ use locomix::state_script;
 use locomix::time::TimeDelta;
 use locomix::ui;
 use locomix::web_ui;
+use std::alloc::System;
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::io;
 use std::io::Read;
+
+#[global_allocator]
+static ALLOCATOR: System = System;
 
 struct RunError {
     msg: String,
