@@ -25,6 +25,7 @@ pub mod resampler;
 pub mod state_script;
 pub mod time;
 pub mod ui;
+pub mod volume_device;
 pub mod web_ui;
 
 mod a52_decoder;

@@ -23,6 +23,7 @@ use locomix::pipe_input;
 use locomix::state_script;
 use locomix::time::TimeDelta;
 use locomix::ui;
+use locomix::volume_device;
 use locomix::web_ui;
 use std::alloc::System;
 use std::collections::BTreeMap;
@@ -92,15 +93,18 @@ struct CompositeOutputEntry {
     sample_rate: Option<usize>,
     channel_map: Option<String>,
     delay: Option<f64>,
+    volume: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Deserialize)]
 struct OutputConfig {
     name: Option<String>,
-    device: Option<String>,
     devices: Option<Vec<CompositeOutputEntry>>,
-    channel_map: Option<String>,
+    device: Option<String>,
     sample_rate: Option<usize>,
+    channel_map: Option<String>,
+    volume: Option<BTreeMap<String, String>>,
+
     default_gain: Option<f32>,
     subwoofer_crossover_frequency: Option<usize>,
     fir_filters: Option<BTreeMap<String, String>>,
@@ -209,6 +213,44 @@ fn load_fir_set(
     }
 }
 
+fn create_alsa_volume_device(
+    config: &BTreeMap<String, String>,
+) -> base::Result<Box<volume_device::VolumeDevice>> {
+    let device = match config.get("device") {
+        Some(d) => d,
+        None => return Err(base::Error::new("ALSA volume: device field is missing")),
+    };
+
+    let control = match config.get("control") {
+        Some(d) => d,
+        None => return Err(base::Error::new("ALSA volume: control field is missing")),
+    };
+
+    Ok(Box::new(volume_device::AlsaVolume::new(device.to_string(), control.to_string())))
+}
+
+pub fn create_volume_device(
+    config: Option<BTreeMap<String, String>>,
+) -> base::Result<Option<Box<volume_device::VolumeDevice>>> {
+    let dict = match config {
+        Some(d) => d,
+        None => return Ok(None),
+    };
+
+    let type_ = match dict.get("type") {
+        Some(t) => t,
+        None => return Err(base::Error::new("Volume device type is missing")),
+    };
+
+    match type_.as_str() {
+        "alsa" => Ok(Some(create_alsa_volume_device(&dict)?)),
+        _ => Err(base::Error::from_string(format!(
+            "Unknown volume device type: {}",
+            type_
+        ))),
+    }
+}
+
 fn run() -> Result<(), RunError> {
     let args: Vec<String> = env::args().collect();
 
@@ -312,25 +354,31 @@ fn run() -> Result<(), RunError> {
         let name = output.name.unwrap_or(format!("Output {}", index));
 
         let devices = match (output.device, output.channel_map, output.devices) {
-            (Some(device), channel_map, None) => vec![base::DeviceSpec {
-                name: name.clone(),
-                id: device,
-                sample_rate: output.sample_rate,
-                channels: try!(parse_channel_map(channel_map)),
-                delay: TimeDelta::zero(),
-                enable_a52: false,
-            }],
+            (Some(device), channel_map, None) => vec![(
+                base::DeviceSpec {
+                    name: name.clone(),
+                    id: device,
+                    sample_rate: output.sample_rate,
+                    channels: try!(parse_channel_map(channel_map)),
+                    delay: TimeDelta::zero(),
+                    enable_a52: false,
+                },
+                create_volume_device(output.volume)?,
+            )],
             (None, None, Some(devices)) => {
                 let mut result = vec![];
                 for d in devices {
-                    result.push(base::DeviceSpec {
-                        name: "".to_string(),
-                        id: d.device,
-                        sample_rate: d.sample_rate.or(output.sample_rate),
-                        channels: try!(parse_channel_map(d.channel_map)),
-                        delay: TimeDelta::milliseconds_f(d.delay.unwrap_or(0f64)),
-                        enable_a52: false,
-                    });
+                    result.push((
+                        base::DeviceSpec {
+                            name: "".to_string(),
+                            id: d.device,
+                            sample_rate: d.sample_rate.or(output.sample_rate),
+                            channels: try!(parse_channel_map(d.channel_map)),
+                            delay: TimeDelta::milliseconds_f(d.delay.unwrap_or(0f64)),
+                            enable_a52: false,
+                        },
+                        create_volume_device(d.volume)?,
+                    ));
                 }
                 result
             }
@@ -353,20 +401,29 @@ fn run() -> Result<(), RunError> {
 
         let mut channels = base::PerChannel::new();
         for d in devices.iter() {
-            for c in d.channels.iter() {
+            for c in d.0.channels.iter() {
                 if *c != base::ChannelPos::Other {
                     channels.set(*c, true);
                 }
             }
         }
-
         let have_subwoofer = channels.get(base::ChannelPos::Sub) == Some(&true);
 
-        let out = try!(output::CompositeOutput::new(
-            devices,
-            period_duration,
-            resampler_window,
-        ));
+        let mut out = output::CompositeOutput::new();
+        for (spec, volume) in devices {
+            let channels = spec.channels.clone();
+            let out_dev = output::ResilientAlsaOutput::new(spec, period_duration);
+
+            let out_dev = match volume {
+                Some(vol) => Box::new(volume_device::OutputWithVolumeDevice::new(out_dev, vol)),
+                None => out_dev,
+            };
+
+            let out_dev = output::ResamplingOutput::new(out_dev, resampler_window);
+            let out_dev = output::AsyncOutput::new(out_dev);
+
+            out.add_device(channels, out_dev);
+        }
 
         let sub_config = match (have_subwoofer, output.subwoofer_crossover_frequency) {
             (false, Some(_)) => {
@@ -412,7 +469,7 @@ fn run() -> Result<(), RunError> {
         });
 
         let out = output::AsyncOutput::new(mixer::FilteredOutput::new(
-            out,
+            Box::new(out),
             channels,
             fir_filters,
             sub_config,

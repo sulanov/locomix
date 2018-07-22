@@ -600,33 +600,22 @@ pub struct CompositeOutput {
 }
 
 impl CompositeOutput {
-    pub fn new(
-        devices: Vec<DeviceSpec>,
-        period_duration: TimeDelta,
-        resampler_window: usize,
-    ) -> Result<Box<Output>> {
-        let mut result = CompositeOutput {
+    pub fn new() -> CompositeOutput {
+        CompositeOutput {
             outputs: vec![],
             num_outs: PerChannel::new(),
-        };
-
-        for d in devices {
-            let mut channels: Vec<ChannelPos> = vec![];
-            for c in d.channels.iter() {
-                if *c != ChannelPos::Other && !channels.contains(&c) {
-                    channels.push(*c);
-                    *result.num_outs.get_or_insert(*c, || 0) += 1;
-                }
-            }
-
-            let out = ResilientAlsaOutput::new(d, period_duration);
-            let out = ResamplingOutput::new(out, resampler_window);
-            let out = AsyncOutput::new(out);
-
-            result.outputs.push((channels, out));
         }
+    }
 
-        Ok(Box::new(result))
+    pub fn add_device(&mut self, channel_map: Vec<ChannelPos>, out: Box<Output>) {
+        let mut unique_channels: Vec<ChannelPos> = vec![];
+        for c in channel_map.iter() {
+            if *c != ChannelPos::Other && !unique_channels.contains(&c) {
+                unique_channels.push(*c);
+                *self.num_outs.get_or_insert(*c, || 0) += 1;
+            }
+        }
+        self.outputs.push((unique_channels, out))
     }
 }
 

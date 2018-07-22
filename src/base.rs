@@ -6,12 +6,13 @@ extern crate simd;
 
 use self::byteorder::{ByteOrder, LittleEndian};
 
+use std::cmp::{Eq, PartialEq};
 use std::collections::VecDeque;
 use std::error;
 use std::fmt;
 use std::io;
 use std::iter::Enumerate;
-use std::ops::{Add, AddAssign};
+use std::ops::{Add, AddAssign, Sub, SubAssign};
 use std::result;
 use std::slice;
 use time::{Time, TimeDelta};
@@ -323,7 +324,12 @@ impl Gain {
         Gain { db: 0.0 }
     }
     pub fn get_multiplier(&self) -> f32 {
-        10f32.powf(self.db) / 20.0
+        10f32.powf(self.db / 20.0)
+    }
+    pub fn from_level(level: f32) -> Gain {
+        Gain {
+            db: level.log(10.0) * 20.0,
+        }
     }
 }
 
@@ -341,6 +347,28 @@ impl AddAssign for Gain {
         self.db += other.db;
     }
 }
+
+impl Sub for Gain {
+    type Output = Gain;
+    fn sub(self, other: Gain) -> Gain {
+        Gain {
+            db: self.db - other.db,
+        }
+    }
+}
+
+impl SubAssign for Gain {
+    fn sub_assign(&mut self, other: Gain) {
+        self.db -= other.db;
+    }
+}
+
+impl PartialEq for Gain {
+    fn eq(&self, other: &Gain) -> bool {
+        self.db == other.db
+    }
+}
+impl Eq for Gain {}
 
 pub struct Frame {
     pub sample_rate: f64,
