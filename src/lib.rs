@@ -20,6 +20,7 @@ pub mod input_device;
 pub mod light;
 pub mod mixer;
 pub mod output;
+pub mod pga2311;
 pub mod pipe_input;
 pub mod resampler;
 pub mod state_script;

@@ -1,5 +1,6 @@
 extern crate alsa;
 extern crate byteorder;
+extern crate rppal;
 
 #[cfg(feature = "simd")]
 extern crate simd;
@@ -640,6 +641,12 @@ impl From<alsa::Error> for Error {
 impl From<io::Error> for Error {
     fn from(e: io::Error) -> Error {
         Error::new(error::Error::description(&e))
+    }
+}
+
+impl From<rppal::gpio::Error> for Error {
+    fn from(e: rppal::gpio::Error) -> Error {
+        Error::from_string(format!("GPIO error: {}", e))
     }
 }
 

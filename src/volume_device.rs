@@ -3,6 +3,7 @@ extern crate alsa;
 use base::*;
 use output::Output;
 use std::boxed::Box;
+use std::collections::BTreeMap;
 use std::ffi::CString;
 use time::*;
 
@@ -63,7 +64,8 @@ impl Output for OutputWithVolumeDevice {
     }
 
     fn deactivate(&mut self) {
-        self.output.deactivate()
+        self.max_level = 1.0;
+        self.output.deactivate();
     }
     fn sample_rate(&self) -> f64 {
         self.output.sample_rate()
@@ -81,6 +83,23 @@ pub struct AlsaVolume {
 impl AlsaVolume {
     pub fn new(device: String, control: String) -> AlsaVolume {
         AlsaVolume { device, control }
+    }
+
+    pub fn create_from_config(config: &BTreeMap<String, String>) -> Result<Box<VolumeDevice>> {
+        let device = match config.get("device") {
+            Some(d) => d,
+            None => return Err(Error::new("ALSA volume: device field is missing")),
+        };
+
+        let control = match config.get("control") {
+            Some(d) => d,
+            None => return Err(Error::new("ALSA volume: control field is missing")),
+        };
+
+        Ok(Box::new(AlsaVolume::new(
+            device.to_string(),
+            control.to_string(),
+        )))
     }
 
     fn try_set_volume(&mut self, gain: Gain) -> Result<Gain> {

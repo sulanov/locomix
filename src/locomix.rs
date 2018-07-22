@@ -19,6 +19,7 @@ use locomix::input;
 use locomix::light;
 use locomix::mixer;
 use locomix::output;
+use locomix::pga2311;
 use locomix::pipe_input;
 use locomix::state_script;
 use locomix::time::TimeDelta;
@@ -213,22 +214,6 @@ fn load_fir_set(
     }
 }
 
-fn create_alsa_volume_device(
-    config: &BTreeMap<String, String>,
-) -> base::Result<Box<volume_device::VolumeDevice>> {
-    let device = match config.get("device") {
-        Some(d) => d,
-        None => return Err(base::Error::new("ALSA volume: device field is missing")),
-    };
-
-    let control = match config.get("control") {
-        Some(d) => d,
-        None => return Err(base::Error::new("ALSA volume: control field is missing")),
-    };
-
-    Ok(Box::new(volume_device::AlsaVolume::new(device.to_string(), control.to_string())))
-}
-
 pub fn create_volume_device(
     config: Option<BTreeMap<String, String>>,
 ) -> base::Result<Option<Box<volume_device::VolumeDevice>>> {
@@ -243,7 +228,8 @@ pub fn create_volume_device(
     };
 
     match type_.as_str() {
-        "alsa" => Ok(Some(create_alsa_volume_device(&dict)?)),
+        "alsa" => Ok(Some(volume_device::AlsaVolume::create_from_config(&dict)?)),
+        "pga2311" => Ok(Some(pga2311::Pga2311Volume::create_from_config(&dict)?)),
         _ => Err(base::Error::from_string(format!(
             "Unknown volume device type: {}",
             type_
