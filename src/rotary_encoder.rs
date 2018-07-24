@@ -121,8 +121,8 @@ impl RotaryEncoder {
         loop {
             match self.poll_event() {
                 Err(e) => println!("Failed to read GPIO: {:?}", e),
-                Ok(Some(Event::CW)) => self.shared_state.lock().move_volume(Gain { db: 1.0 }),
-                Ok(Some(Event::CCW)) => self.shared_state.lock().move_volume(Gain { db: -1.0 }),
+                Ok(Some(Event::CW)) => self.shared_state.lock().move_volume(Gain { db: 0.5 }),
+                Ok(Some(Event::CCW)) => self.shared_state.lock().move_volume(Gain { db: -0.5 }),
                 _ => (),
             }
         }

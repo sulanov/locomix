@@ -20,13 +20,7 @@ fn serve_web(address: &str, shared_state: SharedState) {
     rouille::start_server(address, move |request| {
         router!(request,
                     (GET) (/) => {
-                        match load_file("web/index.html") {
-                            Ok(html) => Response::html(html),
-                            Err(error) => {
-                                println!("Can't load index.html: {}", error);
-                                Response::text("Internal Server Error").with_status_code(500)
-                            }
-                        }
+                        Response::html(include_str!("../web/index.html"))
                     },
                     (GET) (/api/state) => {
                         let state_controller = shared_state.lock();
