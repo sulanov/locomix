@@ -1,6 +1,7 @@
 use base;
 use base::convolve;
 use std::cmp;
+use std::collections::BTreeMap;
 use std::f32::consts::PI;
 use std::sync::Arc;
 use time::TimeDelta;
@@ -36,17 +37,6 @@ struct ResamplerTable {
     size: usize,
 }
 
-pub struct Resampler {
-    i_freq: f64,
-    o_freq: f64,
-    queue: Vec<f32>,
-
-    table: Arc<ResamplerTable>,
-
-    i_pos: f64,
-    o_pos: f64,
-}
-
 fn sinc(x: f32) -> f32 {
     if x == 0.0 {
         return 1.0;
@@ -54,7 +44,7 @@ fn sinc(x: f32) -> f32 {
     x.sin() / x
 }
 
-fn window(x: f32) -> f32 {
+fn get_window(x: f32) -> f32 {
     // Blackman–Nuttall window
     const A0: f32 = 0.3635819;
     const A1: f32 = 0.4891775;
@@ -64,8 +54,8 @@ fn window(x: f32) -> f32 {
     A0 - A1 * (2.0 * PI * y).cos() + A2 * (4.0 * PI * y).cos() - A3 * (6.0 * PI * y).cos()
 }
 
-fn kernel(x: f32, size: usize) -> f32 {
-    sinc(x * PI) * window(x / (size as f32))
+fn get_kernel(x: f32, size: f32) -> f32 {
+    sinc(x * PI) * get_window(x / size)
 }
 
 impl ResamplerTable {
@@ -78,11 +68,12 @@ impl ResamplerTable {
                 c: vec![0.0; size * 2],
             };
             for p in 0..(size * 2) {
-                let x = p as f32 - size as f32 + i as f32 / NUM_SUB_INTERVALS as f32;
+                let size_f32 = size as f32;
+                let x = p as f32 - size_f32 + i as f32 / NUM_SUB_INTERVALS as f32;
                 let q = QuadFunction::new(
-                    kernel(x, size),
-                    kernel(x + 0.5 / NUM_SUB_INTERVALS as f32, size),
-                    kernel(x + 1.0 / NUM_SUB_INTERVALS as f32, size),
+                    get_kernel(x, size_f32),
+                    get_kernel(x + 0.5 / NUM_SUB_INTERVALS as f32, size_f32),
+                    get_kernel(x + 1.0 / NUM_SUB_INTERVALS as f32, size_f32),
                 );
                 s.a[p] = q.a;
                 s.b[p] = q.b;
@@ -98,14 +89,156 @@ impl ResamplerTable {
     }
 }
 
+#[derive(Eq, PartialEq, Copy, Clone, Ord, PartialOrd)]
+struct FastResamplerConfig {
+    freq_num: usize,
+    freq_denom: usize,
+    size: usize,
+}
+
+struct FastResamplerTable {
+    config: FastResamplerConfig,
+    kernel: Vec<Vec<f32>>,
+}
+
+impl FastResamplerTable {
+    pub fn new(config: FastResamplerConfig) -> FastResamplerTable {
+        let mut kernel = Vec::with_capacity((config.freq_denom + 1) / 2);
+        for n in 0..config.freq_denom {
+            let mut row = Vec::with_capacity(config.size + 1);
+            for i in 0..(config.size * 2) {
+                let x = config.size as f32 - i as f32 + n as f32 / config.freq_denom as f32;
+                row.push(get_kernel(x, config.size as f32));
+            }
+            kernel.push(row);
+        }
+
+        FastResamplerTable { config, kernel }
+    }
+}
+
+#[derive(Clone)]
+struct FastResampler {
+    table: Arc<FastResamplerTable>,
+
+    // Position for the next output sample relative to the
+    // first sample in the queue.
+    i_pos: usize,
+    i_pos_frac: usize,
+}
+
+impl FastResampler {
+    fn new(table: Arc<FastResamplerTable>) -> FastResampler {
+        let i_pos = table.config.size;
+        FastResampler {
+            table,
+            i_pos,
+            i_pos_frac: 0,
+        }
+    }
+
+    fn get_pos(&self) -> f64 {
+        self.i_pos as f64 + self.i_pos_frac as f64 / self.table.config.freq_denom as f64
+    }
+
+    fn resample(&mut self, input: &[f32], queue: &mut Vec<f32>) -> Vec<f32> {
+        let table = &self.table;
+        let mut output = Vec::with_capacity(
+            (input.len() * table.config.freq_denom / table.config.freq_num) as usize + 1,
+        );
+
+        loop {
+            if self.i_pos + table.config.size >= queue.len() + input.len() {
+                break;
+            }
+
+            let mut result: f32 = 0.0;
+            let queue_len = queue.len();
+
+            if self.i_pos_frac == 0 {
+                result = if self.i_pos < queue_len {
+                    queue[self.i_pos]
+                } else {
+                    input[self.i_pos - queue_len]
+                }
+            } else {
+                let mut start = if self.i_pos + 1 > table.config.size {
+                    self.i_pos - table.config.size + 1
+                } else {
+                    0
+                };
+
+                let kernel = &self.table.kernel[self.i_pos_frac];
+                let mut k_pos = start + table.config.size - self.i_pos;
+
+                if start < queue_len {
+                    result += convolve(
+                        &queue[start..queue_len],
+                        &kernel[k_pos..(k_pos + queue_len - start)],
+                    );
+                    k_pos += queue_len - start;
+                    start = queue_len;
+                }
+
+                let len = self.i_pos + table.config.size - start;
+                result += convolve(
+                    &input[(start - queue_len)..(self.i_pos + table.config.size - queue_len)],
+                    &kernel[k_pos..(k_pos + len)],
+                );
+            };
+
+            output.push(result);
+
+            self.i_pos_frac += table.config.freq_num;
+            self.i_pos += self.i_pos_frac / table.config.freq_denom;
+            self.i_pos_frac = self.i_pos_frac % table.config.freq_denom;
+        }
+
+        let samples_to_keep = cmp::min(table.config.size * 2 + 1, queue.len() + input.len());
+        let samples_to_remove = queue.len() + input.len() - samples_to_keep;
+        if samples_to_remove > queue.len() {
+            queue.clear();
+            queue.extend_from_slice(&input[(input.len() - samples_to_keep)..]);
+        } else {
+            queue.drain(0..samples_to_remove);
+            queue.extend_from_slice(input);
+        }
+
+        self.i_pos -= samples_to_remove;
+
+        output
+    }
+}
+
+pub struct Resampler {
+    i_freq: f64,
+    o_freq: f64,
+    queue: Vec<f32>,
+
+    table: Arc<ResamplerTable>,
+    fast_resampler: Option<FastResampler>,
+
+    // Position of the first sample in the queue relative to the input stream,
+    i_pos: f64,
+
+    // Position of the next output sample relative to the output stream..
+    o_pos: f64,
+}
+
 impl Resampler {
-    fn new(i_freq: f64, o_freq: f64, table: Arc<ResamplerTable>) -> Resampler {
+    fn new(
+        i_freq: f64,
+        o_freq: f64,
+        table: Arc<ResamplerTable>,
+        fast_table: Option<Arc<FastResamplerTable>>,
+    ) -> Resampler {
         let size = table.size;
         Resampler {
-            i_freq: i_freq,
-            o_freq: o_freq,
+            i_freq,
+            o_freq,
             queue: vec![0.0; size],
-            table: table,
+            table,
+            fast_resampler: fast_table.map(|t| FastResampler::new(t)),
             i_pos: -(size as f64),
             o_pos: 0.0,
         }
@@ -117,12 +250,18 @@ impl Resampler {
             o_freq: other.o_freq,
             queue: vec![0.0; other.queue.len()],
             table: other.table.clone(),
+            fast_resampler: other.fast_resampler.as_ref().map(|r| r.clone()),
             i_pos: other.i_pos,
             o_pos: other.o_pos,
         }
     }
 
     pub fn set_frequencies(&mut self, i_freq: f64, o_freq: f64) {
+        if self.fast_resampler.is_some() {
+            self.i_pos = 0.0;
+            self.o_pos = self.fast_resampler.take().unwrap().get_pos() * self.o_freq / self.i_freq;
+        }
+
         self.i_pos *= i_freq / self.i_freq;
         self.i_freq = i_freq;
 
@@ -131,6 +270,11 @@ impl Resampler {
     }
 
     pub fn resample(&mut self, input: &[f32]) -> Vec<f32> {
+        match self.fast_resampler.as_mut() {
+            Some(r) => return r.resample(input, &mut self.queue),
+            None => (),
+        }
+
         let mut output =
             Vec::with_capacity((input.len() as f64 * self.o_freq / self.i_freq) as usize + 1);
 
@@ -215,17 +359,54 @@ impl Resampler {
 
 pub struct ResamplerFactory {
     table: Arc<ResamplerTable>,
+    fast_table_cache: BTreeMap<FastResamplerConfig, Arc<FastResamplerTable>>,
+    window_size: usize,
+}
+
+fn get_greatest_common_divisor(mut a: usize, mut b: usize) -> usize {
+    // Euclid's algorithm.
+    while b > 0 {
+        let c = a % b;
+        a = b;
+        b = c;
+    }
+    return a;
 }
 
 impl ResamplerFactory {
     pub fn new(window_size: usize) -> ResamplerFactory {
         ResamplerFactory {
             table: Arc::new(ResamplerTable::new(window_size)),
+            fast_table_cache: BTreeMap::new(),
+            window_size,
         }
     }
 
     pub fn create_resampler(&mut self, i_freq: f64, o_freq: f64) -> Resampler {
-        Resampler::new(i_freq, o_freq, self.table.clone())
+        let fast_table = if i_freq.fract() == 0.0 && o_freq.fract() == 0.0 {
+            let i_freq_i = i_freq as usize;
+            let o_freq_i = o_freq as usize;
+            let gcd = get_greatest_common_divisor(i_freq_i, o_freq_i);
+            let freq_num = i_freq_i / gcd;
+            let freq_denom = o_freq_i / gcd;
+
+            let config = FastResamplerConfig {
+                freq_num: freq_num,
+                freq_denom: freq_denom,
+                size: self.window_size,
+            };
+
+            Some(
+                self.fast_table_cache
+                    .entry(config)
+                    .or_insert_with(|| Arc::new(FastResamplerTable::new(config)))
+                    .clone(),
+            )
+        } else {
+            None
+        };
+
+        Resampler::new(i_freq, o_freq, self.table.clone(), fast_table)
     }
 }
 
@@ -283,10 +464,9 @@ impl StreamResampler {
         for (c, _) in frame.iter_channels() {
             if !self.resamplers.have_channel(c) {
                 let new_resampler = match self.resamplers.iter().next() {
-                    None => self.resampler_factory.create_resampler(
-                        self.input_sample_rate as f64,
-                        self.output_sample_rate as f64,
-                    ),
+                    None => self
+                        .resampler_factory
+                        .create_resampler(self.input_sample_rate, self.output_sample_rate),
                     Some((_c, r)) => Resampler::clone_state(r),
                 };
                 self.resamplers.set(c, new_resampler);
@@ -359,16 +539,23 @@ mod tests {
 
         let start = Instant::now();
 
-        const RANGE: usize = 441;
+        const RANGE: usize = 512;
 
         for i in 0..(buf.len() / RANGE) {
             let s = i * RANGE;
             let e = (i + 1) * RANGE;
             out.extend_from_slice(&r.resample(&buf[s..e]));
+            if i == (buf.len() / RANGE / 2) {
+                r.set_frequencies(irate as f64, orate as f64);
+            }
         }
 
         let d = Instant::now() - start;
-        println!("{} {} ", d.as_secs(), d.subsec_nanos() as f32 / 1000000.0);
+        println!(
+            "Time {} {}",
+            d.as_secs(),
+            d.subsec_nanos() as f32 / 1000000.0,
+        );
         assert!(out.len() > orate as usize - 200);
 
         let out64: Vec<f64> = out.iter().map(|x| -> f64 { *x as f64 }).collect();
