@@ -1,4 +1,6 @@
-use base::Gain;
+extern crate toml;
+
+use base::*;
 use input_device::*;
 use std;
 use ui::*;
@@ -118,9 +120,14 @@ fn handle_input_device(device_path: &str, mut shared_state: SharedState) {
     }
 }
 
-pub fn start_input_handler(device_path: &str, shared_state: SharedState) {
-    let device_path_copy = String::from(device_path);
+pub fn start_input_handler(config: &toml::value::Table, shared_state: SharedState) -> Result<()> {
+    let device_path = config
+        .get("device")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| Error::new("device field not specified for input device"))?
+        .to_string();
     std::thread::spawn(move || {
-        handle_input_device(&device_path_copy, shared_state);
+        handle_input_device(device_path.as_str(), shared_state);
     });
+    Ok(())
 }

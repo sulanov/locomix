@@ -1,9 +1,9 @@
 extern crate rppal;
+extern crate toml;
 
-use self::rppal::gpio;
 use base::*;
+use gpio;
 use std::cmp;
-use std::collections::BTreeMap;
 use std::thread;
 use std::time::Duration;
 use volume_device;
@@ -17,38 +17,46 @@ pub struct PinConfig {
 }
 
 pub struct Pga2311Volume {
-    gpio: gpio::Gpio,
     pins: PinConfig,
 }
 
-fn parse_pin_param(config: &BTreeMap<String, String>, name: &str) -> Result<u8> {
-    match config.get(name) {
-        Some(s) => match s.parse::<u8>() {
-            Ok(v) => Ok(v),
-            Err(_) => Err(Error::from_string(format!(
-                "PGA2311: Invalid value for {}: {}",
-                name, s
-            ))),
-        },
-        None => Err(Error::from_string(format!(
+fn parse_pin_param(config: &toml::value::Table, name: &str) -> Result<u8> {
+    match config.get(name).and_then(|v| v.as_integer()) {
+        Some(v) if v > 0 && v < 30 => Ok(v as u8),
+        _ => Err(Error::from_string(format!(
             "PGA2311: Pin {} not specified.",
             name
         ))),
     }
 }
 
+fn write_gpio(pin: u8, value: bool) {
+    let mut gpio_locked_o = gpio::get_gpio();
+    let gpio_locked = gpio_locked_o.as_mut().unwrap();
+    gpio_locked.write(
+        pin,
+        if value {
+            rppal::gpio::Level::High
+        } else {
+            rppal::gpio::Level::Low
+        },
+    );
+}
+
 impl Pga2311Volume {
     pub fn new(pins: PinConfig) -> Result<Pga2311Volume> {
-        let mut gpio = gpio::Gpio::new()?;
-        gpio.set_clear_on_drop(false);
-        gpio.set_mode(pins.cs_n, gpio::Mode::Output);
-        gpio.set_mode(pins.sdi, gpio::Mode::Output);
-        gpio.set_mode(pins.sclk, gpio::Mode::Output);
-        Ok(Pga2311Volume { gpio, pins })
+        gpio::initialize()?;
+
+        let mut gpio_locked_o = gpio::get_gpio();
+        let gpio_locked = gpio_locked_o.as_mut().unwrap();
+        gpio_locked.set_mode(pins.cs_n, rppal::gpio::Mode::Output);
+        gpio_locked.set_mode(pins.sdi, rppal::gpio::Mode::Output);
+        gpio_locked.set_mode(pins.sclk, rppal::gpio::Mode::Output);
+        Ok(Pga2311Volume { pins })
     }
 
     pub fn create_from_config(
-        config: &BTreeMap<String, String>,
+        config: &toml::value::Table,
     ) -> Result<Box<volume_device::VolumeDevice>> {
         Ok(Box::new(Pga2311Volume::new(PinConfig {
             cs_n: parse_pin_param(config, "cs_n")?,
@@ -58,31 +66,24 @@ impl Pga2311Volume {
     }
 
     fn write_bit(&mut self, value: bool) {
-        self.gpio.write(
-            self.pins.sdi,
-            if value {
-                gpio::Level::High
-            } else {
-                gpio::Level::Low
-            },
-        );
+        write_gpio(self.pins.sdi, value);
         thread::sleep(Duration::from_nanos(SLEEP_NS));
-        self.gpio.write(self.pins.sclk, gpio::Level::High);
+        write_gpio(self.pins.sclk, true);
         thread::sleep(Duration::from_nanos(SLEEP_NS));
-        self.gpio.write(self.pins.sclk, gpio::Level::Low);
+        write_gpio(self.pins.sclk, false);
     }
 
     fn write_word(&mut self, mut word: u16) {
-        self.gpio.write(self.pins.sclk, gpio::Level::Low);
+        write_gpio(self.pins.sclk, false);
         thread::sleep(Duration::from_nanos(SLEEP_NS));
-        self.gpio.write(self.pins.cs_n, gpio::Level::Low);
+        write_gpio(self.pins.cs_n, false);
 
         for _ in 0..16 {
             self.write_bit((word & 0x8000) > 0);
             word <<= 1;
         }
 
-        self.gpio.write(self.pins.cs_n, gpio::Level::High)
+        write_gpio(self.pins.cs_n, true)
     }
 }
 

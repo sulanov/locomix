@@ -21,6 +21,7 @@ use locomix::mixer;
 use locomix::output;
 use locomix::pga2311;
 use locomix::pipe_input;
+use locomix::rotary_encoder;
 use locomix::state_script;
 use locomix::time::TimeDelta;
 use locomix::ui;
@@ -43,8 +44,11 @@ struct RunError {
 impl RunError {
     pub fn new(msg: &str) -> RunError {
         RunError {
-            msg: String::from(msg),
+            msg: msg.to_string(),
         }
+    }
+    pub fn from_string(msg: String) -> RunError {
+        RunError { msg }
     }
 }
 
@@ -94,7 +98,7 @@ struct CompositeOutputEntry {
     sample_rate: Option<usize>,
     channel_map: Option<String>,
     delay: Option<f64>,
-    volume: Option<BTreeMap<String, String>>,
+    volume: Option<toml::value::Table>,
 }
 
 #[derive(Deserialize)]
@@ -104,20 +108,13 @@ struct OutputConfig {
     device: Option<String>,
     sample_rate: Option<usize>,
     channel_map: Option<String>,
-    volume: Option<BTreeMap<String, String>>,
+    volume: Option<toml::value::Table>,
 
     default_gain: Option<f32>,
     subwoofer_crossover_frequency: Option<usize>,
     fir_filters: Option<BTreeMap<String, String>>,
     fir_length: Option<usize>,
     use_brutefir: Option<bool>,
-}
-
-#[derive(Deserialize)]
-struct ControlDeviceConfig {
-    #[serde(rename = "type")]
-    type_: String,
-    device: String,
 }
 
 #[derive(Deserialize)]
@@ -131,7 +128,7 @@ struct Config {
 
     input: Vec<InputConfig>,
     output: Vec<OutputConfig>,
-    control_device: Option<Vec<ControlDeviceConfig>>,
+    control_device: Option<Vec<toml::value::Table>>,
 }
 
 fn parse_channel_id(id: String) -> Result<base::ChannelPos, RunError> {
@@ -215,7 +212,7 @@ fn load_fir_set(
 }
 
 pub fn create_volume_device(
-    config: Option<BTreeMap<String, String>>,
+    config: Option<toml::value::Table>,
 ) -> base::Result<Option<Box<volume_device::VolumeDevice>>> {
     let dict = match config {
         Some(d) => d,
@@ -227,7 +224,12 @@ pub fn create_volume_device(
         None => return Err(base::Error::new("Volume device type is missing")),
     };
 
-    match type_.as_str() {
+    let type_str = match type_.as_str() {
+        Some(s) => s,
+        None => return Err(base::Error::new("Volume device type must be a string")),
+    };
+
+    match type_str {
         "alsa" => Ok(Some(volume_device::AlsaVolume::create_from_config(&dict)?)),
         "pga2311" => Ok(Some(pga2311::Pga2311Volume::create_from_config(&dict)?)),
         _ => Err(base::Error::from_string(format!(
@@ -465,19 +467,36 @@ fn run() -> Result<(), RunError> {
         outputs.push(out);
     }
 
-    if config.control_device.is_some() {
-        for device in config.control_device.unwrap() {
-            match device.type_.as_str() {
-                "input" => {
-                    control::start_input_handler(&device.device, shared_state.clone());
-                }
-                "griffin_powermate" => {
-                    control::start_input_handler(&device.device, shared_state.clone());
-                    light::start_light_controller(&device.device, shared_state.clone());
-                }
-                c => {
-                    println!("WARNING: Unrecognized control device type {}", c);
-                }
+    for device in config.control_device.unwrap_or([].to_vec()) {
+        let type_ = match device.get("type").map(|t| t.as_str()) {
+            None => {
+                return Err(RunError::new(
+                    "ERROR: control_device type is not specified.",
+                ))
+            }
+            Some(None) => {
+                return Err(RunError::new(
+                    "ERROR: control_device type must be a string.",
+                ))
+            }
+            Some(Some(v)) => v,
+        };
+        match type_ {
+            "input" => {
+                control::start_input_handler(&device, shared_state.clone())?;
+            }
+            "griffin_powermate" => {
+                control::start_input_handler(&device, shared_state.clone())?;
+                light::start_light_controller(&device, shared_state.clone())?;
+            }
+            "rotary_encoder" => {
+                rotary_encoder::start_rotary_encoder_handler(&device, shared_state.clone())?;
+            }
+            c => {
+                return Err(RunError::from_string(format!(
+                    "ERROR: Unrecognized control device type {}",
+                    c
+                )))
             }
         }
     }

@@ -1,9 +1,9 @@
 extern crate alsa;
+extern crate toml;
 
 use base::*;
 use output::Output;
 use std::boxed::Box;
-use std::collections::BTreeMap;
 use std::ffi::CString;
 use time::*;
 
@@ -81,25 +81,25 @@ pub struct AlsaVolume {
 }
 
 impl AlsaVolume {
-    pub fn new(device: String, control: String) -> AlsaVolume {
-        AlsaVolume { device, control }
+    pub fn new(device: &str, control: &str) -> AlsaVolume {
+        AlsaVolume {
+            device: device.to_string(),
+            control: control.to_string(),
+        }
     }
 
-    pub fn create_from_config(config: &BTreeMap<String, String>) -> Result<Box<VolumeDevice>> {
-        let device = match config.get("device") {
+    pub fn create_from_config(config: &toml::value::Table) -> Result<Box<VolumeDevice>> {
+        let device = match config.get("device").and_then(|d| d.as_str()) {
             Some(d) => d,
-            None => return Err(Error::new("ALSA volume: device field is missing")),
+            None => return Err(Error::new("ALSA volume: device string is missing")),
         };
 
-        let control = match config.get("control") {
+        let control = match config.get("control").and_then(|c| c.as_str()) {
             Some(d) => d,
-            None => return Err(Error::new("ALSA volume: control field is missing")),
+            None => return Err(Error::new("ALSA volume: control string is missing")),
         };
 
-        Ok(Box::new(AlsaVolume::new(
-            device.to_string(),
-            control.to_string(),
-        )))
+        Ok(Box::new(AlsaVolume::new(device, control)))
     }
 
     fn try_set_volume(&mut self, gain: Gain) -> Result<Gain> {

@@ -6,6 +6,8 @@ extern crate serde;
 extern crate rouille;
 #[macro_use]
 extern crate serde_derive;
+#[macro_use]
+extern crate lazy_static;
 
 pub mod alsa_input;
 pub mod async_input;
@@ -15,6 +17,7 @@ pub mod control;
 pub mod crossover;
 pub mod downmixer;
 pub mod filters;
+pub mod gpio;
 pub mod input;
 pub mod input_device;
 pub mod light;
@@ -23,6 +26,7 @@ pub mod output;
 pub mod pga2311;
 pub mod pipe_input;
 pub mod resampler;
+pub mod rotary_encoder;
 pub mod state_script;
 pub mod time;
 pub mod ui;

@@ -1,3 +1,6 @@
+extern crate toml;
+
+use base::*;
 use input_device::*;
 use std;
 use time::{Time, TimeDelta};
@@ -94,9 +97,17 @@ impl LightController {
     }
 }
 
-pub fn start_light_controller(device_path: &str, shared_state: SharedState) {
+pub fn start_light_controller(
+    config: &toml::value::Table,
+    shared_state: SharedState,
+) -> Result<()> {
+    let device_path = config
+        .get("device")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| Error::new("device field not specified for input device"))?;
     let mut c = LightController::new(device_path, shared_state);
     std::thread::spawn(move || {
         c.run();
     });
+    Ok(())
 }

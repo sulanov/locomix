@@ -10,6 +10,7 @@ default = ["simd"]
 alsa = ">=0.2.0"
 byteorder = "1.1.0"
 getopts = "0.2"
+lazy_static = "1.0.2"
 libc = ">=0.2.32"
 nix = ">=0.10.0"
 rouille = ">=2.1.0"
