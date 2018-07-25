@@ -120,6 +120,7 @@ struct OutputConfig {
 #[derive(Deserialize)]
 struct Config {
     sample_rate: Option<usize>,
+    static_rate: Option<bool>,
     web_address: Option<String>,
     period_duration: Option<usize>,
     state_script: Option<String>,
@@ -271,6 +272,8 @@ fn run() -> Result<(), RunError> {
         ));
     }
 
+    let static_rate = config.static_rate.unwrap_or(false);
+
     let period_duration = TimeDelta::milliseconds(config.period_duration.unwrap_or(100) as i64);
     if period_duration < TimeDelta::milliseconds(1) || period_duration > TimeDelta::seconds(1) {
         return Err(RunError::new(
@@ -400,7 +403,7 @@ fn run() -> Result<(), RunError> {
         let mut out = output::CompositeOutput::new();
         for (spec, volume) in devices {
             let channels = spec.channels.clone();
-            let out_dev = output::ResilientAlsaOutput::new(spec, period_duration);
+            let out_dev = output::ResilientAlsaOutput::new(spec, period_duration, static_rate);
 
             let out_dev = match volume {
                 Some(vol) => Box::new(volume_device::OutputWithVolumeDevice::new(out_dev, vol)),

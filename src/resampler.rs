@@ -117,6 +117,49 @@ impl FastResamplerTable {
     }
 }
 
+struct FastResamplerTableCache {
+    tables: BTreeMap<FastResamplerConfig, Arc<FastResamplerTable>>,
+    window_size: usize,
+}
+
+impl FastResamplerTableCache {
+    fn new(window_size: usize) -> FastResamplerTableCache {
+        FastResamplerTableCache {
+            tables: BTreeMap::new(),
+            window_size,
+        }
+    }
+
+    fn get(&mut self, i_freq: f64, o_freq: f64) -> Option<Arc<FastResamplerTable>> {
+        if i_freq.fract() != 0.0 || o_freq.fract() != 0.0 {
+            return None;
+        }
+
+        let i_freq_i = i_freq as usize;
+        let o_freq_i = o_freq as usize;
+        let gcd = get_greatest_common_divisor(i_freq_i, o_freq_i);
+        let freq_num = i_freq_i / gcd;
+        let freq_denom = o_freq_i / gcd;
+
+        if freq_denom > 1000 {
+            return None;
+        }
+
+        let config = FastResamplerConfig {
+            freq_num: freq_num,
+            freq_denom: freq_denom,
+            size: self.window_size,
+        };
+
+        Some(
+            self.tables
+                .entry(config)
+                .or_insert_with(|| Arc::new(FastResamplerTable::new(config)))
+                .clone(),
+        )
+    }
+}
+
 #[derive(Clone)]
 struct FastResampler {
     table: Arc<FastResamplerTable>,
@@ -134,6 +177,23 @@ impl FastResampler {
             table,
             i_pos,
             i_pos_frac: 0,
+        }
+    }
+
+    fn set_frequencies(
+        &mut self,
+        i_freq: f64,
+        o_freq: f64,
+        tables_cache: &mut FastResamplerTableCache,
+    ) -> bool {
+        match tables_cache.get(i_freq, o_freq) {
+            Some(t) => {
+                self.i_pos_frac =
+                    self.i_pos_frac * t.config.freq_denom / self.table.config.freq_denom;
+                self.table = t;
+                true
+            }
+            None => false,
         }
     }
 
@@ -230,15 +290,18 @@ impl Resampler {
         i_freq: f64,
         o_freq: f64,
         table: Arc<ResamplerTable>,
-        fast_table: Option<Arc<FastResamplerTable>>,
+        fast_tables: &mut FastResamplerTableCache,
     ) -> Resampler {
         let size = table.size;
+        let fast_resampler = fast_tables
+            .get(i_freq, o_freq)
+            .map(|t| FastResampler::new(t));
         Resampler {
             i_freq,
             o_freq,
             queue: vec![0.0; size],
             table,
-            fast_resampler: fast_table.map(|t| FastResampler::new(t)),
+            fast_resampler,
             i_pos: -(size as f64),
             o_pos: 0.0,
         }
@@ -256,11 +319,25 @@ impl Resampler {
         }
     }
 
-    pub fn set_frequencies(&mut self, i_freq: f64, o_freq: f64) {
-        if self.fast_resampler.is_some() {
-            self.i_pos = 0.0;
-            self.o_pos = self.fast_resampler.take().unwrap().get_pos() * self.o_freq / self.i_freq;
-        }
+    fn set_frequencies(
+        &mut self,
+        i_freq: f64,
+        o_freq: f64,
+        tables_cache: &mut FastResamplerTableCache,
+    ) {
+        self.fast_resampler = match self.fast_resampler.take() {
+            Some(mut r) => {
+                if r.set_frequencies(i_freq, o_freq, tables_cache) {
+                    Some(r)
+                } else {
+                    // Fallback to slow resampler.
+                    self.i_pos = 0.0;
+                    self.o_pos = r.get_pos() * self.o_freq / self.i_freq;
+                    None
+                }
+            }
+            None => None,
+        };
 
         self.i_pos *= i_freq / self.i_freq;
         self.i_freq = i_freq;
@@ -359,8 +436,7 @@ impl Resampler {
 
 pub struct ResamplerFactory {
     table: Arc<ResamplerTable>,
-    fast_table_cache: BTreeMap<FastResamplerConfig, Arc<FastResamplerTable>>,
-    window_size: usize,
+    fast_tables_cache: FastResamplerTableCache,
 }
 
 fn get_greatest_common_divisor(mut a: usize, mut b: usize) -> usize {
@@ -377,36 +453,21 @@ impl ResamplerFactory {
     pub fn new(window_size: usize) -> ResamplerFactory {
         ResamplerFactory {
             table: Arc::new(ResamplerTable::new(window_size)),
-            fast_table_cache: BTreeMap::new(),
-            window_size,
+            fast_tables_cache: FastResamplerTableCache::new(window_size),
         }
     }
 
     pub fn create_resampler(&mut self, i_freq: f64, o_freq: f64) -> Resampler {
-        let fast_table = if i_freq.fract() == 0.0 && o_freq.fract() == 0.0 {
-            let i_freq_i = i_freq as usize;
-            let o_freq_i = o_freq as usize;
-            let gcd = get_greatest_common_divisor(i_freq_i, o_freq_i);
-            let freq_num = i_freq_i / gcd;
-            let freq_denom = o_freq_i / gcd;
+        Resampler::new(
+            i_freq,
+            o_freq,
+            self.table.clone(),
+            &mut self.fast_tables_cache,
+        )
+    }
 
-            let config = FastResamplerConfig {
-                freq_num: freq_num,
-                freq_denom: freq_denom,
-                size: self.window_size,
-            };
-
-            Some(
-                self.fast_table_cache
-                    .entry(config)
-                    .or_insert_with(|| Arc::new(FastResamplerTable::new(config)))
-                    .clone(),
-            )
-        } else {
-            None
-        };
-
-        Resampler::new(i_freq, o_freq, self.table.clone(), fast_table)
+    fn fast_tables_cache(&mut self) -> &mut FastResamplerTableCache {
+        &mut self.fast_tables_cache
     }
 }
 
@@ -423,11 +484,11 @@ impl StreamResampler {
     pub fn new(output_sample_rate: f64, window_size: usize) -> StreamResampler {
         StreamResampler {
             input_sample_rate: 48000.0,
-            output_sample_rate: output_sample_rate,
+            output_sample_rate,
             resampler_factory: ResamplerFactory::new(window_size),
             resamplers: base::PerChannel::new(),
             delay: TimeDelta::zero(),
-            window_size: window_size,
+            window_size,
         }
     }
 
@@ -436,6 +497,7 @@ impl StreamResampler {
             r.set_frequencies(
                 self.input_sample_rate as f64,
                 self.output_sample_rate as f64,
+                self.resampler_factory.fast_tables_cache(),
             );
         }
     }

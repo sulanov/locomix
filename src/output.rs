@@ -34,6 +34,7 @@ struct AlsaWriteLoop {
     pcm: alsa::PCM,
     sample_rate: f64,
     period_size: usize,
+    static_rate: bool,
     bytes_per_frame: usize,
     pos_tracker: StreamPositionTracker,
 
@@ -75,7 +76,6 @@ impl AlsaWriteLoop {
             let max_deviation = TimeDelta::microseconds(MAX_TIMESTAMP_DEVIATION_US);
             if diff > max_deviation {
                 let gap_samples = (diff.in_seconds_f() * self.sample_rate) as usize;
-                println!("BOOM {}", gap_samples);
                 let samples_to_fill = cmp::min(self.period_size, gap_samples);
                 self.buffer = vec![0u8; samples_to_fill * self.bytes_per_frame];
 
@@ -83,7 +83,6 @@ impl AlsaWriteLoop {
                 self.cur_frame = Some(frame);
             } else if -diff > max_deviation {
                 let samples_to_skip = ((-diff).in_seconds_f() * self.sample_rate) as usize;
-                println!("SKIP {}", samples_to_skip);
                 let frame_len = frame.buf.len() / self.bytes_per_frame;
                 if samples_to_skip >= frame_len {
                     // Drop this frame - it's too old.
@@ -141,14 +140,16 @@ impl AlsaWriteLoop {
         self.pos_tracker
             .add_samples(frames_written, stream_time_estimate);
 
-        match self.pos_tracker.update_sample_rate() {
-            Some(new_sample_rate) => {
-                self.sample_rate = new_sample_rate;
-                self.feedback_sender
-                    .send(AlsaWriteLoopFeedback::CurrentRate(self.sample_rate))
-                    .expect("Failed to send rate update");
+        if !self.static_rate {
+            match self.pos_tracker.update_sample_rate() {
+                Some(new_sample_rate) => {
+                    self.sample_rate = new_sample_rate;
+                    self.feedback_sender
+                        .send(AlsaWriteLoopFeedback::CurrentRate(self.sample_rate))
+                        .expect("Failed to send rate update");
+                }
+                None => (),
             }
-            None => (),
         }
 
         Ok(LoopState::Running)
@@ -189,6 +190,7 @@ impl AlsaWriteLoop {
 pub struct AlsaOutput {
     spec: DeviceSpec,
     sample_rate: f64,
+    static_rate: bool,
     min_delay: TimeDelta,
     format: SampleFormat,
 
@@ -197,7 +199,11 @@ pub struct AlsaOutput {
 }
 
 impl AlsaOutput {
-    pub fn open(spec: DeviceSpec, period_duration: TimeDelta) -> Result<AlsaOutput> {
+    pub fn open(
+        spec: DeviceSpec,
+        period_duration: TimeDelta,
+        static_rate: bool,
+    ) -> Result<AlsaOutput> {
         let pcm = try!(alsa::PCM::open(
             &*CString::new(&spec.id[..]).unwrap(),
             alsa::Direction::Playback,
@@ -297,14 +303,15 @@ impl AlsaOutput {
 
         let mut loop_ = AlsaWriteLoop {
             spec: spec.clone(),
-            pcm: pcm,
+            pcm,
             sample_rate: sample_rate as f64,
+            static_rate,
             bytes_per_frame: spec.channels.len() * format.bytes_per_sample(),
-            period_size: period_size,
+            period_size,
             pos_tracker: StreamPositionTracker::new(sample_rate as f64),
 
             frame_receiver: receiver,
-            feedback_sender: feedback_sender,
+            feedback_sender,
             cur_frame: None,
             buffer: vec![],
             buffer_pos: 0,
@@ -315,12 +322,13 @@ impl AlsaOutput {
         });
 
         Ok(AlsaOutput {
-            spec: spec,
+            spec,
             sample_rate: sample_rate as f64,
-            format: format,
-            min_delay: min_delay,
+            static_rate,
+            format,
+            min_delay,
             frame_sender: sender,
-            feedback_receiver: feedback_receiver,
+            feedback_receiver,
         })
     }
 }
@@ -338,7 +346,9 @@ impl Output for AlsaOutput {
         for msg in self.feedback_receiver.try_iter() {
             match msg {
                 AlsaWriteLoopFeedback::CurrentRate(value) => {
-                    self.sample_rate = value;
+                    if !self.static_rate {
+                        self.sample_rate = value;
+                    }
                 }
             }
         }
@@ -363,18 +373,20 @@ pub struct ResilientAlsaOutput {
     spec: DeviceSpec,
     output: Option<AlsaOutput>,
     period_duration: TimeDelta,
+    static_rate: bool,
     last_open_attempt: Time,
     sample_rate: f64,
     min_delay: TimeDelta,
 }
 
 impl ResilientAlsaOutput {
-    pub fn new(spec: DeviceSpec, period_duration: TimeDelta) -> Box<Output> {
+    pub fn new(spec: DeviceSpec, period_duration: TimeDelta, static_rate: bool) -> Box<Output> {
         let sample_rate = spec.sample_rate.unwrap_or(48000);
         Box::new(ResilientAlsaOutput {
-            spec: spec,
+            spec,
             output: None,
-            period_duration: period_duration,
+            period_duration,
+            static_rate,
             last_open_attempt: Time::now() - TimeDelta::seconds(RETRY_PERIOD_SECS),
             sample_rate: sample_rate as f64,
             min_delay: period_duration * BUFFER_PERIODS as i64 + TimeDelta::milliseconds(20),
@@ -385,7 +397,7 @@ impl ResilientAlsaOutput {
         let now = Time::now();
         if now - self.last_open_attempt >= TimeDelta::seconds(RETRY_PERIOD_SECS) {
             self.last_open_attempt = now;
-            match AlsaOutput::open(self.spec.clone(), self.period_duration) {
+            match AlsaOutput::open(self.spec.clone(), self.period_duration, self.static_rate) {
                 Ok(output) => {
                     self.sample_rate = output.sample_rate();
                     self.min_delay = output.min_delay();
@@ -452,10 +464,7 @@ pub struct ResamplingOutput {
 impl ResamplingOutput {
     pub fn new(output: Box<Output>, window_size: usize) -> Box<Output> {
         let resampler = resampler::StreamResampler::new(output.sample_rate(), window_size);
-        Box::new(ResamplingOutput {
-            output: output,
-            resampler: resampler,
-        })
+        Box::new(ResamplingOutput { output, resampler })
     }
 }
 
