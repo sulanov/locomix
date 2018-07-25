@@ -278,6 +278,9 @@ pub fn convolve(v1: &[f32], v2: &[f32]) -> f32 {
     let mut r = 0.0;
     let mut block_count = v1.len() / 4;
     unsafe {
+        if v1.len() == 0 {
+            return 0.0;
+        }
         let mut p1 = &v1[0] as *const f32;
         let mut p2 = &v2[0] as *const f32;
         while block_count > 0 {
