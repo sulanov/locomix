@@ -608,7 +608,7 @@ mod tests {
             let e = (i + 1) * RANGE;
             out.extend_from_slice(&r.resample(&buf[s..e]));
             if i == (buf.len() / RANGE / 2) {
-                r.set_frequencies(irate as f64, orate as f64);
+                r.set_frequencies(irate as f64, orate as f64, factory.fast_tables_cache());
             }
         }
 
