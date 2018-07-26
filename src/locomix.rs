@@ -512,11 +512,9 @@ fn run() -> Result<(), RunError> {
         None => (),
     }
 
-    if config.enable_crossfeed.unwrap_or(false) {
-        shared_state
-            .lock()
-            .set_crossfeed(ui::CrossfeedConfig::default());
-    }
+    config
+        .enable_crossfeed
+        .map(|enable| shared_state.lock().set_enable_crossfeed(enable));
 
     Ok(try!(mixer::run_mixer_loop(
         inputs,

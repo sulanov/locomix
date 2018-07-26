@@ -35,21 +35,14 @@ fn serve_web(address: &str, shared_state: SharedState) {
                          }
 
                          #[derive(Deserialize)]
-                         struct CrossfeedParams {
-                             enabled: Option<bool>,
-                             level: Option<f32>,
-                             delay_ms: Option<f32>,
-                         }
-
-                         #[derive(Deserialize)]
                          struct RequestParams {
                              volume: Option<f32>,
                              output: Option<usize>,
                              mux_mode: Option<MuxMode>,
                              enable_drc: Option<bool>,
                              enable_subwoofer: Option<bool>,
+                             enable_crossfeed: Option<bool>,
                              loudness: Option<LoudnessParams>,
-                             crossfeed: Option<CrossfeedParams>,
                          }
 
                         let json: RequestParams = try_or_400!(rouille::input::json_input(request));
@@ -82,6 +75,10 @@ fn serve_web(address: &str, shared_state: SharedState) {
                             state_controller.set_enable_subwoofer(enable);
                         });
 
+                        json.enable_crossfeed.map( |enable| {
+                            state_controller.set_enable_crossfeed(enable);
+                        });
+
                         json.loudness.map( |loudness| {
                             let mut loudness_config = state_controller.state().loudness.clone();
                             loudness.enabled.map( |enabled| {
@@ -94,22 +91,6 @@ fn serve_web(address: &str, shared_state: SharedState) {
                                 loudness_config.level = level;
                             });
                             state_controller.set_loudness(loudness_config);
-                        });
-
-                        json.crossfeed.map( |crossfeed| {
-                            let mut crossfeed_config =
-                                state_controller.state().crossfeed.unwrap_or(
-                                    CrossfeedConfig::default()).clone();
-                            crossfeed.enabled.map( |enabled| {
-                                crossfeed_config.enabled = enabled;
-                            });
-                            crossfeed.level.map( |level| {
-                                crossfeed_config.level = level;
-                            });
-                            crossfeed.delay_ms.map( |delay_ms| {
-                                crossfeed_config.delay_ms = delay_ms;
-                            });
-                            state_controller.set_crossfeed(crossfeed_config);
                         });
 
                         Response::json(&EmptyResponse{})

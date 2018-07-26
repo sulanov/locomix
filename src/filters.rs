@@ -478,9 +478,11 @@ impl AudioFilter<FirFilter> for FirFilter {
     }
 }
 
+const CROSSFEED_LEVEL: f32 = 0.3;
+const CROSSFEED_DELAY: f32 = 0.3;
+
 pub struct CrossfeedFilter {
-    level: f32,
-    delay_ms: f32,
+    enabled: bool,
     previous: Frame,
     left_cross_filter: BiquadFilter,
     left_straight_filter: BiquadFilter,
@@ -491,8 +493,7 @@ pub struct CrossfeedFilter {
 impl CrossfeedFilter {
     pub fn new(sample_rate: f64) -> CrossfeedFilter {
         CrossfeedFilter {
-            level: 0.0,
-            delay_ms: 0.3,
+            enabled: true,
             previous: Frame::new(1.0, time::Time::now(), 0),
             left_straight_filter: BiquadFilter::new(BiquadParams::low_shelf_filter(
                 sample_rate as FCoef,
@@ -502,7 +503,7 @@ impl CrossfeedFilter {
             )),
             left_cross_filter: BiquadFilter::new(BiquadParams::low_pass_filter(
                 sample_rate as FCoef,
-                400.0,
+                3000.0,
                 0.8,
             )),
             right_straight_filter: BiquadFilter::new(BiquadParams::low_shelf_filter(
@@ -513,15 +514,10 @@ impl CrossfeedFilter {
             )),
             right_cross_filter: BiquadFilter::new(BiquadParams::low_pass_filter(
                 sample_rate as FCoef,
-                400.0,
+                3000.0,
                 0.8,
             )),
         }
-    }
-
-    pub fn set_params(&mut self, level: f32, delay_ms: f32) {
-        self.level = level;
-        self.delay_ms = delay_ms;
     }
 
     fn crossfeed(
@@ -530,7 +526,6 @@ impl CrossfeedFilter {
         other: &[f32],
         prev: &[f32],
         delay: usize,
-        level: f32,
         straight_filter: &mut BiquadFilter,
         cross_filter: &mut BiquadFilter,
     ) {
@@ -544,24 +539,29 @@ impl CrossfeedFilter {
         }
 
         while out_pos < out.len() && out_pos < delay {
-            out[out_pos] += cross_filter.apply_one(prev[prev.len() + out_pos - delay]) * level;
+            out[out_pos] +=
+                cross_filter.apply_one(prev[prev.len() + out_pos - delay]) * CROSSFEED_LEVEL;
             out_pos += 1;
         }
 
         while out_pos < out.len() {
-            out[out_pos] += cross_filter.apply_one(other[out_pos - delay]) * level;
+            out[out_pos] += cross_filter.apply_one(other[out_pos - delay]) * CROSSFEED_LEVEL;
             out_pos += 1;
         }
     }
 
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
     pub fn apply(&mut self, mut frame: Frame) -> Frame {
-        if self.level == 0.0 {
+        if !self.enabled {
             return frame;
         }
         let mut out = Frame::new(frame.sample_rate, frame.timestamp, frame.len());
         out.gain = frame.gain;
 
-        let delay = (self.delay_ms * frame.sample_rate as f32 / 1000.0) as usize;
+        let delay = (CROSSFEED_DELAY * frame.sample_rate as f32 / 1000.0) as usize;
 
         frame.ensure_channel(ChannelPos::FL);
         frame.ensure_channel(ChannelPos::FR);
@@ -572,7 +572,6 @@ impl CrossfeedFilter {
             frame.get_channel(ChannelPos::FR).unwrap(),
             self.previous.ensure_channel(ChannelPos::FR),
             delay,
-            self.level,
             &mut self.left_straight_filter,
             &mut self.left_cross_filter,
         );
@@ -583,7 +582,6 @@ impl CrossfeedFilter {
             frame.get_channel(ChannelPos::FL).unwrap(),
             self.previous.ensure_channel(ChannelPos::FL),
             delay,
-            self.level,
             &mut self.right_straight_filter,
             &mut self.right_cross_filter,
         );

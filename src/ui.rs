@@ -68,31 +68,6 @@ impl LoudnessConfig {
     }
 }
 
-#[derive(Serialize, Copy, Clone)]
-pub struct CrossfeedConfig {
-    pub enabled: bool,
-    pub level: f32,
-    pub delay_ms: f32,
-}
-
-impl CrossfeedConfig {
-    pub fn default() -> CrossfeedConfig {
-        CrossfeedConfig {
-            enabled: false,
-            level: 0.3,
-            delay_ms: 0.2,
-        }
-    }
-
-    pub fn get_level(&self) -> f32 {
-        if self.enabled {
-            self.level
-        } else {
-            0.0
-        }
-    }
-}
-
 #[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MuxMode {
     Exclusive,
@@ -125,7 +100,7 @@ pub struct State {
     pub loudness: LoudnessConfig,
     pub enable_drc: Option<bool>,
     pub enable_subwoofer: Option<bool>,
-    pub crossfeed: Option<CrossfeedConfig>,
+    pub enable_crossfeed: Option<bool>,
     pub stream_state: StreamState,
 }
 
@@ -137,7 +112,7 @@ pub enum StateChange {
     SetMuxMode { mux_mode: MuxMode },
     SetEnableDrc { enable: bool },
     SetEnableSubwoofer { enable: bool },
-    SetCrossfeed { config: CrossfeedConfig },
+    SetCrossfeed { enable: bool },
     SetStreamState { stream_state: StreamState },
 }
 
@@ -159,7 +134,7 @@ impl StateController {
                 loudness: LoudnessConfig::default(),
                 enable_drc: None,
                 enable_subwoofer: None,
-                crossfeed: None,
+                enable_crossfeed: None,
                 stream_state: StreamState::Active,
             },
             observers: Vec::new(),
@@ -279,9 +254,9 @@ impl StateController {
         }
     }
 
-    pub fn set_crossfeed(&mut self, crossfeed: CrossfeedConfig) {
-        self.state.crossfeed = Some(crossfeed);
-        self.broadcast(StateChange::SetCrossfeed { config: crossfeed });
+    pub fn set_enable_crossfeed(&mut self, enable: bool) {
+        self.state.enable_crossfeed = Some(enable);
+        self.broadcast(StateChange::SetCrossfeed { enable });
     }
 
     pub fn set_stream_state(&mut self, stream_state: StreamState) {

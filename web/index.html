@@ -37,11 +37,11 @@
     </div>
   </div>
 
-  <div class="drc_box">
+  <div class="enable_drc_box">
     <label><input type="checkbox" id="enable_drc_checkbox"></input>Room correction</label>
   </div>
 
-  <div class="subwoofer_box">
+  <div id="enable_subwoofer_box">
     <label><input type="checkbox" id="enable_subwoofer_checkbox"></input>Subwoofer</label>
   </div>
 
@@ -53,17 +53,8 @@
     <value></value>
   </div>
 
-  <div class="crossfeed_box">
-    <label><input id="enable" type="checkbox"></input>Crossfeed</label>
-    </br>
-    <input class="slider" type="range" min="0" max="1.0" step="0.05"></input>
-    <value></value>
-  </div>
-  <div class="crossfeed_delay_box">
-    Crossfeed delay
-    </br>
-    <input class="slider" type="range" min="0" max="1.0" step="0.05"></input>
-    <value></value> ms
+  <div id="enable_crossfeed_box">
+    <label><input id="enable_crossfeed_checkbox" type="checkbox"></input>Crossfeed</label>
   </div>
 
   <div class="input template">
@@ -221,18 +212,18 @@ function postState(params) {
 }
 
 function feature_checkbox(name, state) {
-    let value = state[name];
-    let checkbox = document.querySelector('#' + name + '_checkbox');
-    if (value == null) {
-      checkbox.parentElement.hidden = true;
-      return;
-    }
-    checkbox.checked = value;
-    checkbox.onchange = (event) => {
-      var state = {};
-      state[name] = checkbox.checked;
-      postState(state)
-    }
+  let value = state[name];
+  let checkbox = document.querySelector('#' + name + '_checkbox');
+  if (value == null) {
+    checkbox.parentElement.hidden = true;
+    return;
+  }
+  checkbox.checked = value;
+  checkbox.onchange = (event) => {
+    var state = {};
+    state[name] = checkbox.checked;
+    postState(state)
+  }
 }
 
 function slider_with_checkbox(container, state, name, slider_value) {
@@ -291,6 +282,7 @@ document.body.onload = () => {
 
     feature_checkbox('enable_drc', state);
     feature_checkbox('enable_subwoofer', state);
+    feature_checkbox('enable_crossfeed', state);
 
     let loudness_box = document.querySelector(".loudness_box");
     slider_with_checkbox(loudness_box, state.loudness, "loudness", "level");
@@ -300,20 +292,6 @@ document.body.onload = () => {
     autoupdate_checkbox(auto_checkbox, (auto) => (
       postState({"loudness": {"auto": auto } })
     ));
-
-    if (state.crossfeed != null) {
-      slider_with_checkbox(document.querySelector(".crossfeed_box"),
-                           state.crossfeed, "crossfeed", "level");
-
-      let crossfeed_delay_box = document.querySelector(".crossfeed_delay_box");
-      crossfeed_delay_box.querySelector(".slider").value = state.crossfeed.delay_ms;
-      autoupdate_slider(crossfeed_delay_box, (delay_ms) => (
-        postState({"crossfeed": { "delay_ms": delay_ms} })
-      ));
-    } else {
-      document.querySelector(".crossfeed_box").hidden = true;
-      document.querySelector(".crossfeed_delay_box").hidden = true;
-    }
 
     if (state.inputs.length > 1) {
       let input_template = document.querySelector(".input.template")

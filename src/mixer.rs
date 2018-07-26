@@ -235,7 +235,15 @@ pub fn run_mixer_loop(
 
     let mut loudness_filter =
         MultichannelFilter::<LoudnessFilter>::new(SimpleFilterParams::new(sample_rate, 10.0));
+
     let mut crossfeed_filter = CrossfeedFilter::new(sample_rate);
+    crossfeed_filter.set_enabled(
+        shared_state
+            .lock()
+            .state()
+            .enable_crossfeed
+            .unwrap_or(false),
+    );
 
     let mut exclusive_mux_mode = true;
 
@@ -335,8 +343,8 @@ pub fn run_mixer_loop(
                 }
                 ui::StateChange::SetEnableDrc { enable: _ } => (),
                 ui::StateChange::SetEnableSubwoofer { enable: _ } => (),
-                ui::StateChange::SetCrossfeed { config } => {
-                    crossfeed_filter.set_params(config.get_level(), config.delay_ms);
+                ui::StateChange::SetCrossfeed { enable } => {
+                    crossfeed_filter.set_enabled(enable);
                 }
                 ui::StateChange::SetMuxMode { mux_mode } => {
                     exclusive_mux_mode = mux_mode == ui::MuxMode::Exclusive;

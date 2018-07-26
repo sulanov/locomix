@@ -45,7 +45,6 @@ fn draw_filter_graph<F: StreamFilter>(sample_rate: f64, mut f: F) {
 
 fn get_crossfeed_response(sample_rate: f64, freq: f64) -> f64 {
     let mut f = CrossfeedFilter::new(sample_rate);
-    f.set_params(0.3, 0.3);
     let mut test_signal = Frame::new(sample_rate, time::Time::now(), (sample_rate as usize) * 2);
     {
         let pcm = test_signal.ensure_channel(ChannelPos::FL);
