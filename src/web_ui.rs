@@ -50,7 +50,7 @@ fn serve_web(address: &str, shared_state: SharedState) {
                         let mut state_controller = shared_state.lock();
 
                         json.volume.map( |volume| {
-                          state_controller.set_volume(Gain{db: volume});
+                          state_controller.set_volume(volume);
                         });
 
                         match json.output {

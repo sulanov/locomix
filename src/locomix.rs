@@ -102,6 +102,16 @@ struct CompositeOutputEntry {
 }
 
 #[derive(Deserialize)]
+struct SpeakersConfig {
+    name: String,
+    full_scale_spl: Option<f32>,
+    sensitivity_1v: Option<f32>,
+    sensitivity_1dv: Option<f32>,
+    sensitivity_1mw: Option<f32>,
+    impedance_ohm: Option<f32>,
+}
+
+#[derive(Deserialize)]
 struct OutputConfig {
     name: Option<String>,
     devices: Option<Vec<CompositeOutputEntry>>,
@@ -115,6 +125,9 @@ struct OutputConfig {
     fir_filters: Option<BTreeMap<String, String>>,
     fir_length: Option<usize>,
     use_brutefir: Option<bool>,
+
+    full_scale_output_volts: Option<f32>,
+    speakers: Option<Vec<SpeakersConfig>>,
 }
 
 #[derive(Deserialize)]
@@ -212,7 +225,45 @@ fn load_fir_set(
     }
 }
 
-pub fn create_volume_device(
+fn process_speaker_config(
+    full_scale_output_volts: f32,
+    c: SpeakersConfig,
+) -> Result<ui::SpeakersConfig, RunError> {
+    let fs_output = match (
+        c.full_scale_spl,
+        c.sensitivity_1v,
+        c.sensitivity_1dv,
+        c.sensitivity_1mw,
+        c.impedance_ohm,
+    ) {
+        (Some(full_scale_spl), _, _, _, _) => full_scale_spl,
+        (_, Some(sensitivity_1v), _, _, _) => {
+            sensitivity_1v + 20.0 * full_scale_output_volts.log(10.0)
+        }
+        (_, _, Some(sensitivity_1dv), _, _) => {
+            sensitivity_1dv + 20.0 + 20.0 * full_scale_output_volts.log(10.0)
+        }
+        (_, _, _, Some(sensitivity_1mw), Some(impedance_ohm)) => {
+            sensitivity_1mw
+                + 10.0 * (full_scale_output_volts.powi(2) / impedance_ohm / 0.001).log(10.0)
+        }
+        (_, _, _, None, Some(_)) | (_, _, _, Some(_), None) => return Err(RunError::new(
+            "Both sensitivity_1mw and c.impedance_ohm must be specified to calculate output level",
+        )),
+        _ => {
+            return Err(RunError::new(
+                format!("Can't calculate output level for speakers {}", c.name).as_str(),
+            ))
+        }
+    };
+
+    Ok(ui::SpeakersConfig {
+        name: c.name,
+        full_scale_spl: fs_output,
+    })
+}
+
+fn create_volume_device(
     config: Option<toml::value::Table>,
 ) -> base::Result<Option<Box<volume_device::VolumeDevice>>> {
     let dict = match config {
@@ -449,14 +500,30 @@ fn run() -> Result<(), RunError> {
             use_brutefir,
         )?;
 
+        let speakers = match output.speakers {
+            Some(speakers) => {
+                let mut result = Vec::new();
+                let full_scale_output_volts = output.full_scale_output_volts.ok_or(RunError::new(
+                    "full_scale_output_volts must be specified with non-empty speaker config.",
+                ))?;
+                for s in speakers {
+                    result.push(process_speaker_config(full_scale_output_volts, s)?);
+                }
+                result
+            }
+            None => Vec::new(),
+        };
+
         let default_gain = output
             .default_gain
-            .unwrap_or((ui::VOLUME_MIN + ui::VOLUME_MAX) / 2.0);
+            .unwrap_or((ui::GAIN_MIN + ui::GAIN_MAX) / 2.0);
         shared_state.lock().add_output(ui::OutputState {
             name: name.clone(),
             gain: base::Gain { db: default_gain },
             drc_supported: fir_filters.is_some(),
             subwoofer: sub_config,
+            current_speakers: if speakers.is_empty() { None } else { Some(0) },
+            speakers,
         });
 
         let out = output::AsyncOutput::new(mixer::FilteredOutput::new(
@@ -472,16 +539,8 @@ fn run() -> Result<(), RunError> {
 
     for device in config.control_device.unwrap_or([].to_vec()) {
         let type_ = match device.get("type").map(|t| t.as_str()) {
-            None => {
-                return Err(RunError::new(
-                    "ERROR: control_device type is not specified.",
-                ))
-            }
-            Some(None) => {
-                return Err(RunError::new(
-                    "ERROR: control_device type must be a string.",
-                ))
-            }
+            None => return Err(RunError::new("control_device type is not specified.")),
+            Some(None) => return Err(RunError::new("control_device type must be a string.")),
             Some(Some(v)) => v,
         };
         match type_ {

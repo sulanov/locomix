@@ -4,8 +4,8 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::sync::{Mutex, MutexGuard};
 
-pub const VOLUME_MIN: f32 = -90.0;
-pub const VOLUME_MAX: f32 = 0.0;
+pub const GAIN_MIN: f32 = -90.0;
+pub const GAIN_MAX: f32 = 0.0;
 
 pub type DeviceId = usize;
 
@@ -30,17 +30,31 @@ pub struct SubwooferConfig {
 }
 
 #[derive(Serialize)]
+pub struct SpeakersConfig {
+    pub name: String,
+
+    // SPL level at FS calculated based on speaker sensitivity.
+    pub full_scale_spl: f32,
+}
+
+#[derive(Serialize)]
 pub struct OutputState {
     pub name: String,
     pub gain: Gain,
     pub subwoofer: Option<SubwooferConfig>,
     pub drc_supported: bool,
+
+    pub speakers: Vec<SpeakersConfig>,
+    pub current_speakers: Option<usize>,
 }
 
 #[derive(Serialize, Copy, Clone)]
 pub struct LoudnessConfig {
     pub enabled: bool,
     pub auto: bool,
+    pub base_level_spl: f32,
+
+    // [0, 1.0]
     pub level: f32,
 }
 
@@ -49,20 +63,19 @@ impl LoudnessConfig {
         LoudnessConfig {
             enabled: true,
             auto: true,
+            base_level_spl: 90.0,
             level: 0.5,
         }
     }
 
-    pub fn get_level(&self, volume: Gain) -> Gain {
+    pub fn get_level(&self, volume_spl: f32) -> Gain {
         match (self.enabled, self.auto) {
             (false, _) => Gain { db: 0.0 },
             (true, false) => Gain {
                 db: 20.0 * self.level,
             },
-
-            // No loudness compensation when volume = -5dB.
             (true, true) => Gain {
-                db: (-5.0 - volume.db) * self.level,
+                db: (self.base_level_spl - volume_spl) * self.level,
             },
         }
     }
@@ -106,14 +119,33 @@ pub struct State {
 
 #[derive(Copy, Clone)]
 pub enum StateChange {
-    SelectOutput { output: usize },
-    SetMasterVolume { volume: Gain, loudness: Gain },
-    SetInputGain { device: DeviceId, gain: Gain },
-    SetMuxMode { mux_mode: MuxMode },
-    SetEnableDrc { enable: bool },
-    SetEnableSubwoofer { enable: bool },
-    SetCrossfeed { enable: bool },
-    SetStreamState { stream_state: StreamState },
+    SelectOutput {
+        output: usize,
+    },
+    SetMasterVolume {
+        gain: Gain,
+        volume_spl: f32,
+        loudness_gain: Gain,
+    },
+    SetInputGain {
+        device: DeviceId,
+        gain: Gain,
+    },
+    SetMuxMode {
+        mux_mode: MuxMode,
+    },
+    SetEnableDrc {
+        enable: bool,
+    },
+    SetEnableSubwoofer {
+        enable: bool,
+    },
+    SetCrossfeed {
+        enable: bool,
+    },
+    SetStreamState {
+        stream_state: StreamState,
+    },
 }
 
 pub type StateObserver = mpsc::Receiver<StateChange>;
@@ -167,14 +199,28 @@ impl StateController {
         &mut self.state.outputs[self.state.output]
     }
 
-    pub fn volume(&self) -> Gain {
+    pub fn current_gain(&self) -> Gain {
         self.current_output().gain
     }
 
+    fn get_full_scale_spl(&self) -> f32 {
+        let out = self.current_output();
+        match out.current_speakers {
+            Some(i) => out.speakers[i].full_scale_spl,
+
+            // Assume 110 full-scale SPL.
+            None => 110.0,
+        }
+    }
+
     fn get_volume_message(&self) -> StateChange {
+        let gain = self.current_gain();
+        let volume_spl = self.get_full_scale_spl() + gain.db;
+        let loudness_gain = self.state.loudness.get_level(volume_spl);
         StateChange::SetMasterVolume {
-            volume: self.volume(),
-            loudness: self.state.loudness.get_level(self.volume()),
+            gain,
+            volume_spl,
+            loudness_gain,
         }
     }
 
@@ -196,16 +242,27 @@ impl StateController {
         self.broadcast(message);
     }
 
-    pub fn set_volume(&mut self, volume: Gain) {
-        self.mut_current_output().gain.db = limit(VOLUME_MIN, VOLUME_MAX, volume.db);
+    pub fn set_gain(&mut self, gain: Gain) {
+        self.mut_current_output().gain.db = limit(GAIN_MIN, GAIN_MAX, gain.db);
         self.on_volume_updated();
     }
 
-    pub fn move_volume(&mut self, volume_change: Gain) {
-        let new_volume = Gain {
-            db: self.volume().db + volume_change.db,
+    pub fn set_volume(&mut self, volume_spl: f32) {
+        let new_gain = Gain {
+            db: limit(GAIN_MIN, GAIN_MAX, volume_spl - self.get_full_scale_spl()),
         };
-        self.set_volume(new_volume);
+        self.set_gain(new_gain)
+    }
+
+    pub fn move_volume(&mut self, volume_change: Gain) {
+        let new_gain = Gain {
+            db: limit(
+                GAIN_MIN,
+                GAIN_MAX,
+                self.current_gain().db + volume_change.db,
+            ),
+        };
+        self.set_gain(new_gain)
     }
 
     pub fn select_output(&mut self, output: usize) {

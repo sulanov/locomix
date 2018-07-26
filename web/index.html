@@ -26,7 +26,7 @@
 <dev id="controls" hidden=false>
   <div class="master_volume_box">
     <header>Volume</header>
-    <input class="slider" type="range" min="-90" max="0" step="0.5"></input>
+    <input class="slider" type="range" min="30" max="110" step="0.5"></input>
     <value></value> dB
   </div>
 
@@ -159,7 +159,12 @@ function autoupdate_checkbox(checkbox, update_callback) {
 }
 
 function update_volume_slider(state) {
-  let value = state.outputs[state.output].gain;
+  let out = state.outputs[state.output];
+  let full_scale_spl = 110;
+  if (out.current_speakers != null) {
+    full_scale_spl = out.speakers[out.current_speakers].full_scale_spl;
+  }
+  let value = Math.round((full_scale_spl + out.gain) * 2.0) / 2.0;
   let volume_box = document.querySelector(".master_volume_box");
   volume_box.querySelector(".slider").value = value;
   volume_box.querySelector("value").innerText = value;

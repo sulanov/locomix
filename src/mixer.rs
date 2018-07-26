@@ -227,7 +227,7 @@ pub fn run_mixer_loop(
             .collect()
     };
 
-    let mut output_gain = shared_state.lock().volume();
+    let mut output_gain = shared_state.lock().current_gain();
 
     let mut last_data_time = Time::now();
     let mut state = ui::StreamState::Active;
@@ -334,9 +334,14 @@ pub fn run_mixer_loop(
                     outputs[selected_output].deactivate();
                     selected_output = output;
                 }
-                ui::StateChange::SetMasterVolume { volume, loudness } => {
-                    output_gain = volume;
-                    loudness_filter.set_params(SimpleFilterParams::new(sample_rate, loudness.db));
+                ui::StateChange::SetMasterVolume {
+                    gain,
+                    volume_spl: _,
+                    loudness_gain,
+                } => {
+                    output_gain = gain;
+                    loudness_filter
+                        .set_params(SimpleFilterParams::new(sample_rate, loudness_gain.db));
                 }
                 ui::StateChange::SetInputGain { device, gain } => {
                     mixers[device as usize].set_gain(gain);
