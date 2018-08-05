@@ -4,10 +4,10 @@ use crossover;
 use downmixer;
 use filters::*;
 use output;
+use state;
 use std;
 use std::cmp;
 use time::*;
-use ui;
 
 struct InputMixer {
     input: AsyncInput,
@@ -98,14 +98,14 @@ impl InputMixer {
 pub struct FilteredOutput {
     output: Box<output::Output>,
     fir_filter: Option<Box<StreamFilter>>,
-    subwoofer_config: Option<ui::SubwooferConfig>,
+    subwoofer_config: Option<state::SubwooferConfig>,
 
     drc_enabled: bool,
     subwoofer_enabled: bool,
 
     downmixer: downmixer::Downmixer,
     crossover: Option<crossover::CrossoverFilter>,
-    state_observer: ui::StateObserver,
+    state_observer: state::StateObserver,
 }
 
 impl FilteredOutput {
@@ -113,8 +113,8 @@ impl FilteredOutput {
         output: Box<output::Output>,
         out_channels: PerChannel<bool>,
         fir_filter: Option<Box<StreamFilter>>,
-        subwoofer_config: Option<ui::SubwooferConfig>,
-        shared_state: &ui::SharedState,
+        subwoofer_config: Option<state::SubwooferConfig>,
+        shared_state: &state::SharedState,
     ) -> Box<output::Output> {
         let enable_drc = shared_state.lock().state().enable_drc.unwrap_or(false);
         let enable_subwoofer = shared_state
@@ -144,7 +144,7 @@ impl FilteredOutput {
             (true, None) => None,
             (
                 true,
-                Some(ui::SubwooferConfig {
+                Some(state::SubwooferConfig {
                     crossover_frequency,
                 }),
             ) => Some(crossover::CrossoverFilter::new(crossover_frequency)),
@@ -157,11 +157,11 @@ impl output::Output for FilteredOutput {
         let mut need_reset = false;
         for msg in self.state_observer.try_iter() {
             match msg {
-                ui::StateChange::SetEnableDrc { enable } => {
+                state::StateChange::SetEnableDrc { enable } => {
                     self.drc_enabled = enable;
                     need_reset = true;
                 }
-                ui::StateChange::SetEnableSubwoofer { enable } => {
+                state::StateChange::SetEnableSubwoofer { enable } => {
                     self.subwoofer_enabled = enable;
                     need_reset = true;
                 }
@@ -210,7 +210,7 @@ pub fn run_mixer_loop(
     mut outputs: Vec<Box<output::Output>>,
     sample_rate: f64,
     period_duration: TimeDelta,
-    shared_state: ui::SharedState,
+    shared_state: state::SharedState,
 ) -> Result<()> {
     let ui_channel = shared_state.lock().add_observer();
 
@@ -230,7 +230,7 @@ pub fn run_mixer_loop(
     let mut output_gain = shared_state.lock().current_gain();
 
     let mut last_data_time = Time::now();
-    let mut state = ui::StreamState::Active;
+    let mut state = state::StreamState::Active;
     let mut selected_output = 0;
 
     let mut loudness_filter =
@@ -295,25 +295,25 @@ pub fn run_mixer_loop(
         let new_state = match (have_data, (Time::now() - last_data_time).in_seconds()) {
             (true, _) => {
                 last_data_time = now;
-                ui::StreamState::Active
+                state::StreamState::Active
             }
-            (false, t) if t < OUTPUT_SHUTDOWN_SECONDS => ui::StreamState::Active,
-            (false, t) if t < STANDBY_SECONDS => ui::StreamState::Inactive,
-            (false, _) => ui::StreamState::Standby,
+            (false, t) if t < OUTPUT_SHUTDOWN_SECONDS => state::StreamState::Active,
+            (false, t) if t < STANDBY_SECONDS => state::StreamState::Inactive,
+            (false, _) => state::StreamState::Standby,
         };
 
         if state != new_state {
             state = new_state;
             println!("INFO: state: {}", state.as_str());
             shared_state.lock().set_stream_state(state);
-            if state != ui::StreamState::Active {
+            if state != state::StreamState::Active {
                 for ref mut out in &mut outputs {
                     out.deactivate();
                 }
             }
         }
 
-        if state == ui::StreamState::Active {
+        if state == state::StreamState::Active {
             frame.gain += output_gain;
 
             frame = loudness_filter.apply(frame);
@@ -330,11 +330,11 @@ pub fn run_mixer_loop(
 
         for msg in ui_channel.try_iter() {
             match msg {
-                ui::StateChange::SelectOutput { output } => {
+                state::StateChange::SelectOutput { output } => {
                     outputs[selected_output].deactivate();
                     selected_output = output;
                 }
-                ui::StateChange::SetMasterVolume {
+                state::StateChange::SetMasterVolume {
                     gain,
                     volume_spl: _,
                     loudness_gain,
@@ -343,18 +343,18 @@ pub fn run_mixer_loop(
                     loudness_filter
                         .set_params(SimpleFilterParams::new(sample_rate, loudness_gain.db));
                 }
-                ui::StateChange::SetInputGain { device, gain } => {
+                state::StateChange::SetInputGain { device, gain } => {
                     mixers[device as usize].set_gain(gain);
                 }
-                ui::StateChange::SetEnableDrc { enable: _ } => (),
-                ui::StateChange::SetEnableSubwoofer { enable: _ } => (),
-                ui::StateChange::SetCrossfeed { enable } => {
+                state::StateChange::SetEnableDrc { enable: _ } => (),
+                state::StateChange::SetEnableSubwoofer { enable: _ } => (),
+                state::StateChange::SetCrossfeed { enable } => {
                     crossfeed_filter.set_enabled(enable);
                 }
-                ui::StateChange::SetMuxMode { mux_mode } => {
-                    exclusive_mux_mode = mux_mode == ui::MuxMode::Exclusive;
+                state::StateChange::SetMuxMode { mux_mode } => {
+                    exclusive_mux_mode = mux_mode == state::MuxMode::Exclusive;
                 }
-                ui::StateChange::SetStreamState { stream_state } => {
+                state::StateChange::SetStreamState { stream_state } => {
                     state = stream_state;
                 }
             }

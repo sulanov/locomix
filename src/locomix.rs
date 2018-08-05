@@ -24,7 +24,7 @@ use locomix::pipe_input;
 use locomix::rotary_encoder;
 use locomix::state_script;
 use locomix::time::TimeDelta;
-use locomix::ui;
+use locomix::state;
 use locomix::volume_device;
 use locomix::web_ui;
 use std::alloc::System;
@@ -228,7 +228,7 @@ fn load_fir_set(
 fn process_speaker_config(
     full_scale_output_volts: f32,
     c: SpeakersConfig,
-) -> Result<ui::SpeakersConfig, RunError> {
+) -> Result<state::SpeakersConfig, RunError> {
     let fs_output = match (
         c.full_scale_spl,
         c.sensitivity_1v,
@@ -257,7 +257,7 @@ fn process_speaker_config(
         }
     };
 
-    Ok(ui::SpeakersConfig {
+    Ok(state::SpeakersConfig {
         name: c.name,
         full_scale_spl: fs_output,
     })
@@ -342,13 +342,13 @@ fn run() -> Result<(), RunError> {
         ));
     }
 
-    let shared_state = ui::SharedState::new();
+    let shared_state = state::SharedState::new();
 
     let mut inputs = Vec::<async_input::AsyncInput>::new();
     for input in config.input {
         let name = input.name.unwrap_or(input.device.clone());
         let default_gain = input.default_gain.unwrap_or(0.0);
-        shared_state.lock().add_input(ui::InputState {
+        shared_state.lock().add_input(state::InputState {
             name: name.clone(),
             gain: base::Gain { db: default_gain },
         });
@@ -477,10 +477,10 @@ fn run() -> Result<(), RunError> {
                 ))
             }
             (false, None) => None,
-            (true, None) => Some(ui::SubwooferConfig {
+            (true, None) => Some(state::SubwooferConfig {
                 crossover_frequency: 80.0,
             }),
-            (true, Some(f)) if f > 20 && f < 1000 => Some(ui::SubwooferConfig {
+            (true, Some(f)) if f > 20 && f < 1000 => Some(state::SubwooferConfig {
                 crossover_frequency: 80.0,
             }),
             (true, Some(f)) => {
@@ -516,8 +516,8 @@ fn run() -> Result<(), RunError> {
 
         let default_gain = output
             .default_gain
-            .unwrap_or((ui::GAIN_MIN + ui::GAIN_MAX) / 2.0);
-        shared_state.lock().add_output(ui::OutputState {
+            .unwrap_or((state::GAIN_MIN + state::GAIN_MAX) / 2.0);
+        shared_state.lock().add_output(state::OutputState {
             name: name.clone(),
             gain: base::Gain { db: default_gain },
             drc_supported: fir_filters.is_some(),

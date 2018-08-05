@@ -2,8 +2,8 @@ extern crate toml;
 
 use base::*;
 use input_device::*;
+use state::*;
 use std;
-use ui::*;
 
 fn try_open(device_path: &str, log_error: bool) -> Option<InputDevice> {
     match InputDevice::new(device_path) {

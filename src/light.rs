@@ -2,9 +2,9 @@ extern crate toml;
 
 use base::*;
 use input_device::*;
+use state::*;
 use std;
 use time::{Time, TimeDelta};
-use ui::*;
 
 const REOPEN_PERIOD_SECONDS: i64 = 3;
 

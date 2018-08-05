@@ -1,6 +1,6 @@
+use state::*;
 use std;
 use std::process::Command;
-use ui::*;
 
 struct StateScript {
     script_path: String,

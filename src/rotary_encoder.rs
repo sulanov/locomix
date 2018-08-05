@@ -3,8 +3,8 @@ extern crate toml;
 
 use base::*;
 use gpio;
+use state::*;
 use std;
-use ui::*;
 
 fn parse_pin_param(config: &toml::value::Table, name: &str) -> Result<u8> {
     match config.get(name).and_then(|v| v.as_integer()) {

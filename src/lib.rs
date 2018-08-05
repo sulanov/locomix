@@ -27,9 +27,9 @@ pub mod pga2311;
 pub mod pipe_input;
 pub mod resampler;
 pub mod rotary_encoder;
+pub mod state;
 pub mod state_script;
 pub mod time;
-pub mod ui;
 pub mod volume_device;
 pub mod web_ui;
 
