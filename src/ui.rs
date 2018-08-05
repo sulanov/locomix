@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::{Mutex, MutexGuard};
 
 pub const GAIN_MIN: f32 = -90.0;
-pub const GAIN_MAX: f32 = 0.0;
+pub const GAIN_MAX: f32 = 30.0;
 
 pub type DeviceId = usize;
 
