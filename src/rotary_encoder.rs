@@ -3,8 +3,8 @@ extern crate toml;
 
 use base::*;
 use gpio;
-use state::*;
 use std;
+use ui;
 
 fn parse_pin_param(config: &toml::value::Table, name: &str) -> Result<u8> {
     match config.get(name).and_then(|v| v.as_integer()) {
@@ -20,7 +20,7 @@ struct RotaryEncoder {
     pin_a_state: bool,
     pin_b_state: bool,
     gpio_channel: std::sync::mpsc::Receiver<(Pin, bool)>,
-    shared_state: SharedState,
+    event_sink: ui::EventSink,
 }
 
 #[derive(Debug)]
@@ -28,13 +28,6 @@ enum Pin {
     A,
     B,
     C,
-}
-
-enum Event {
-    CW,
-    CCW,
-    Push,
-    Release,
 }
 
 fn set_pin_level(sender: &std::sync::mpsc::Sender<(Pin, bool)>, pin: Pin, l: rppal::gpio::Level) {
@@ -49,7 +42,7 @@ fn set_pin_level(sender: &std::sync::mpsc::Sender<(Pin, bool)>, pin: Pin, l: rpp
 }
 
 impl RotaryEncoder {
-    fn new(config: &toml::value::Table, shared_state: SharedState) -> Result<RotaryEncoder> {
+    fn new(config: &toml::value::Table, event_sink: ui::EventSink) -> Result<RotaryEncoder> {
         let pin_a = parse_pin_param(config, "pin_a")?;
         let pin_b = parse_pin_param(config, "pin_b")?;
         let pin_c = parse_pin_param(config, "pin_c")?;
@@ -83,16 +76,16 @@ impl RotaryEncoder {
             pin_a_state: false,
             pin_b_state: false,
             gpio_channel: receiver,
-            shared_state,
+            event_sink,
         })
     }
 
-    fn poll_event(&mut self) -> Result<Option<Event>> {
+    fn poll_event(&mut self) -> Result<Option<ui::InputEvent>> {
         match self.gpio_channel.recv().unwrap() {
             (Pin::A, true) => {
                 self.pin_a_state = true;
                 if !self.pin_b_state {
-                    return Ok(Some(Event::CW));
+                    return Ok(Some(ui::InputEvent::Rotate(1)));
                 }
             }
             (Pin::A, false) => {
@@ -101,17 +94,17 @@ impl RotaryEncoder {
             (Pin::B, true) => {
                 self.pin_b_state = true;
                 if !self.pin_a_state {
-                    return Ok(Some(Event::CCW));
+                    return Ok(Some(ui::InputEvent::Rotate(-1)));
                 }
             }
             (Pin::B, false) => {
                 self.pin_b_state = false;
             }
             (Pin::C, true) => {
-                return Ok(Some(Event::Push));
+                return Ok(Some(ui::InputEvent::Pressed(ui::Key::Rotary)));
             }
             (Pin::C, false) => {
-                return Ok(Some(Event::Release));
+                return Ok(Some(ui::InputEvent::Released(ui::Key::Rotary)));
             }
         }
         Ok(None)
@@ -120,9 +113,12 @@ impl RotaryEncoder {
     fn run_loop(&mut self) {
         loop {
             match self.poll_event() {
-                Err(e) => println!("Failed to read GPIO: {:?}", e),
-                Ok(Some(Event::CW)) => self.shared_state.lock().move_volume(Gain { db: 0.5 }),
-                Ok(Some(Event::CCW)) => self.shared_state.lock().move_volume(Gain { db: -0.5 }),
+                Err(e) => println!("ERROR: Failed to read GPIO: {:?}", e),
+                Ok(Some(event)) => {
+                    if let Err(e) = self.event_sink.send(event) {
+                        println!("ERROR: Failed to send input event: {:?}", e);
+                    }
+                }
                 _ => (),
             }
         }
@@ -131,10 +127,10 @@ impl RotaryEncoder {
 
 pub fn start_rotary_encoder_handler(
     config: &toml::value::Table,
-    shared_state: SharedState,
+    event_sink: ui::EventSink,
 ) -> Result<()> {
     gpio::initialize()?;
-    let mut encoder = RotaryEncoder::new(config, shared_state)?;
+    let mut encoder = RotaryEncoder::new(config, event_sink)?;
     std::thread::spawn(move || {
         encoder.run_loop();
     });

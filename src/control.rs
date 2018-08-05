@@ -2,8 +2,8 @@ extern crate toml;
 
 use base::*;
 use input_device::*;
-use state::*;
 use std;
+use ui;
 
 fn try_open(device_path: &str, log_error: bool) -> Option<InputDevice> {
     match InputDevice::new(device_path) {
@@ -27,78 +27,42 @@ fn try_open(device_path: &str, log_error: bool) -> Option<InputDevice> {
     }
 }
 
-fn process_event(shared_state: &mut SharedState, event: InputEvent) {
-    match event {
-        InputEvent {
-            time: _,
-            type_: EV_KEY,
-            code: KEY_VOLUMEUP,
-            value: EV_PRESSED...EV_REPEATED,
-        } => {
-            shared_state.lock().move_volume(Gain { db: 1.0 });
+fn process_event(event: InputEvent) -> Option<ui::InputEvent> {
+    match (event.type_, event.code, event.value) {
+        (EV_KEY, KEY_VOLUMEUP, EV_PRESSED...EV_REPEATED) => {
+            Some(ui::InputEvent::Pressed(ui::Key::VolumeUp))
         }
-
-        InputEvent {
-            time: _,
-            type_: EV_KEY,
-            code: KEY_VOLUMEDOWN,
-            value: EV_PRESSED...EV_REPEATED,
-        } => {
-            shared_state.lock().move_volume(Gain { db: -1.0 });
+        (EV_KEY, KEY_VOLUMEUP, EV_RELEASED) => Some(ui::InputEvent::Released(ui::Key::VolumeUp)),
+        (EV_KEY, KEY_VOLUMEDOWN, EV_PRESSED...EV_REPEATED) => {
+            Some(ui::InputEvent::Pressed(ui::Key::VolumeDown))
         }
-
-        InputEvent {
-            time: _,
-            type_: EV_KEY,
-            code: KEY_MUTE,
-            value: EV_PRESSED,
-        } => {
-            shared_state.lock().toggle_output();
+        (EV_KEY, KEY_VOLUMEDOWN, EV_RELEASED) => {
+            Some(ui::InputEvent::Released(ui::Key::VolumeDown))
         }
-
-        InputEvent {
-            time: _,
-            type_: EV_KEY,
-            code: KEY_MENU,
-            value: EV_PRESSED,
-        } => {
-            let mut state = shared_state.lock();
-            let mut loudness_config = state.state().loudness.clone();
-            loudness_config.enabled = !loudness_config.enabled;
-            state.set_loudness(loudness_config);
-        }
-
-        InputEvent {
-            time: _,
-            type_: EV_REL,
-            code: REL_DIAL,
-            value: change,
-        } => {
-            shared_state.lock().move_volume(Gain {
-                db: (change as i32) as f32 / 2.0,
-            });
-        }
-
-        InputEvent {
-            time: _,
-            type_: EV_KEY,
-            code: BTN_MISC,
-            value: EV_PRESSED,
-        } => {
-            println!("Griffin PowerMate pushed");
-        }
-
-        _ => (),
+        (EV_KEY, KEY_MUTE, EV_PRESSED) => Some(ui::InputEvent::Pressed(ui::Key::Mute)),
+        (EV_KEY, KEY_MUTE, EV_RELEASED) => Some(ui::InputEvent::Released(ui::Key::Mute)),
+        (EV_KEY, KEY_MENU, EV_PRESSED) => Some(ui::InputEvent::Pressed(ui::Key::Menu)),
+        (EV_KEY, KEY_MENU, EV_RELEASED) => Some(ui::InputEvent::Released(ui::Key::Menu)),
+        (EV_REL, REL_DIAL, change) => Some(ui::InputEvent::Rotate(change as i32)),
+        (EV_KEY, BTN_MISC, EV_PRESSED) => Some(ui::InputEvent::Pressed(ui::Key::Rotary)),
+        (EV_KEY, BTN_MISC, EV_RELEASED) => Some(ui::InputEvent::Released(ui::Key::Rotary)),
+        _ => None,
     }
 }
 
-fn handle_input_device(device_path: &str, mut shared_state: SharedState) {
+fn handle_input_device(device_path: &str, event_sink: ui::EventSink) {
     let mut dev: Option<InputDevice> = try_open(device_path, true);
     loop {
         let mut reopen = false;
         match dev.as_mut() {
             Some(ref mut dev) => match dev.read() {
-                Ok(event) => process_event(&mut shared_state, event),
+                Ok(event) => {
+                    if let Some(event) = process_event(event) {
+                        if let Err(e) = event_sink.send(event) {
+                            println!("ERROR: Failed to send event: {:?}", e);
+                        }
+                    }
+                }
                 Err(e) => {
                     println!(
                         "WARNING: failed to read input event from {}: {}",
@@ -120,14 +84,14 @@ fn handle_input_device(device_path: &str, mut shared_state: SharedState) {
     }
 }
 
-pub fn start_input_handler(config: &toml::value::Table, shared_state: SharedState) -> Result<()> {
+pub fn start_input_handler(config: &toml::value::Table, event_sink: ui::EventSink) -> Result<()> {
     let device_path = config
         .get("device")
         .and_then(|v| v.as_str())
         .ok_or_else(|| Error::new("device field not specified for input device"))?
         .to_string();
     std::thread::spawn(move || {
-        handle_input_device(device_path.as_str(), shared_state);
+        handle_input_device(device_path.as_str(), event_sink);
     });
     Ok(())
 }

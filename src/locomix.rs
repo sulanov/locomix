@@ -22,9 +22,10 @@ use locomix::output;
 use locomix::pga2311;
 use locomix::pipe_input;
 use locomix::rotary_encoder;
+use locomix::state;
 use locomix::state_script;
 use locomix::time::TimeDelta;
-use locomix::state;
+use locomix::ui;
 use locomix::volume_device;
 use locomix::web_ui;
 use std::alloc::System;
@@ -514,9 +515,7 @@ fn run() -> Result<(), RunError> {
             None => Vec::new(),
         };
 
-        let default_gain = output
-            .default_gain
-            .unwrap_or((state::GAIN_MIN + state::GAIN_MAX) / 2.0);
+        let default_gain = output.default_gain.unwrap_or(-25.0);
         shared_state.lock().add_output(state::OutputState {
             name: name.clone(),
             gain: base::Gain { db: default_gain },
@@ -537,6 +536,8 @@ fn run() -> Result<(), RunError> {
         outputs.push(out);
     }
 
+    let user_interface = ui::UserInterface::new(shared_state.clone());
+
     for device in config.control_device.unwrap_or([].to_vec()) {
         let type_ = match device.get("type").map(|t| t.as_str()) {
             None => return Err(RunError::new("control_device type is not specified.")),
@@ -545,14 +546,17 @@ fn run() -> Result<(), RunError> {
         };
         match type_ {
             "input" => {
-                control::start_input_handler(&device, shared_state.clone())?;
+                control::start_input_handler(&device, user_interface.get_event_sink())?;
             }
             "griffin_powermate" => {
-                control::start_input_handler(&device, shared_state.clone())?;
+                control::start_input_handler(&device, user_interface.get_event_sink())?;
                 light::start_light_controller(&device, shared_state.clone())?;
             }
             "rotary_encoder" => {
-                rotary_encoder::start_rotary_encoder_handler(&device, shared_state.clone())?;
+                rotary_encoder::start_rotary_encoder_handler(
+                    &device,
+                    user_interface.get_event_sink(),
+                )?;
             }
             c => {
                 return Err(RunError::from_string(format!(

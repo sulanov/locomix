@@ -32,6 +32,7 @@ pub const BTN_MISC: u16 = 0x100;
 
 pub const MSC_PULSELED: u16 = 0x01;
 
+pub const EV_RELEASED: u32 = 0;
 pub const EV_PRESSED: u32 = 1;
 pub const EV_REPEATED: u32 = 2;
 
