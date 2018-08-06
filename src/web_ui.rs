@@ -37,7 +37,8 @@ fn serve_web(address: &str, shared_state: SharedState) {
                          #[derive(Deserialize)]
                          struct RequestParams {
                              volume: Option<f32>,
-                             output: Option<usize>,
+                             current_output: Option<usize>,
+                             current_speakers: Option<usize>,
                              mux_mode: Option<MuxMode>,
                              enable_drc: Option<bool>,
                              enable_subwoofer: Option<bool>,
@@ -53,15 +54,18 @@ fn serve_web(address: &str, shared_state: SharedState) {
                           state_controller.set_volume(volume);
                         });
 
-                        match json.output {
-                            Some(output) => {
-                                  if output > state_controller.state().outputs.len() {
-                                    return Response::text("Invalid output id").with_status_code(404)
-                                  }
-                                  state_controller.select_output(output);
-                                }
-                            None => ()
-                        };
+                        if let Some(output) = json.current_output {
+                            if output > state_controller.state().outputs.len() {
+                               return Response::text("Invalid output id").with_status_code(404)
+                            }
+                            if let Some(speakers) = json.current_output  {
+                              if speakers >= state_controller.state().outputs[output].speakers.len() {
+                               return Response::text("Invalid output id").with_status_code(404)
+                              }
+                            }
+
+                            state_controller.select_output(output, json.current_speakers);
+                        }
 
                         json.mux_mode.map( |mux_mode| {
                             state_controller.set_mux_mode(mux_mode);

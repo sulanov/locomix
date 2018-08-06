@@ -4,6 +4,8 @@ extern crate toml;
 use base::*;
 use gpio;
 use std;
+use std::sync::mpsc;
+use time::{Time, TimeDelta};
 use ui;
 
 fn parse_pin_param(config: &toml::value::Table, name: &str) -> Result<u8> {
@@ -19,7 +21,12 @@ fn parse_pin_param(config: &toml::value::Table, name: &str) -> Result<u8> {
 struct RotaryEncoder {
     pin_a_state: bool,
     pin_b_state: bool,
-    gpio_channel: std::sync::mpsc::Receiver<(Pin, bool)>,
+
+    pin_c_state: bool,
+    reported_c_state: bool,
+    last_c_change: Option<Time>,
+
+    gpio_channel: mpsc::Receiver<(Pin, bool, Time)>,
     event_sink: ui::EventSink,
 }
 
@@ -30,16 +37,18 @@ enum Pin {
     C,
 }
 
-fn set_pin_level(sender: &std::sync::mpsc::Sender<(Pin, bool)>, pin: Pin, l: rppal::gpio::Level) {
+fn set_pin_level(sender: &mpsc::Sender<(Pin, bool, Time)>, pin: Pin, l: rppal::gpio::Level) {
     let value = if l == rppal::gpio::Level::Low {
         true
     } else {
         false
     };
     sender
-        .send((pin, value))
+        .send((pin, value, Time::now()))
         .unwrap_or_else(|e| println!("ERROR: Failed to send gpio message: {}.", e));
 }
+
+const BUTTON_DELAY_MS: i64 = 200;
 
 impl RotaryEncoder {
     fn new(config: &toml::value::Table, event_sink: ui::EventSink) -> Result<RotaryEncoder> {
@@ -56,7 +65,7 @@ impl RotaryEncoder {
         gpio_locked.set_mode(pin_c, rppal::gpio::Mode::Input);
         gpio_locked.set_pullupdown(pin_c, rppal::gpio::PullUpDown::PullUp);
 
-        let (sender, receiver) = std::sync::mpsc::channel();
+        let (sender, receiver) = mpsc::channel();
 
         let sender_a = sender.clone();
         gpio_locked.set_async_interrupt(pin_a, rppal::gpio::Trigger::Both, move |l| {
@@ -75,36 +84,75 @@ impl RotaryEncoder {
         Ok(RotaryEncoder {
             pin_a_state: false,
             pin_b_state: false,
+            pin_c_state: false,
+            reported_c_state: false,
+            last_c_change: None,
             gpio_channel: receiver,
             event_sink,
         })
     }
 
+    fn get_c_event(&mut self) -> Option<ui::InputEvent> {
+        if self.reported_c_state != self.pin_c_state {
+            self.reported_c_state = self.pin_c_state;
+            if self.pin_c_state {
+                Some(ui::InputEvent::Pressed(ui::Key::Rotary))
+            } else {
+                Some(ui::InputEvent::Released(ui::Key::Rotary))
+            }
+        } else {
+            None
+        }
+    }
+
     fn poll_event(&mut self) -> Result<Option<ui::InputEvent>> {
-        match self.gpio_channel.recv().unwrap() {
-            (Pin::A, true) => {
+        let event = match self.last_c_change.clone() {
+            Some(time) => {
+                let retrigger_c_event_time = time + TimeDelta::milliseconds(BUTTON_DELAY_MS);
+                let timeout = retrigger_c_event_time - Time::now();
+                match self.gpio_channel.recv_timeout(timeout.as_duration()) {
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        self.last_c_change = None;
+                        return Ok(self.get_c_event());
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        return Err(Error::new("Listeners were dropped"))
+                    }
+                    Ok(event) => event,
+                }
+            }
+            None => self.gpio_channel.recv().unwrap(),
+        };
+
+        match event {
+            (Pin::A, true, _) => {
                 self.pin_a_state = true;
                 if !self.pin_b_state {
                     return Ok(Some(ui::InputEvent::Rotate(1)));
                 }
             }
-            (Pin::A, false) => {
+            (Pin::A, false, _) => {
                 self.pin_a_state = false;
             }
-            (Pin::B, true) => {
+            (Pin::B, true, _) => {
                 self.pin_b_state = true;
                 if !self.pin_a_state {
                     return Ok(Some(ui::InputEvent::Rotate(-1)));
                 }
             }
-            (Pin::B, false) => {
+            (Pin::B, false, _) => {
                 self.pin_b_state = false;
             }
-            (Pin::C, true) => {
-                return Ok(Some(ui::InputEvent::Pressed(ui::Key::Rotary)));
-            }
-            (Pin::C, false) => {
-                return Ok(Some(ui::InputEvent::Released(ui::Key::Rotary)));
+            (Pin::C, state, time) => {
+                self.pin_c_state = state;
+                let report_event = match self.last_c_change.take() {
+                    None => true,
+                    Some(last_time) => time - last_time >= TimeDelta::milliseconds(BUTTON_DELAY_MS),
+                };
+                self.last_c_change = Some(time);
+                if report_event {
+                    return Ok(self.get_c_event());
+                }
             }
         }
         Ok(None)

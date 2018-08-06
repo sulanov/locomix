@@ -4,17 +4,17 @@ use std::process::Command;
 
 struct StateScript {
     script_path: String,
-    state: SharedState,
+    shared_state: SharedState,
     state_observer: StateObserver,
 }
 
 impl StateScript {
-    fn new(script_path: &str, state: SharedState) -> StateScript {
-        let receiver = state.lock().add_observer();
+    fn new(script_path: &str, shared_state: SharedState) -> StateScript {
+        let state_observer = shared_state.lock().add_observer();
         StateScript {
             script_path: String::from(script_path),
-            state: state,
-            state_observer: receiver,
+            shared_state,
+            state_observer,
         }
     }
 
@@ -37,29 +37,32 @@ impl StateScript {
     }
 
     fn run(&mut self) {
-        let mut state;
-        let mut output: String;
+        let mut stream_state;
+        let mut output_name: String;
         {
-            let l = self.state.lock();
-            let s = l.state();
-            output = s.outputs[s.output].name.clone();
-            state = s.stream_state;
+            let state = self.shared_state.lock();
+            output_name = state.current_output().name.clone();
+            stream_state = state.state().stream_state;
         };
-        self.run_script(state, output.as_str());
+        self.run_script(stream_state, output_name.as_str());
 
         loop {
             match self.state_observer.recv() {
-                Ok(StateChange::SelectOutput { output: o }) => {
-                    output = self.state.lock().state().outputs[o].name.clone();
+                Ok(StateChange::SelectOutput { output }) => {
+                    output_name = self.shared_state.lock().state().outputs[output]
+                        .name
+                        .clone();
                 }
-                Ok(StateChange::SetStreamState { stream_state }) => {
-                    state = stream_state;
+                Ok(StateChange::SetStreamState {
+                    stream_state: new_stream_state,
+                }) => {
+                    stream_state = new_stream_state;
                 }
                 Ok(_) => continue,
                 Err(_) => return,
             };
 
-            self.run_script(state, output.as_str());
+            self.run_script(stream_state, output_name.as_str());
         }
     }
 }

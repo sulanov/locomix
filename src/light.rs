@@ -87,11 +87,17 @@ impl LightController {
             // Skip all pending messages if there were more than one.
             for _ in self.state_observer.try_iter() {}
 
-            let volume = self.state.lock().current_gain().db;
+            let mut level = (self.state.lock().volume() - 40.0) / 60.0;
+            if level > 1.0 {
+                level = 1.0;
+            } else if level < 0.0 {
+                level = 0.0;
+            }
 
             self.set_light(0.0);
             std::thread::sleep(TimeDelta::milliseconds(50).as_duration());
-            self.set_light((volume - GAIN_MIN) / (GAIN_MAX - GAIN_MIN));
+
+            self.set_light(level);
             std::thread::sleep(TimeDelta::milliseconds(50).as_duration());
         }
     }

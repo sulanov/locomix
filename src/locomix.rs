@@ -121,7 +121,6 @@ struct OutputConfig {
     channel_map: Option<String>,
     volume: Option<toml::value::Table>,
 
-    default_gain: Option<f32>,
     subwoofer_crossover_frequency: Option<usize>,
     fir_filters: Option<BTreeMap<String, String>>,
     fir_length: Option<usize>,
@@ -144,6 +143,7 @@ struct Config {
     input: Vec<InputConfig>,
     output: Vec<OutputConfig>,
     control_device: Option<Vec<toml::value::Table>>,
+    enable_display: Option<bool>,
 }
 
 fn parse_channel_id(id: String) -> Result<base::ChannelPos, RunError> {
@@ -515,10 +515,8 @@ fn run() -> Result<(), RunError> {
             None => Vec::new(),
         };
 
-        let default_gain = output.default_gain.unwrap_or(-25.0);
         shared_state.lock().add_output(state::OutputState {
             name: name.clone(),
-            gain: base::Gain { db: default_gain },
             drc_supported: fir_filters.is_some(),
             subwoofer: sub_config,
             current_speakers: if speakers.is_empty() { None } else { Some(0) },
@@ -536,7 +534,7 @@ fn run() -> Result<(), RunError> {
         outputs.push(out);
     }
 
-    let user_interface = ui::UserInterface::new(shared_state.clone());
+    let event_pipe = ui::EventPipe::new();
 
     for device in config.control_device.unwrap_or([].to_vec()) {
         let type_ = match device.get("type").map(|t| t.as_str()) {
@@ -546,17 +544,14 @@ fn run() -> Result<(), RunError> {
         };
         match type_ {
             "input" => {
-                control::start_input_handler(&device, user_interface.get_event_sink())?;
+                control::start_input_handler(&device, event_pipe.get_event_sink())?;
             }
             "griffin_powermate" => {
-                control::start_input_handler(&device, user_interface.get_event_sink())?;
+                control::start_input_handler(&device, event_pipe.get_event_sink())?;
                 light::start_light_controller(&device, shared_state.clone())?;
             }
             "rotary_encoder" => {
-                rotary_encoder::start_rotary_encoder_handler(
-                    &device,
-                    user_interface.get_event_sink(),
-                )?;
+                rotary_encoder::start_rotary_encoder_handler(&device, event_pipe.get_event_sink())?;
             }
             c => {
                 return Err(RunError::from_string(format!(
@@ -566,6 +561,15 @@ fn run() -> Result<(), RunError> {
             }
         }
     }
+
+    let shared_stream_state = state::SharedStreamInfo::new();
+
+    let user_interface = if config.enable_display.unwrap_or(false) {
+        ui::DisplayUi::new(shared_stream_state.clone())?
+    } else {
+        ui::HeadlessUi::new()
+    };
+    event_pipe.start_ui_thread(user_interface, shared_state.clone());
 
     let web_addr = config.web_address.unwrap_or("0.0.0.0:8000".to_string());
     web_ui::start_web(&web_addr, shared_state.clone());
@@ -585,6 +589,7 @@ fn run() -> Result<(), RunError> {
         sample_rate as f64,
         period_duration,
         shared_state,
+        shared_stream_state,
     )))
 }
 

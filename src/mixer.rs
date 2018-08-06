@@ -202,8 +202,28 @@ impl output::Output for FilteredOutput {
     }
 }
 
-const OUTPUT_SHUTDOWN_SECONDS: i64 = 1200;
+const OUTPUT_SHUTDOWN_SECONDS: i64 = 30;
 const STANDBY_SECONDS: i64 = 3600;
+
+fn get_stream_stats(pcm: Option<&[f32]>) -> state::StreamStats {
+    if pcm.is_none() {
+        return state::StreamStats {
+            rms: 0.0,
+            peak: 0.0,
+        };
+    }
+    let pcm = pcm.unwrap();
+    let mut sq_sum = 0.0;
+    let mut peak = 0.0f32;
+    for s in pcm {
+        sq_sum += s * s;
+        peak = peak.max(s.abs());
+    }
+    state::StreamStats {
+        rms: (2.0 * sq_sum / pcm.len() as f32).sqrt(),
+        peak: peak,
+    }
+}
 
 pub fn run_mixer_loop(
     mut inputs: Vec<AsyncInput>,
@@ -211,6 +231,7 @@ pub fn run_mixer_loop(
     sample_rate: f64,
     period_duration: TimeDelta,
     shared_state: state::SharedState,
+    shared_stream_state: state::SharedStreamInfo,
 ) -> Result<()> {
     let ui_channel = shared_state.lock().add_observer();
 
@@ -314,8 +335,22 @@ pub fn run_mixer_loop(
         }
 
         if state == state::StreamState::Active {
-            frame.gain += output_gain;
+            let stream_info_packet = state::StreamInfoPacket {
+                time: frame.timestamp,
+                left: get_stream_stats(frame.get_channel(ChannelPos::FL)),
+                right: get_stream_stats(frame.get_channel(ChannelPos::FR)),
+            };
+            {
+                let mut stream_info = shared_stream_state.lock();
+                let expire_time =
+                    stream_info_packet.time - TimeDelta::milliseconds(state::STREAM_INFO_PERIOD_MS);
+                while stream_info.packets.len() > 0 && stream_info.packets[0].time < expire_time {
+                    stream_info.packets.pop_front();
+                }
+                stream_info.packets.push_back(stream_info_packet);
+            }
 
+            frame.gain += output_gain;
             frame = loudness_filter.apply(frame);
             frame = crossfeed_filter.apply(frame);
 

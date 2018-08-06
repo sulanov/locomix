@@ -7,6 +7,8 @@ extern crate simd;
 
 use self::byteorder::{ByteOrder, LittleEndian};
 
+use serde;
+use std;
 use std::cmp::{Eq, PartialEq};
 use std::collections::VecDeque;
 use std::error;
@@ -373,6 +375,15 @@ impl PartialEq for Gain {
     }
 }
 impl Eq for Gain {}
+
+impl serde::ser::Serialize for Gain {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        serializer.serialize_f32(self.db)
+    }
+}
 
 pub struct Frame {
     pub sample_rate: f64,

@@ -159,31 +159,26 @@ function autoupdate_checkbox(checkbox, update_callback) {
 }
 
 function update_volume_slider(state) {
-  let out = state.outputs[state.output];
-  let full_scale_spl = 110;
-  if (out.current_speakers != null) {
-    full_scale_spl = out.speakers[out.current_speakers].full_scale_spl;
-  }
-  let value = Math.round((full_scale_spl + out.gain) * 2.0) / 2.0;
+  let value = Math.round(state.volume * 2.0) / 2.0;
   let volume_box = document.querySelector(".master_volume_box");
   volume_box.querySelector(".slider").value = value;
   volume_box.querySelector("value").innerText = value;
 }
 
-function add_output(state, output_id, template) {
+function add_output(state, name, output_id, speakers_id, template) {
   let i = template.cloneNode(true);
   i.classList.remove("template");
-  i.querySelector(".name").innerText = state.outputs[output_id].name;
+  i.querySelector(".name").innerText = name;
   let radio = i.querySelector("input");
-  radio.checked = state.output == output_id;
+  radio.checked = state.current_output == output_id;
   radio.onchange = () => {
     if (radio.checked) {
-      state.output = output_id;
+      state.current_output = output_id;
       update_volume_slider(state);
       makeRequest({
         method: "POST",
         url: "/api/state",
-        params: {"output": output_id}
+        params: {"current_output": output_id, "current_speakers": speakers_id}
       })
     }
   }
@@ -256,17 +251,26 @@ document.body.onload = () => {
 
     let volume_box = document.querySelector(".master_volume_box");
     autoupdate_slider(volume_box, (volume) => {
-      state.outputs[state.output].gain = volume;
+      state.outputs[state.current_output].gain = volume;
       return postState({"volume": volume});
     });
     update_volume_slider(state);
 
-    if (state.outputs.length > 1) {
-      let template = document.querySelector(".output_selector .template")
-      for (var output_id = 0; output_id < state.outputs.length; output_id++) {
-        add_output(state, output_id, template);
+    let total_outputs = 0;
+    let template = document.querySelector(".output_selector .template")
+    for (var output_id = 0; output_id < state.outputs.length; output_id++) {
+        var out = state.outputs[output_id];
+      if (out.speakers.length == 0) {
+        add_output(state, out.name, output_id, null, template);
+        total_outputs += 1;
+      } else {
+        for (var speakers_id = 0; speakers_id < out.speakers.length; speakers_id++) {
+          add_output(state, out.speakers[speakers_id].name, output_id, speakers_id, template);
+          total_outputs += 1;
+        }
       }
-    } else {
+    }
+    if (total_outputs == 1) {
       document.querySelector(".output_selector").hidden = true;
     }
 

@@ -1,20 +1,23 @@
 use base::Gain;
-use serde;
+use std::collections::VecDeque;
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::sync::{Mutex, MutexGuard};
+use time::Time;
 
-pub const GAIN_MIN: f32 = -90.0;
-pub const GAIN_MAX: f32 = 30.0;
+pub const VOLUME_MIN: f32 = 30.0;
+pub const VOLUME_MAX: f32 = 110.0;
+pub const DEFAULT_VOLUME: f32 = 70.0;
 
 pub type DeviceId = usize;
 
-impl serde::ser::Serialize for Gain {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::ser::Serializer,
-    {
-        serializer.serialize_f32(self.db)
+pub fn limit(min: f32, max: f32, v: f32) -> f32 {
+    if v < min {
+        min
+    } else if v > max {
+        max
+    } else {
+        v
     }
 }
 
@@ -40,7 +43,6 @@ pub struct SpeakersConfig {
 #[derive(Serialize)]
 pub struct OutputState {
     pub name: String,
-    pub gain: Gain,
     pub subwoofer: Option<SubwooferConfig>,
     pub drc_supported: bool,
 
@@ -108,7 +110,8 @@ impl StreamState {
 pub struct State {
     pub inputs: Vec<InputState>,
     pub outputs: Vec<OutputState>,
-    pub output: usize,
+    pub current_output: usize,
+    pub volume: f32,
     pub mux_mode: MuxMode,
     pub loudness: LoudnessConfig,
     pub enable_drc: Option<bool>,
@@ -123,8 +126,8 @@ pub enum StateChange {
         output: usize,
     },
     SetMasterVolume {
-        gain: Gain,
         volume_spl: f32,
+        gain: Gain,
         loudness_gain: Gain,
     },
     SetInputGain {
@@ -161,8 +164,9 @@ impl StateController {
             state: State {
                 inputs: Vec::new(),
                 outputs: Vec::new(),
-                output: 0,
+                current_output: 0,
                 mux_mode: MuxMode::Exclusive,
+                volume: DEFAULT_VOLUME,
                 loudness: LoudnessConfig::default(),
                 enable_drc: None,
                 enable_subwoofer: None,
@@ -192,15 +196,11 @@ impl StateController {
     }
 
     pub fn current_output(&self) -> &OutputState {
-        &self.state.outputs[self.state.output]
+        &self.state.outputs[self.state.current_output]
     }
 
     pub fn mut_current_output(&mut self) -> &mut OutputState {
-        &mut self.state.outputs[self.state.output]
-    }
-
-    pub fn current_gain(&self) -> Gain {
-        self.current_output().gain
+        &mut self.state.outputs[self.state.current_output]
     }
 
     fn get_full_scale_spl(&self) -> f32 {
@@ -214,12 +214,12 @@ impl StateController {
     }
 
     fn get_volume_message(&self) -> StateChange {
+        let volume_spl = self.volume();
         let gain = self.current_gain();
-        let volume_spl = self.get_full_scale_spl() + gain.db;
         let loudness_gain = self.state.loudness.get_level(volume_spl);
         StateChange::SetMasterVolume {
-            gain,
             volume_spl,
+            gain,
             loudness_gain,
         }
     }
@@ -242,41 +242,45 @@ impl StateController {
         self.broadcast(message);
     }
 
-    pub fn set_gain(&mut self, gain: Gain) {
-        self.mut_current_output().gain.db = limit(GAIN_MIN, GAIN_MAX, gain.db);
-        self.on_volume_updated();
+    pub fn volume(&self) -> f32 {
+        self.state.volume
     }
 
     pub fn set_volume(&mut self, volume_spl: f32) {
-        let new_gain = Gain {
-            db: limit(GAIN_MIN, GAIN_MAX, volume_spl - self.get_full_scale_spl()),
-        };
-        self.set_gain(new_gain)
+        self.state.volume = limit(VOLUME_MIN, VOLUME_MAX, volume_spl);
+        self.on_volume_updated();
     }
 
     pub fn move_volume(&mut self, volume_change: Gain) {
-        let new_gain = Gain {
-            db: limit(
-                GAIN_MIN,
-                GAIN_MAX,
-                self.current_gain().db + volume_change.db,
-            ),
-        };
-        self.set_gain(new_gain)
+        let new_volume = self.volume() + volume_change.db;
+        self.set_volume(new_volume);
     }
 
-    pub fn select_output(&mut self, output: usize) {
-        self.state.output = output;
-        let message = StateChange::SelectOutput {
-            output: self.state.output,
-        };
-        self.broadcast(message);
+    pub fn current_gain(&self) -> Gain {
+        Gain {
+            db: self.volume() - self.get_full_scale_spl(),
+        }
+    }
+
+    pub fn select_output(&mut self, output: usize, speakers: Option<usize>) {
+        assert!(output < self.state.outputs.len());
+        let changed = self.state.current_output != output;
+        self.state.current_output = output;
+
+        if let Some(speakers) = speakers {
+            assert!(speakers < self.current_output().speakers.len());
+            self.mut_current_output().current_speakers = Some(speakers);
+        }
+
+        if changed {
+            self.broadcast(StateChange::SelectOutput { output });
+        }
         self.on_volume_updated();
     }
 
     pub fn toggle_output(&mut self) {
-        let next_output = (self.state.output + 1) % self.state.outputs.len();
-        self.select_output(next_output);
+        let next_output = (self.state.current_output + 1) % self.state.outputs.len();
+        self.select_output(next_output, None);
     }
 
     pub fn set_mux_mode(&mut self, mux_mode: MuxMode) {
@@ -327,16 +331,6 @@ pub struct SharedState {
     state: Arc<Mutex<StateController>>,
 }
 
-fn limit(min: f32, max: f32, v: f32) -> f32 {
-    if v < min {
-        min
-    } else if v > max {
-        max
-    } else {
-        v
-    }
-}
-
 impl SharedState {
     pub fn new() -> SharedState {
         SharedState {
@@ -346,5 +340,42 @@ impl SharedState {
 
     pub fn lock(&self) -> MutexGuard<StateController> {
         self.state.lock().unwrap()
+    }
+}
+
+pub const STREAM_INFO_PERIOD_MS: i64 = 1000;
+
+pub struct StreamStats {
+    pub rms: f32,
+    pub peak: f32,
+}
+
+pub struct StreamInfoPacket {
+    pub time: Time,
+
+    pub left: StreamStats,
+    pub right: StreamStats,
+}
+
+pub struct StreamInfo {
+    pub packets: VecDeque<StreamInfoPacket>,
+}
+
+#[derive(Clone)]
+pub struct SharedStreamInfo {
+    stream_info: Arc<Mutex<StreamInfo>>,
+}
+
+impl SharedStreamInfo {
+    pub fn new() -> SharedStreamInfo {
+        SharedStreamInfo {
+            stream_info: Arc::new(Mutex::new(StreamInfo {
+                packets: VecDeque::new(),
+            })),
+        }
+    }
+
+    pub fn lock(&self) -> MutexGuard<StreamInfo> {
+        self.stream_info.lock().unwrap()
     }
 }
