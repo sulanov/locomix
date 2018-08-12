@@ -174,7 +174,7 @@ impl MainScreen {
     }
 }
 
-const PEAK_DECAY_PER_SECOND: f32 = 2.0;
+const PEAK_DECAY_PER_SECOND: f32 = 1.0;
 
 impl Screen for MainScreen {
     fn reset(&mut self, _shared_state: &mut state::SharedState) {}
@@ -381,7 +381,7 @@ where
         self.base.render_header(canvas, self.delegate.title());
         let value = self.delegate.get_value(shared_state);
 
-        let width = 80;
+        let width = 100;
         let pos = ((value - self.delegate.min()) / (self.delegate.max() - self.delegate.min())
             * width as f32) as i16;
         canvas.draw_rect(gfx::Rect::ltrb(0, 18, width + 2, 32), gfx::Color::Light);
@@ -390,15 +390,14 @@ where
             gfx::Color::Dark,
         );
 
-        let text_rect = canvas.get_text_rect(
-            gfx::Vector::xy(0, 0),
-            &self.base.resources.font_bold,
-            format!("{:.1}", value).as_str(),
-        );
+        let value_string = format!("{:.1}", value);
+        let value_str = value_string.as_str();
+        let text_rect =
+            canvas.get_text_rect(gfx::Vector::xy(0, 0), &self.base.resources.font, value_str);
         canvas.draw_text(
             gfx::Vector::xy(128 - text_rect.size.width as i16, 27),
             &self.base.resources.font,
-            format!("{:.1}", value).as_str(),
+            value_str,
             gfx::Color::Light,
         );
     }

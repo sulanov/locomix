@@ -170,11 +170,12 @@ function add_output(state, name, output_id, speakers_id, template) {
   i.classList.remove("template");
   i.querySelector(".name").innerText = name;
   let radio = i.querySelector("input");
-  radio.checked = state.current_output == output_id;
+  let output = state.outputs[output_id];
+  radio.checked = (state.current_output == output_id) &&
+      (output.speakers.length == 0 || speakers_id == output.current_speakers);
   radio.onchange = () => {
     if (radio.checked) {
       state.current_output = output_id;
-      update_volume_slider(state);
       makeRequest({
         method: "POST",
         url: "/api/state",
@@ -251,7 +252,7 @@ document.body.onload = () => {
 
     let volume_box = document.querySelector(".master_volume_box");
     autoupdate_slider(volume_box, (volume) => {
-      state.outputs[state.current_output].gain = volume;
+      state.volume = volume;
       return postState({"volume": volume});
     });
     update_volume_slider(state);

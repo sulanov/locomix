@@ -58,9 +58,9 @@ fn serve_web(address: &str, shared_state: SharedState) {
                             if output > state_controller.state().outputs.len() {
                                return Response::text("Invalid output id").with_status_code(404)
                             }
-                            if let Some(speakers) = json.current_output  {
+                            if let Some(speakers) = json.current_speakers  {
                               if speakers >= state_controller.state().outputs[output].speakers.len() {
-                               return Response::text("Invalid output id").with_status_code(404)
+                               return Response::text("Invalid speakers id").with_status_code(404)
                               }
                             }
 

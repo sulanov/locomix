@@ -1,99 +1,76 @@
 extern crate rppal;
 extern crate toml;
 
+use self::rppal::spi;
 use base::*;
-use gpio;
-use std::cmp;
-use std::thread;
-use std::time::Duration;
 use volume_device;
 
-const SLEEP_NS: u64 = 1000;
-
-pub struct PinConfig {
-    cs_n: u8,
-    sdi: u8,
-    sclk: u8,
-}
-
 pub struct Pga2311Volume {
-    pins: PinConfig,
+    device: spi::Spi,
 }
 
-fn parse_pin_param(config: &toml::value::Table, name: &str) -> Result<u8> {
-    match config.get(name).and_then(|v| v.as_integer()) {
-        Some(v) if v > 0 && v < 30 => Ok(v as u8),
-        _ => Err(Error::from_string(format!(
-            "PGA2311: Pin {} not specified.",
+impl From<spi::Error> for Error {
+    fn from(e: spi::Error) -> Error {
+        Error::from_string(format!("spi error: {}", e))
+    }
+}
+
+fn parse_param(config: &toml::value::Table, name: &str, min: u8, max: u8) -> Result<u8> {
+    match config.get(name).map(|v| (v, v.as_integer())) {
+        Some((_, Some(v))) if v >= min as i64 && v <= max as i64 => Ok(v as u8),
+        Some((s, _)) => Err(Error::from_string(format!(
+            "PGA2311: Invalid value for {}: {}",
+            name, s
+        ))),
+        None => Err(Error::from_string(format!(
+            "PGA2311: {} not specified.",
             name
         ))),
     }
 }
 
-fn write_gpio(pin: u8, value: bool) {
-    let mut gpio_locked_o = gpio::get_gpio();
-    let gpio_locked = gpio_locked_o.as_mut().unwrap();
-    gpio_locked.write(
-        pin,
-        if value {
-            rppal::gpio::Level::High
-        } else {
-            rppal::gpio::Level::Low
-        },
-    );
-}
+const SPI_FREQUENCY_HZ: u32 = 32768;
 
 impl Pga2311Volume {
-    pub fn new(pins: PinConfig) -> Result<Pga2311Volume> {
-        gpio::initialize()?;
-
-        let mut gpio_locked_o = gpio::get_gpio();
-        let gpio_locked = gpio_locked_o.as_mut().unwrap();
-        gpio_locked.set_mode(pins.cs_n, rppal::gpio::Mode::Output);
-        gpio_locked.set_mode(pins.sdi, rppal::gpio::Mode::Output);
-        gpio_locked.set_mode(pins.sclk, rppal::gpio::Mode::Output);
-        Ok(Pga2311Volume { pins })
+    pub fn new(bus: spi::Bus, slave: spi::SlaveSelect) -> Result<Pga2311Volume> {
+        let device = spi::Spi::new(bus, slave, SPI_FREQUENCY_HZ, spi::Mode::Mode0)?;
+        Ok(Pga2311Volume { device })
     }
 
     pub fn create_from_config(
         config: &toml::value::Table,
     ) -> Result<Box<volume_device::VolumeDevice>> {
-        Ok(Box::new(Pga2311Volume::new(PinConfig {
-            cs_n: parse_pin_param(config, "cs_n")?,
-            sdi: parse_pin_param(config, "sdi")?,
-            sclk: parse_pin_param(config, "sclk")?,
-        })?))
-    }
-
-    fn write_bit(&mut self, value: bool) {
-        write_gpio(self.pins.sdi, value);
-        thread::sleep(Duration::from_nanos(SLEEP_NS));
-        write_gpio(self.pins.sclk, true);
-        thread::sleep(Duration::from_nanos(SLEEP_NS));
-        write_gpio(self.pins.sclk, false);
-    }
-
-    fn write_word(&mut self, mut word: u16) {
-        write_gpio(self.pins.sclk, false);
-        thread::sleep(Duration::from_nanos(SLEEP_NS));
-        write_gpio(self.pins.cs_n, false);
-
-        for _ in 0..16 {
-            self.write_bit((word & 0x8000) > 0);
-            word <<= 1;
-        }
-
-        write_gpio(self.pins.cs_n, true)
+        let bus = match parse_param(config, "bus", 0, 2)? {
+            0 => spi::Bus::Spi0,
+            1 => spi::Bus::Spi1,
+            2 => spi::Bus::Spi2,
+            _ => panic!(),
+        };
+        let slave = match parse_param(config, "slave", 0, 2)? {
+            0 => spi::SlaveSelect::Ss0,
+            1 => spi::SlaveSelect::Ss1,
+            2 => spi::SlaveSelect::Ss2,
+            _ => panic!(),
+        };
+        Ok(Box::new(Pga2311Volume::new(bus, slave)?))
     }
 }
 
 impl volume_device::VolumeDevice for Pga2311Volume {
     fn set_device_gain(&mut self, gain: Gain) -> Gain {
         let v = (192.0 + 2.0 * gain.db).ceil() as i32;
-        let v = cmp::max(0, cmp::min(v, 255));
-        self.write_word(((v << 8) + v) as u16);
+        let v = (0.max(v).min(255)) as u8;
+        match self.device.write(&[v, v]) {
+            Ok(bytes) => if bytes != 2 {
+                println!("ERROR: SPI write returned {}", bytes);
+            },
+            Err(e) => {
+                println!("ERROR: SPI write failed {}", e);
+            }
+        }
+
         Gain {
-            db: (v - 192) as f32 / 2.0,
+            db: (v as i32 - 192) as f32 / 2.0,
         }
     }
 }

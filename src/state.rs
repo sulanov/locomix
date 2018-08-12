@@ -77,7 +77,7 @@ impl LoudnessConfig {
                 db: 20.0 * self.level,
             },
             (true, true) => Gain {
-                db: (self.base_level_spl - volume_spl) * self.level,
+                db: (self.base_level_spl - volume_spl).max(0.0) * self.level,
             },
         }
     }
