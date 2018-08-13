@@ -381,7 +381,7 @@ where
         self.base.render_header(canvas, self.delegate.title());
         let value = self.delegate.get_value(shared_state);
 
-        let width = 100;
+        let width = 95;
         let pos = ((value - self.delegate.min()) / (self.delegate.max() - self.delegate.min())
             * width as f32) as i16;
         canvas.draw_rect(gfx::Rect::ltrb(0, 18, width + 2, 32), gfx::Color::Light);
@@ -395,7 +395,7 @@ where
         let text_rect =
             canvas.get_text_rect(gfx::Vector::xy(0, 0), &self.base.resources.font, value_str);
         canvas.draw_text(
-            gfx::Vector::xy(128 - text_rect.size.width as i16, 27),
+            gfx::Vector::xy(128 - text_rect.size.width as i16, 30),
             &self.base.resources.font,
             value_str,
             gfx::Color::Light,
