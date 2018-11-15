@@ -313,7 +313,9 @@ pub fn run_mixer_loop(
             stream_pos += frame.len() as i64;
         }
 
-        let new_state = match (have_data, (Time::now() - last_data_time).in_seconds()) {
+        let old_state = state;
+
+        state = match (have_data, (Time::now() - last_data_time).in_seconds()) {
             (true, _) => {
                 last_data_time = now;
                 state::StreamState::Active
@@ -323,44 +325,54 @@ pub fn run_mixer_loop(
             (false, _) => state::StreamState::Standby,
         };
 
-        if state != new_state {
-            state = new_state;
+        if state != old_state {
             println!("INFO: state: {}", state.as_str());
             shared_state.lock().set_stream_state(state);
-            if state != state::StreamState::Active {
-                for ref mut out in &mut outputs {
-                    out.deactivate();
-                }
-            }
         }
 
-        if state == state::StreamState::Active {
-            let stream_info_packet = state::StreamInfoPacket {
-                time: frame.timestamp,
-                left: get_stream_stats(frame.get_channel(ChannelPos::FL)),
-                right: get_stream_stats(frame.get_channel(ChannelPos::FR)),
-            };
-            {
-                let mut stream_info = shared_stream_state.lock();
-                let expire_time =
-                    stream_info_packet.time - TimeDelta::milliseconds(state::STREAM_INFO_PERIOD_MS);
-                while stream_info.packets.len() > 0 && stream_info.packets[0].time < expire_time {
-                    stream_info.packets.pop_front();
+        match state {
+            state::StreamState::Active => {
+                let stream_info_packet = state::StreamInfoPacket {
+                    time: frame.timestamp,
+                    left: get_stream_stats(frame.get_channel(ChannelPos::FL)),
+                    right: get_stream_stats(frame.get_channel(ChannelPos::FR)),
+                };
+                {
+                    let mut stream_info = shared_stream_state.lock();
+                    let expire_time = stream_info_packet.time
+                        - TimeDelta::milliseconds(state::STREAM_INFO_PERIOD_MS);
+                    while stream_info.packets.len() > 0 && stream_info.packets[0].time < expire_time
+                    {
+                        stream_info.packets.pop_front();
+                    }
+                    stream_info.packets.push_back(stream_info_packet);
                 }
-                stream_info.packets.push_back(stream_info_packet);
+
+                frame.gain += output_gain;
+                frame = loudness_filter.apply(frame);
+                frame = crossfeed_filter.apply(frame);
+
+                frame.timestamp +=
+                    mix_delay + period_duration * 4 + outputs[selected_output].min_delay();
+                outputs[selected_output].write(frame)?;
             }
 
-            frame.gain += output_gain;
-            frame = loudness_filter.apply(frame);
-            frame = crossfeed_filter.apply(frame);
+            _ => {
+                if old_state == state::StreamState::Active {
+                    // Send an empty frame with gain -100 db to mute the output device. It will
+                    // be unmuted when the device is active again.
+                    frame.gain = Gain { db: -100.0 };
+                    outputs[selected_output].write(frame)?;
 
-            frame.timestamp +=
-                mix_delay + period_duration * 4 + outputs[selected_output].min_delay();
-            try!(outputs[selected_output].write(frame));
-        } else {
-            std::thread::sleep(TimeDelta::milliseconds(500).as_duration());
-            stream_start_time = Time::now() - mix_delay;
-            stream_pos = 0;
+                    for ref mut out in &mut outputs {
+                        out.deactivate();
+                    }
+                }
+
+                std::thread::sleep(TimeDelta::milliseconds(500).as_duration());
+                stream_start_time = Time::now() - mix_delay;
+                stream_pos = 0;
+            }
         }
 
         for msg in ui_channel.try_iter() {
@@ -381,17 +393,13 @@ pub fn run_mixer_loop(
                 state::StateChange::SetInputGain { device, gain } => {
                     mixers[device as usize].set_gain(gain);
                 }
-                state::StateChange::SetEnableDrc { enable: _ } => (),
-                state::StateChange::SetEnableSubwoofer { enable: _ } => (),
                 state::StateChange::SetCrossfeed { enable } => {
                     crossfeed_filter.set_enabled(enable);
                 }
                 state::StateChange::SetMuxMode { mux_mode } => {
                     exclusive_mux_mode = mux_mode == state::MuxMode::Exclusive;
                 }
-                state::StateChange::SetStreamState { stream_state } => {
-                    state = stream_state;
-                }
+                _ => {}
             }
         }
     }
