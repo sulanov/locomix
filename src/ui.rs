@@ -103,8 +103,9 @@ fn create_display_driver() -> mono_display::Result<mono_display::ssd1306::Ssd130
 
 enum EventResult {
     NoChange,
-    GoBack,
     NextScreen,
+    GoToVolume,
+    GoToMenu,
 }
 
 struct Resources {
@@ -118,7 +119,7 @@ trait Screen: Send {
     fn process_event(
         &mut self,
         shared_state: &mut state::SharedState,
-        event: InputEvent,
+        event: Option<InputEvent>,
     ) -> EventResult;
 }
 
@@ -150,6 +151,12 @@ impl MainScreenMode {
             MainScreenMode::Levels => MainScreenMode::Empty,
         }
     }
+    fn prev(self) -> MainScreenMode {
+        match self {
+            MainScreenMode::Empty => MainScreenMode::Levels,
+            MainScreenMode::Levels => MainScreenMode::Empty,
+        }
+    }
 }
 
 struct MainScreen {
@@ -159,6 +166,7 @@ struct MainScreen {
     shared_stream_state: state::SharedStreamInfo,
     left_peak: f32,
     right_peak: f32,
+    pressed_time: Time,
 }
 
 impl MainScreen {
@@ -170,14 +178,17 @@ impl MainScreen {
             shared_stream_state,
             left_peak: 0.0,
             right_peak: 0.0,
+            pressed_time: Time::zero(),
         }
     }
 }
 
-const PEAK_DECAY_PER_SECOND: f32 = 1.0;
+const PEAK_DECAY_PER_SECOND: f32 = 2.0;
 
 impl Screen for MainScreen {
-    fn reset(&mut self, _shared_state: &mut state::SharedState) {}
+    fn reset(&mut self, _shared_state: &mut state::SharedState) {
+        self.pressed_time = Time::zero();
+    }
     fn render_frame(&mut self, shared_state: &mut state::SharedState, canvas: &mut gfx::Canvas) {
         if self.mode == MainScreenMode::Empty {
             return;
@@ -239,19 +250,32 @@ impl Screen for MainScreen {
     fn process_event(
         &mut self,
         shared_state: &mut state::SharedState,
-        event: InputEvent,
+        event: Option<InputEvent>,
     ) -> EventResult {
-        if shared_state.lock().state().stream_state != state::StreamState::Active {
+        if shared_state.lock().state().stream_state == state::StreamState::Standby {
             return EventResult::NoChange;
         }
         match event {
-            InputEvent::Pressed(Key::Rotary) => {
+            Some(InputEvent::Pressed(Key::Rotary)) => {
+                self.pressed_time = Time::now();
                 self.mode = self.mode.next();
-                EventResult::NoChange
             }
-            InputEvent::Released(_) => EventResult::NoChange,
-            _ => EventResult::NextScreen,
+            Some(InputEvent::Released(Key::Rotary)) => {
+                self.pressed_time = Time::zero();
+            }
+            Some(InputEvent::Rotate(_)) => return EventResult::GoToVolume,
+            None => {
+                if self.pressed_time > Time::zero()
+                    && (Time::now() - self.pressed_time) > TimeDelta::milliseconds(500)
+                {
+                    self.pressed_time = Time::zero();
+                    self.mode = self.mode.prev();
+                    return EventResult::GoToMenu;
+                }
+            }
+            _ => (),
         }
+        EventResult::NoChange
     }
 }
 
@@ -405,10 +429,10 @@ where
     fn process_event(
         &mut self,
         shared_state: &mut state::SharedState,
-        event: InputEvent,
+        event: Option<InputEvent>,
     ) -> EventResult {
         match event {
-            InputEvent::Rotate(change) => {
+            Some(InputEvent::Rotate(change)) => {
                 let v = self.delegate.get_value(shared_state);
                 let new_v = state::limit(
                     self.delegate.min(),
@@ -419,7 +443,7 @@ where
                     self.delegate.set_value(shared_state, new_v);
                 }
             }
-            InputEvent::Pressed(Key::Rotary) => return EventResult::NextScreen,
+            Some(InputEvent::Pressed(Key::Rotary)) => return EventResult::NextScreen,
             _ => {}
         }
         EventResult::NoChange
@@ -483,10 +507,10 @@ where
     fn process_event(
         &mut self,
         shared_state: &mut state::SharedState,
-        event: InputEvent,
+        event: Option<InputEvent>,
     ) -> EventResult {
         match event {
-            InputEvent::Rotate(change) => {
+            Some(InputEvent::Rotate(change)) => {
                 let inc = if change > 0 {
                     1
                 } else {
@@ -496,13 +520,11 @@ where
                 self.changed = true;
                 self.delegate.on_selected(shared_state, self.current);
             }
-            InputEvent::Pressed(Key::Rotary) => {
+            Some(InputEvent::Pressed(Key::Rotary)) => {
                 if self.changed {
                     self.delegate.on_commited(shared_state, self.current);
-                    return EventResult::GoBack;
-                } else {
-                    return EventResult::NextScreen;
                 }
+                return EventResult::NextScreen;
             }
             _ => {}
         }
@@ -669,14 +691,16 @@ impl SelectScreenDelegate<AutoLoudness> for AutoLoudness {
     fn on_commited(&mut self, _shared_state: &mut state::SharedState, _index: usize) {}
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 enum DisplayState {
     Main,
+    Volume,
     Menu(usize),
 }
 
 pub struct DisplayUi {
     main_screen: MainScreen,
+    volume_screen: Box<Screen>,
     menu: Vec<Box<Screen>>,
     state: DisplayState,
 }
@@ -689,7 +713,6 @@ impl DisplayUi {
         let resources = Arc::new(Resources { font_bold, font });
 
         let mut menu = Vec::new();
-        menu.push(SliderScreen::<Volume>::new(resources.clone()));
         menu.push(SelectScreen::<OutputSelector>::new(resources.clone()));
         menu.push(SelectScreen::<Crossfeed>::new(resources.clone()));
         menu.push(SelectScreen::<LoudnessCorrection>::new(resources.clone()));
@@ -699,32 +722,43 @@ impl DisplayUi {
 
         Ok(Box::new(DisplayUi {
             main_screen: MainScreen::new(resources.clone(), shared_stream_state),
+            volume_screen: SliderScreen::<Volume>::new(resources.clone()),
             menu,
             state: DisplayState::Main,
         }))
     }
 
-    fn render_frame(&mut self, shared_state: &mut state::SharedState, canvas: &mut gfx::Canvas) {
+    fn current_screen<'a>(&'a mut self) -> &'a mut Screen {
         match self.state {
-            DisplayState::Main => self.main_screen.render_frame(shared_state, canvas),
-            DisplayState::Menu(item) => self.menu[item].render_frame(shared_state, canvas),
+            DisplayState::Main => &mut self.main_screen,
+            DisplayState::Volume => &mut *self.volume_screen,
+            DisplayState::Menu(item) => &mut *self.menu[item],
         }
     }
 
-    fn process_event(&mut self, shared_state: &mut state::SharedState, event: InputEvent) {
-        let result = match self.state {
-            DisplayState::Main => self.main_screen.process_event(shared_state, event),
-            DisplayState::Menu(item) => self.menu[item].process_event(shared_state, event),
-        };
-        self.state = match (result, self.state) {
+    fn render_frame(&mut self, shared_state: &mut state::SharedState, canvas: &mut gfx::Canvas) {
+        self.current_screen().render_frame(shared_state, canvas)
+    }
+
+    fn process_event(&mut self, shared_state: &mut state::SharedState, event: Option<InputEvent>) {
+        let result = self.current_screen().process_event(shared_state, event);
+
+        let new_state = match (result, self.state) {
             (EventResult::NoChange, _) => self.state,
-            (EventResult::GoBack, _) => DisplayState::Main,
+
             (EventResult::NextScreen, DisplayState::Menu(item)) => {
-                let item = (item + 1) % self.menu.len();
-                self.menu[item].reset(shared_state);
-                DisplayState::Menu(item)
+                DisplayState::Menu((item + 1) % self.menu.len())
             }
-            (EventResult::NextScreen, DisplayState::Main) => DisplayState::Menu(0),
+            (EventResult::NextScreen, DisplayState::Volume) => DisplayState::Main,
+            (EventResult::NextScreen, DisplayState::Main) => DisplayState::Main,
+
+            (EventResult::GoToVolume, _) => DisplayState::Volume,
+            (EventResult::GoToMenu, _) => DisplayState::Menu(0),
+        };
+
+        if new_state != self.state {
+            self.state = new_state;
+            self.current_screen().reset(shared_state);
         }
     }
 }
@@ -754,15 +788,22 @@ impl UserInterface for DisplayUi {
             display.show_frame(canvas.take_frame());
 
             // Process events.
-            match event_source
-                .recv_timeout((start + TimeDelta::milliseconds(50) - Time::now()).as_duration())
-            {
-                Err(mpsc::RecvTimeoutError::Timeout) => (),
-                Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                Ok(event) => {
-                    last_event_time = Time::now();
-                    self.process_event(&mut shared_state, event);
+            let mut have_events = false;
+            loop {
+                match event_source
+                    .recv_timeout((start + TimeDelta::milliseconds(30) - Time::now()).as_duration())
+                {
+                    Err(mpsc::RecvTimeoutError::Timeout) => break,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                    Ok(event) => {
+                        last_event_time = Time::now();
+                        have_events = true;
+                        self.process_event(&mut shared_state, Some(event));
+                    }
                 }
+            }
+            if !have_events {
+                self.process_event(&mut shared_state, None);
             }
         }
     }
