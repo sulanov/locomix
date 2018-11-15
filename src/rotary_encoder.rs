@@ -8,7 +8,7 @@ use ui;
 
 fn parse_pin_param(config: &toml::value::Table, name: &str) -> Result<u8> {
     match config.get(name).and_then(|v| v.as_integer()) {
-        Some(v) if v > 0 && v < 30 => Ok(v as u8),
+        Some(v) if v >= 0 && v < 30 => Ok(v as u8),
         _ => Err(Error::from_string(format!(
             "rotary_encoder: {} not specified.",
             name
@@ -85,8 +85,11 @@ impl RotaryEncoder {
             (retrigger_c_event_time - Time::now()).as_duration()
         });
 
-        let event = match self.gpio.poll_interrupts(&[self.pin_a, self.pin_b, self.pin_c],
-                                                /*reset=*/false, timeout)? {
+        let event = match self.gpio.poll_interrupts(
+            &[self.pin_a, self.pin_b, self.pin_c],
+            /*reset=*/ false,
+            timeout,
+        )? {
             None => {
                 self.last_c_change = None;
                 return Ok(self.get_c_event());
@@ -129,7 +132,7 @@ impl RotaryEncoder {
                     return Ok(self.get_c_event());
                 }
             }
-            _ => ()
+            _ => (),
         }
         Ok(None)
     }
