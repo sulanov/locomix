@@ -48,7 +48,7 @@ impl Downmixer {
         self.downmix_channel(
             &mut frame,
             ChannelPos::FC,
-            &[(ChannelPos::FL, 0.5), (ChannelPos::FL, 0.5)],
+            &[(ChannelPos::FL, 0.5), (ChannelPos::FR, 0.5)],
         );
         self.downmix_channel(&mut frame, ChannelPos::SL, &[(ChannelPos::FL, 1.0)]);
         self.downmix_channel(&mut frame, ChannelPos::SR, &[(ChannelPos::FR, 1.0)]);
@@ -56,13 +56,13 @@ impl Downmixer {
             self.downmix_channel(
                 &mut frame,
                 ChannelPos::SC,
-                &[(ChannelPos::SL, 0.5), (ChannelPos::SL, 0.5)],
+                &[(ChannelPos::SL, 0.5), (ChannelPos::SR, 0.5)],
             );
         } else {
             self.downmix_channel(
                 &mut frame,
                 ChannelPos::SC,
-                &[(ChannelPos::FL, 0.5), (ChannelPos::FL, 0.5)],
+                &[(ChannelPos::FL, 0.5), (ChannelPos::FR, 0.5)],
             );
         }
         frame
