@@ -212,7 +212,7 @@ impl output::Output for FilteredOutput {
 }
 
 const OUTPUT_SHUTDOWN_SECONDS: i64 = 30;
-const STANDBY_SECONDS: i64 = 3600;
+const STANDBY_SECONDS: i64 = 600;
 
 fn get_stream_stats(pcm: Option<&[f32]>) -> state::StreamStats {
     if pcm.is_none() {
