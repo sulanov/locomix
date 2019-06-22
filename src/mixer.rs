@@ -98,6 +98,7 @@ impl InputMixer {
 pub struct FilteredOutput {
     output: Box<output::Output>,
     fir_filter: Option<Box<StreamFilter>>,
+    biquad_filter: Option<Box<StreamFilter>>,
     subwoofer_config: Option<state::SubwooferConfig>,
 
     drc_enabled: bool,
@@ -113,6 +114,7 @@ impl FilteredOutput {
         output: Box<output::Output>,
         out_channels: PerChannel<bool>,
         fir_filter: Option<Box<StreamFilter>>,
+        biquad_filter: Option<Box<StreamFilter>>,
         subwoofer_config: Option<state::SubwooferConfig>,
         shared_state: &state::SharedState,
     ) -> Box<output::Output> {
@@ -125,6 +127,7 @@ impl FilteredOutput {
         let mut result = Box::new(FilteredOutput {
             output: output,
             fir_filter: fir_filter,
+            biquad_filter: biquad_filter,
             subwoofer_config: subwoofer_config,
 
             drc_enabled: enable_drc,
@@ -172,6 +175,7 @@ impl output::Output for FilteredOutput {
         if need_reset {
             self.update_crossover();
             self.fir_filter.as_mut().map(|f| f.reset());
+            self.biquad_filter.as_mut().map(|f| f.reset());
         }
 
         let frame = self.downmixer.process(frame);
@@ -182,6 +186,11 @@ impl output::Output for FilteredOutput {
         };
 
         let frame = match (self.drc_enabled, self.fir_filter.as_mut()) {
+            (true, Some(f)) => f.apply(frame),
+            _ => frame,
+        };
+
+        let frame = match (self.drc_enabled, self.biquad_filter.as_mut()) {
             (true, Some(f)) => f.apply(frame),
             _ => frame,
         };

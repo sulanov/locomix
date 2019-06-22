@@ -29,9 +29,9 @@ impl CrossoverFilter {
 
             self.channels
                 .get_or_insert(c, || {
-                    CascadingFilter::new(BiquadParams::high_pass_filter(
-                        sample_rate as FCoef,
-                        frequency as FCoef,
+                    CascadingFilter::new(&BiquadParams::high_pass_filter(
+                        sample_rate as BqCoef,
+                        frequency as BqCoef,
                         1.0,
                     ))
                 })
@@ -39,9 +39,9 @@ impl CrossoverFilter {
         }
 
         let filter = self.channels.get_or_insert(ChannelPos::Sub, || {
-            CascadingFilter::new(BiquadParams::low_pass_filter(
-                frame.sample_rate as FCoef,
-                frequency as FCoef,
+            CascadingFilter::new(&BiquadParams::low_pass_filter(
+                frame.sample_rate as BqCoef,
+                frequency as BqCoef,
                 1.0,
             ))
         });

@@ -109,6 +109,7 @@ fn run() -> Result<()> {
         "Length for FIR filter (5000 by default)",
         "FILTER_LENGTH",
     );
+    opts.optmulti("b", "biquad", "Biquad filter file", "BIQUAD_FILTER");
     opts.optflag("h", "help", "Print this help menu");
 
     let matches = match opts.parse(&args[1..]) {
@@ -164,6 +165,14 @@ fn run() -> Result<()> {
         );
         draw_filter_graph(sample_rate, MultichannelFirFilter::new(filters));
     }
+
+    for filename in matches.opt_strs("b") {
+        println!("FIR filter {}", filename);
+        let mut filters = PerChannel::new();
+        filters.set(ChannelPos::FL, load_biquad_config(&filename)?);
+        draw_filter_graph(sample_rate, PerChannelFilter::<MultiBiquadFilter>::new(filters));
+    }
+
 
     Ok(())
 }

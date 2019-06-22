@@ -126,6 +126,8 @@ struct OutputConfig {
     fir_length: Option<usize>,
     use_brutefir: Option<bool>,
 
+    biquad_filters: Option<BTreeMap<String, String>>,
+
     full_scale_output_volts: Option<f32>,
     speakers: Option<Vec<SpeakersConfig>>,
 }
@@ -195,7 +197,7 @@ fn load_fir_params(filename: &str, size: usize) -> Result<filters::FirFilterPara
     Ok(filters::FirFilterParams::new(result, size))
 }
 
-fn load_fir_set(
+fn load_fir_filters(
     files: Option<BTreeMap<String, String>>,
     length: usize,
     sample_rate: usize,
@@ -224,6 +226,22 @@ fn load_fir_set(
         }
         Ok(Some(Box::new(filters::MultichannelFirFilter::new(loaded))))
     }
+}
+
+fn load_biquad_filters(
+    files: Option<BTreeMap<String, String>>,
+) -> Result<Option<Box<filters::StreamFilter>>, RunError> {
+    let mut filters = base::PerChannel::new();
+    match files {
+        None => return Ok(None),
+        Some(map) => for (c, f) in map {
+            filters.set(parse_channel_id(c)?, filters::load_biquad_config(&f)?)
+        },
+    }
+
+    Ok(Some(Box::new(filters::PerChannelFilter::<
+        filters::MultiBiquadFilter,
+    >::new(filters))))
 }
 
 fn process_speaker_config(
@@ -493,13 +511,15 @@ fn run() -> Result<(), RunError> {
 
         let fir_length = output.fir_length.unwrap_or(5000);
         let use_brutefir = output.use_brutefir.unwrap_or(false);
-        let fir_filters = load_fir_set(
+        let fir_filters = load_fir_filters(
             output.fir_filters,
             fir_length,
             sample_rate,
             period_duration,
             use_brutefir,
         )?;
+
+        let biquad_filters = load_biquad_filters(output.biquad_filters)?;
 
         let speakers = match output.speakers {
             Some(speakers) => {
@@ -517,7 +537,7 @@ fn run() -> Result<(), RunError> {
 
         shared_state.lock().add_output(state::OutputState {
             name: name.clone(),
-            drc_supported: fir_filters.is_some(),
+            drc_supported: fir_filters.is_some() || fir_filters.is_some(),
             subwoofer: sub_config,
             current_speakers: if speakers.is_empty() { None } else { Some(0) },
             speakers,
@@ -527,6 +547,7 @@ fn run() -> Result<(), RunError> {
             Box::new(out),
             channels,
             fir_filters,
+            biquad_filters,
             sub_config,
             &shared_state,
         ));
