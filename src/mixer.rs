@@ -96,9 +96,9 @@ impl InputMixer {
 }
 
 pub struct FilteredOutput {
-    output: Box<output::Output>,
-    fir_filter: Option<Box<StreamFilter>>,
-    biquad_filter: Option<Box<StreamFilter>>,
+    output: Box<dyn output::Output>,
+    fir_filter: Option<Box<dyn StreamFilter>>,
+    biquad_filter: Option<Box<dyn StreamFilter>>,
     subwoofer_config: Option<state::SubwooferConfig>,
 
     drc_enabled: bool,
@@ -111,13 +111,13 @@ pub struct FilteredOutput {
 
 impl FilteredOutput {
     pub fn new(
-        output: Box<output::Output>,
+        output: Box<dyn output::Output>,
         out_channels: PerChannel<bool>,
-        fir_filter: Option<Box<StreamFilter>>,
-        biquad_filter: Option<Box<StreamFilter>>,
+        fir_filter: Option<Box<dyn StreamFilter>>,
+        biquad_filter: Option<Box<dyn StreamFilter>>,
         subwoofer_config: Option<state::SubwooferConfig>,
         shared_state: &state::SharedState,
-    ) -> Box<output::Output> {
+    ) -> Box<dyn output::Output> {
         let enable_drc = shared_state.lock().state().enable_drc.unwrap_or(false);
         let enable_subwoofer = shared_state
             .lock()
@@ -236,7 +236,7 @@ fn get_stream_stats(pcm: Option<&[f32]>) -> state::StreamStats {
 
 pub fn run_mixer_loop(
     mut inputs: Vec<AsyncInput>,
-    mut outputs: Vec<Box<output::Output>>,
+    mut outputs: Vec<Box<dyn output::Output>>,
     sample_rate: f64,
     period_duration: TimeDelta,
     shared_state: state::SharedState,

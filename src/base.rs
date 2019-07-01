@@ -601,7 +601,7 @@ impl Frame {
         let bytes_per_sample = format.bytes_per_sample() * channels.len();
 
         for c in 0..channels.len() {
-            let mut data = frame.ensure_channel(channels[c]);
+            let data = frame.ensure_channel(channels[c]);
             match format {
                 SampleFormat::S16LE => {
                     for i in 0..samples {

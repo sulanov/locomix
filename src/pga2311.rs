@@ -39,7 +39,7 @@ impl Pga2311Volume {
 
     pub fn create_from_config(
         config: &toml::value::Table,
-    ) -> Result<Box<volume_device::VolumeDevice>> {
+    ) -> Result<Box<dyn volume_device::VolumeDevice>> {
         let bus = match parse_param(config, "bus", 0, 2)? {
             0 => spi::Bus::Spi0,
             1 => spi::Bus::Spi1,

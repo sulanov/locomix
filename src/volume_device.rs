@@ -14,15 +14,15 @@ pub trait VolumeDevice: Send {
 }
 
 pub struct OutputWithVolumeDevice {
-    output: Box<Output>,
-    volume_device: Box<VolumeDevice>,
+    output: Box<dyn Output>,
+    volume_device: Box<dyn VolumeDevice>,
     max_level: f32,
     current_gain: Gain,
     device_gain: Gain,
 }
 
 impl OutputWithVolumeDevice {
-    pub fn new(output: Box<Output>, volume_device: Box<VolumeDevice>) -> OutputWithVolumeDevice {
+    pub fn new(output: Box<dyn Output>, volume_device: Box<dyn VolumeDevice>) -> OutputWithVolumeDevice {
         OutputWithVolumeDevice {
             output,
             volume_device,
@@ -88,7 +88,7 @@ impl AlsaVolume {
         }
     }
 
-    pub fn create_from_config(config: &toml::value::Table) -> Result<Box<VolumeDevice>> {
+    pub fn create_from_config(config: &toml::value::Table) -> Result<Box<dyn VolumeDevice>> {
         let device = match config.get("device").and_then(|d| d.as_str()) {
             Some(d) => d,
             None => return Err(Error::new("ALSA volume: device string is missing")),

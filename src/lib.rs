@@ -1,5 +1,3 @@
-#![feature(duration_from_micros)]
-
 extern crate serde;
 
 #[macro_use]

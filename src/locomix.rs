@@ -203,7 +203,7 @@ fn load_fir_filters(
     sample_rate: usize,
     period_duration: TimeDelta,
     use_brutefir: bool,
-) -> Result<Option<Box<filters::StreamFilter>>, RunError> {
+) -> Result<Option<Box<dyn filters::StreamFilter>>, RunError> {
     let mut filters = base::PerChannel::new();
     match files {
         None => return Ok(None),
@@ -232,7 +232,7 @@ fn load_fir_filters(
 
 fn load_biquad_filters(
     files: Option<BTreeMap<String, String>>,
-) -> Result<Option<Box<filters::StreamFilter>>, RunError> {
+) -> Result<Option<Box<dyn filters::StreamFilter>>, RunError> {
     let mut filters = base::PerChannel::new();
     match files {
         None => return Ok(None),
@@ -288,7 +288,7 @@ fn process_speaker_config(
 
 fn create_volume_device(
     config: Option<toml::value::Table>,
-) -> base::Result<Option<Box<volume_device::VolumeDevice>>> {
+) -> base::Result<Option<Box<dyn volume_device::VolumeDevice>>> {
     let dict = match config {
         Some(d) => d,
         None => return Ok(None),
@@ -386,7 +386,7 @@ fn run() -> Result<(), RunError> {
             delay: TimeDelta::zero(),
             enable_a52: input.enable_a52.unwrap_or(false),
         };
-        let device: Box<input::Input> = match type_.as_str() {
+        let device: Box<dyn input::Input> = match type_.as_str() {
             "pipe" => pipe_input::PipeInput::open(spec, period_duration),
             "alsa" => alsa_input::ResilientAlsaInput::new(
                 spec,
@@ -413,7 +413,7 @@ fn run() -> Result<(), RunError> {
         return Err(RunError::new("No inputs specified."));
     }
 
-    let mut outputs = Vec::<Box<output::Output>>::new();
+    let mut outputs = Vec::<Box<dyn output::Output>>::new();
     let mut index = 0;
     for output in config.output {
         index += 1;

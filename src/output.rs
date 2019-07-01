@@ -381,7 +381,7 @@ pub struct ResilientAlsaOutput {
 }
 
 impl ResilientAlsaOutput {
-    pub fn new(spec: DeviceSpec, period_duration: TimeDelta, static_rate: bool) -> Box<Output> {
+    pub fn new(spec: DeviceSpec, period_duration: TimeDelta, static_rate: bool) -> Box<dyn Output> {
         let sample_rate = spec.sample_rate.unwrap_or(48000);
         Box::new(ResilientAlsaOutput {
             spec,
@@ -458,12 +458,12 @@ impl Output for ResilientAlsaOutput {
 }
 
 pub struct ResamplingOutput {
-    output: Box<Output>,
+    output: Box<dyn Output>,
     resampler: resampler::StreamResampler,
 }
 
 impl ResamplingOutput {
-    pub fn new(output: Box<Output>, window_size: usize) -> Box<Output> {
+    pub fn new(output: Box<dyn Output>, window_size: usize) -> Box<dyn Output> {
         let resampler = resampler::StreamResampler::new(output.sample_rate(), window_size);
         Box::new(ResamplingOutput { output, resampler })
     }
@@ -515,7 +515,7 @@ pub struct AsyncOutput {
 }
 
 impl AsyncOutput {
-    pub fn new(mut output: Box<Output>) -> Box<Output> {
+    pub fn new(mut output: Box<dyn Output>) -> Box<dyn Output> {
         let (sender, receiver) = mpsc::channel();
         let (feedback_sender, feedback_receiver) = mpsc::channel();
 
@@ -605,7 +605,7 @@ impl Output for AsyncOutput {
 }
 
 pub struct CompositeOutput {
-    outputs: Vec<(Vec<ChannelPos>, Box<Output>)>,
+    outputs: Vec<(Vec<ChannelPos>, Box<dyn Output>)>,
     num_outs: PerChannel<usize>,
 }
 
@@ -617,7 +617,7 @@ impl CompositeOutput {
         }
     }
 
-    pub fn add_device(&mut self, channel_map: Vec<ChannelPos>, out: Box<Output>) {
+    pub fn add_device(&mut self, channel_map: Vec<ChannelPos>, out: Box<dyn Output>) {
         let mut unique_channels: Vec<ChannelPos> = vec![];
         for c in channel_map.iter() {
             if *c != ChannelPos::Other && !unique_channels.contains(&c) {
@@ -658,7 +658,7 @@ impl Output for CompositeOutput {
     }
 
     fn deactivate(&mut self) {
-        for mut out in self.outputs.iter_mut() {
+        for out in self.outputs.iter_mut() {
             out.1.deactivate();
         }
     }

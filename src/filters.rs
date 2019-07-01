@@ -351,7 +351,7 @@ impl<T: AudioFilter<T> + Send> StreamFilter for PerChannelFilter<T> {
     fn apply(&mut self, mut frame: Frame) -> Frame {
         for (c, f) in self.filters.iter() {
             match frame.get_channel_mut(c) {
-                Some(mut pcm) => f.apply_multi(pcm),
+                Some(pcm) => f.apply_multi(pcm),
                 None => (),
             }
         }
@@ -397,7 +397,7 @@ impl MultichannelFirFilter {
             threads.set(channel, job_sender);
             thread::spawn(move || {
                 let mut filter = FirFilter::new(&params);
-                for mut job in job_receiver.iter() {
+                for job in job_receiver.iter() {
                     match job {
                         FilterJob::Apply {
                             mut data,
@@ -444,7 +444,7 @@ impl StreamFilter for MultichannelFirFilter {
         }
 
         for (i, (c, _t)) in self.threads.iter().enumerate() {
-            let mut v = recv_channels[i].recv().expect("Failed to apply filter");
+            let v = recv_channels[i].recv().expect("Failed to apply filter");
             frame.set_channel(c, v);
         }
 

@@ -15,7 +15,7 @@ pub struct AsyncInput {
 }
 
 impl AsyncInput {
-    pub fn new(mut input: Box<input::Input>) -> AsyncInput {
+    pub fn new(mut input: Box<dyn input::Input>) -> AsyncInput {
         let (sender, receiver) = mpsc::channel();
 
         let min_delay = input.min_delay();

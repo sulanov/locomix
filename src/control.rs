@@ -29,11 +29,11 @@ fn try_open(device_path: &str, log_error: bool) -> Option<InputDevice> {
 
 fn process_event(event: InputEvent) -> Option<ui::InputEvent> {
     match (event.type_, event.code, event.value) {
-        (EV_KEY, KEY_VOLUMEUP, EV_PRESSED...EV_REPEATED) => {
+        (EV_KEY, KEY_VOLUMEUP, EV_PRESSED..=EV_REPEATED) => {
             Some(ui::InputEvent::Pressed(ui::Key::VolumeUp))
         }
         (EV_KEY, KEY_VOLUMEUP, EV_RELEASED) => Some(ui::InputEvent::Released(ui::Key::VolumeUp)),
-        (EV_KEY, KEY_VOLUMEDOWN, EV_PRESSED...EV_REPEATED) => {
+        (EV_KEY, KEY_VOLUMEDOWN, EV_PRESSED..=EV_REPEATED) => {
             Some(ui::InputEvent::Pressed(ui::Key::VolumeDown))
         }
         (EV_KEY, KEY_VOLUMEDOWN, EV_RELEASED) => {

@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Sergey Ulanov <sulanov@gmail.com>"]
 
 [features]
-default = [ "simd", "sdl2" ]
+default = [ "sdl2" ]
 
 sdl2 = [ "mono_display/sdl2" ]
 

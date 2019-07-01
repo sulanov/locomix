@@ -385,8 +385,8 @@ impl Resampler {
                 let mut a_sum = 0.0;
                 let mut b_sum = 0.0;
                 let mut c_sum = 0.0;
-                let mut pos;
-                let mut i_pos;
+                let pos;
+                let i_pos;
                 if start < queue_len {
                     pos = queue_len - start;
                     i_pos = 0;

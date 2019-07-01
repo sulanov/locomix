@@ -8,14 +8,14 @@ pub trait Input: Send {
 }
 
 pub struct InputResampler {
-    input: Box<Input>,
+    input: Box<dyn Input>,
     resampler: StreamResampler,
     pos_tracker: StreamPositionTracker,
     input_sample_rate: f64,
 }
 
 impl InputResampler {
-    pub fn new(input: Box<Input>, output_rate: f64, window_size: usize) -> InputResampler {
+    pub fn new(input: Box<dyn Input>, output_rate: f64, window_size: usize) -> InputResampler {
         InputResampler {
             input: input,
             resampler: StreamResampler::new(output_rate, window_size),

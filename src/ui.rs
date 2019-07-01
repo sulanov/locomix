@@ -54,7 +54,7 @@ impl EventPipe {
 
     pub fn start_ui_thread(
         self,
-        mut user_interface: Box<UserInterface>,
+        mut user_interface: Box<dyn UserInterface>,
         shared_state: state::SharedState,
     ) {
         std::thread::spawn(move || {
@@ -70,7 +70,7 @@ pub trait UserInterface: Send {
 pub struct HeadlessUi {}
 
 impl HeadlessUi {
-    pub fn new() -> Box<UserInterface> {
+    pub fn new() -> Box<dyn UserInterface> {
         Box::new(HeadlessUi {})
     }
 }
@@ -415,7 +415,7 @@ impl<T> SliderScreen<T>
 where
     T: 'static + SliderDelegate<T>,
 {
-    fn new(resources: Arc<Resources>) -> Box<Screen> {
+    fn new(resources: Arc<Resources>) -> Box<dyn Screen> {
         Box::new(SliderScreen::<T> {
             base: ScreenBase { resources },
             delegate: T::new(),
@@ -504,7 +504,7 @@ impl<T> SelectScreen<T>
 where
     T: SelectScreenDelegate<T> + Send + 'static,
 {
-    fn new(resources: Arc<Resources>) -> Box<Screen> {
+    fn new(resources: Arc<Resources>) -> Box<dyn Screen> {
         Box::new(SelectScreen::<T> {
             base: ScreenBase { resources },
             delegate: T::new(),
@@ -727,8 +727,8 @@ enum DisplayState {
 
 pub struct DisplayUi {
     main_screen: MainScreen,
-    volume_screen: Box<Screen>,
-    menu: Vec<Box<Screen>>,
+    volume_screen: Box<dyn Screen>,
+    menu: Vec<Box<dyn Screen>>,
     state: DisplayState,
 }
 
@@ -755,7 +755,7 @@ impl DisplayUi {
         }))
     }
 
-    fn current_screen<'a>(&'a mut self) -> &'a mut Screen {
+    fn current_screen<'a>(&'a mut self) -> &'a mut dyn Screen {
         match self.state {
             DisplayState::Main => &mut self.main_screen,
             DisplayState::Volume => &mut *self.volume_screen,
