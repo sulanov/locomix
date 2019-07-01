@@ -266,6 +266,9 @@ pub fn run_mixer_loop(
     let mut loudness_filter =
         MultichannelFilter::<LoudnessFilter>::new(SimpleFilterParams::new(sample_rate, 10.0));
 
+    let mut bass_boost_filter =
+        MultichannelFilter::<BassBoostFilter>::new(SimpleFilterParams::new(sample_rate, 0.0));
+
     let mut crossfeed_filter = CrossfeedFilter::new(sample_rate);
     crossfeed_filter.set_enabled(
         shared_state
@@ -359,6 +362,7 @@ pub fn run_mixer_loop(
 
                 frame.gain += output_gain;
                 frame = loudness_filter.apply(frame);
+                frame = bass_boost_filter.apply(frame);
                 frame = crossfeed_filter.apply(frame);
 
                 frame.timestamp +=
@@ -404,6 +408,10 @@ pub fn run_mixer_loop(
                 }
                 state::StateChange::SetCrossfeed { enable } => {
                     crossfeed_filter.set_enabled(enable);
+                }
+                state::StateChange::SetBassBoost { bass_boost } => {
+                    bass_boost_filter
+                        .set_params(SimpleFilterParams::new(sample_rate, bass_boost.db));
                 }
                 state::StateChange::SetMuxMode { mux_mode } => {
                     exclusive_mux_mode = mux_mode == state::MuxMode::Exclusive;

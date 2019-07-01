@@ -32,6 +32,7 @@ fn serve_web(address: &str, shared_state: SharedState) {
                              enabled: Option<bool>,
                              auto: Option<bool>,
                              level: Option<f32>,
+                             base_level_spl: Option<f32>,
                          }
 
                          #[derive(Deserialize)]
@@ -43,6 +44,7 @@ fn serve_web(address: &str, shared_state: SharedState) {
                              enable_drc: Option<bool>,
                              enable_subwoofer: Option<bool>,
                              enable_crossfeed: Option<bool>,
+                             bass_boost: Option<f32>,
                              loudness: Option<LoudnessParams>,
                          }
 
@@ -83,6 +85,10 @@ fn serve_web(address: &str, shared_state: SharedState) {
                             state_controller.set_enable_crossfeed(enable);
                         });
 
+                        json.bass_boost.map( |bass_boost| {
+                            state_controller.set_bass_boost(Gain { db: bass_boost});
+                        });
+
                         json.loudness.map( |loudness| {
                             let mut loudness_config = state_controller.state().loudness.clone();
                             loudness.enabled.map( |enabled| {
@@ -93,6 +99,9 @@ fn serve_web(address: &str, shared_state: SharedState) {
                             });
                             loudness.level.map( |level| {
                                 loudness_config.level = level;
+                            });
+                            loudness.base_level_spl.map( |base_level_spl| {
+                                loudness_config.base_level_spl = base_level_spl;
                             });
                             state_controller.set_loudness(loudness_config);
                         });

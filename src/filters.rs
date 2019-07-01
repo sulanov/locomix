@@ -32,7 +32,14 @@ pub struct BiquadParams {
 }
 
 impl BiquadParams {
-    pub fn new(b0: BqCoef, b1: BqCoef, b2: BqCoef, a0: BqCoef, a1: BqCoef, a2: BqCoef) -> BiquadParams {
+    pub fn new(
+        b0: BqCoef,
+        b1: BqCoef,
+        b2: BqCoef,
+        a0: BqCoef,
+        a1: BqCoef,
+        a2: BqCoef,
+    ) -> BiquadParams {
         BiquadParams {
             b0: b0 / a0,
             b1: b1 / a0,
@@ -250,6 +257,31 @@ impl FilterPairConfig for LoudnessFilterPairConfig {
 }
 
 pub type LoudnessFilter = FilterPair<LoudnessFilterPairConfig>;
+
+pub struct BassBoostFilter(BiquadFilter);
+
+impl BassBoostFilter {
+    fn get_biquad_params(params: &SimpleFilterParams) -> BiquadParams {
+        BiquadParams::low_shelf_filter(params.sample_rate, 100.0, 1.0, params.gain_db)
+    }
+}
+
+impl AudioFilter<BassBoostFilter> for BassBoostFilter {
+    type Params = SimpleFilterParams;
+
+    fn new(params: &Self::Params) -> Self {
+        BassBoostFilter(BiquadFilter::new(&Self::get_biquad_params(params)))
+    }
+    fn set_params(&mut self, params: &Self::Params) {
+        self.0.set_params(&Self::get_biquad_params(params))
+    }
+    fn apply_one(&mut self, sample: f32) -> f32 {
+        self.0.apply_one(sample)
+    }
+    fn apply_multi(&mut self, buffer: &mut [f32]) {
+        self.0.apply_multi(buffer)
+    }
+}
 
 pub trait StreamFilter: Send {
     fn apply(&mut self, frame: Frame) -> Frame;
@@ -730,7 +762,10 @@ fn parse_filter_config(parts: &[&str]) -> Option<BiquadParams> {
 }
 
 pub fn parse_biquad_config(contents: String) -> Option<MultiBiquadParams> {
-    let contents = contents.replace("\n", "").replace("\r", "").replace(" ", "");
+    let contents = contents
+        .replace("\n", "")
+        .replace("\r", "")
+        .replace(" ", "");
     let parts = contents.split(",").collect::<Vec<&str>>();
     if parts.len() % 6 != 0 {
         return None;

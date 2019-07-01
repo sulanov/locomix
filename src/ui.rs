@@ -316,6 +316,33 @@ impl SliderDelegate<Volume> for Volume {
     }
 }
 
+struct BassBoost {}
+
+impl SliderDelegate<BassBoost> for BassBoost {
+    fn new() -> BassBoost {
+        BassBoost {}
+    }
+
+    fn title<'a>(&'a self) -> &'a str {
+        "Bass boost"
+    }
+    fn min(&self) -> f32 {
+        0.0
+    }
+    fn max(&self) -> f32 {
+        15.0
+    }
+    fn step(&self) -> f32 {
+        0.5
+    }
+    fn get_value(&self, shared_state: &mut state::SharedState) -> f32 {
+        shared_state.lock().state().bass_boost.db
+    }
+    fn set_value(&self, shared_state: &mut state::SharedState, value: f32) {
+        shared_state.lock().set_bass_boost(base::Gain { db: value })
+    }
+}
+
 struct LoudnessBase {}
 
 impl SliderDelegate<LoudnessBase> for LoudnessBase {

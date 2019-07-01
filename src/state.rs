@@ -113,6 +113,7 @@ pub struct State {
     pub current_output: usize,
     pub volume: f32,
     pub mux_mode: MuxMode,
+    pub bass_boost: Gain,
     pub loudness: LoudnessConfig,
     pub enable_drc: Option<bool>,
     pub enable_subwoofer: Option<bool>,
@@ -129,6 +130,9 @@ pub enum StateChange {
         volume_spl: f32,
         gain: Gain,
         loudness_gain: Gain,
+    },
+    SetBassBoost {
+        bass_boost: Gain,
     },
     SetInputGain {
         device: DeviceId,
@@ -167,6 +171,7 @@ impl StateController {
                 current_output: 0,
                 mux_mode: MuxMode::Exclusive,
                 volume: DEFAULT_VOLUME,
+                bass_boost: Gain { db: 0.0 },
                 loudness: LoudnessConfig::default(),
                 enable_drc: None,
                 enable_subwoofer: None,
@@ -293,6 +298,11 @@ impl StateController {
             self.state.enable_drc = Some(enable);
             self.broadcast(StateChange::SetEnableDrc { enable });
         }
+    }
+
+    pub fn set_bass_boost(&mut self, bass_boost: Gain) {
+        self.state.bass_boost = bass_boost;
+        self.broadcast(StateChange::SetBassBoost { bass_boost });
     }
 
     pub fn set_loudness(&mut self, loudness: LoudnessConfig) {

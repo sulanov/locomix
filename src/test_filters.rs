@@ -170,9 +170,11 @@ fn run() -> Result<()> {
         println!("FIR filter {}", filename);
         let mut filters = PerChannel::new();
         filters.set(ChannelPos::FL, load_biquad_config(&filename)?);
-        draw_filter_graph(sample_rate, PerChannelFilter::<MultiBiquadFilter>::new(filters));
+        draw_filter_graph(
+            sample_rate,
+            PerChannelFilter::<MultiBiquadFilter>::new(filters),
+        );
     }
-
 
     Ok(())
 }

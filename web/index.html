@@ -45,12 +45,24 @@
     <label><input type="checkbox" id="enable_subwoofer_checkbox"></input>Subwoofer</label>
   </div>
 
+  <div class="bass_boost_box">
+    <header>Bass boost</header>
+    <input class="slider" type="range" min="0" max="15" step="0.5"></input>
+    <value></value> dB
+  </div>
+
   <div class="loudness_box">
     <label><input id="enable" type="checkbox"></input>Loudness</label>
     <label><input id="auto" type="checkbox"></input>Auto</label>
     </br>
     <input class="slider" type="range" min="0" max="1.0" step="0.05"></input>
     <value></value>
+  </div>
+
+  <div class="loudness_base_box">
+    <header>Loudness Base SPL</header>
+    <input class="slider" type="range" min="80" max="110" step="0.5"></input>
+    <value></value> dB
   </div>
 
   <div id="enable_crossfeed_box">
@@ -99,7 +111,7 @@ function makeRequest (opts) {
       });
     }
     var params = opts.params;
-    if (params && typeof params === 'object') {
+    if (params && typeof params === "object") {
       params = JSON.stringify(params);
       xhr.setRequestHeader("Content-type", "application/json");
     }
@@ -214,7 +226,7 @@ function postState(params) {
 
 function feature_checkbox(name, state) {
   let value = state[name];
-  let checkbox = document.querySelector('#' + name + '_checkbox');
+  let checkbox = document.querySelector("#" + name + "_checkbox");
   if (value == null) {
     checkbox.parentElement.hidden = true;
     return;
@@ -248,9 +260,10 @@ function slider_with_checkbox(container, state, name, slider_value) {
 document.body.onload = () => {
   makeRequest({method: "GET", url: "/api/state"})
   .then((result) => {
+    let Q = document.querySelector;
     let state = JSON.parse(result);
 
-    let volume_box = document.querySelector(".master_volume_box");
+    let volume_box = Q(".master_volume_box");
     autoupdate_slider(volume_box, (volume) => {
       state.volume = volume;
       return postState({"volume": volume});
@@ -258,7 +271,7 @@ document.body.onload = () => {
     update_volume_slider(state);
 
     let total_outputs = 0;
-    let template = document.querySelector(".output_selector .template")
+    let template = Q(".output_selector .template")
     for (var output_id = 0; output_id < state.outputs.length; output_id++) {
         var out = state.outputs[output_id];
       if (out.speakers.length == 0) {
@@ -272,13 +285,11 @@ document.body.onload = () => {
       }
     }
     if (total_outputs == 1) {
-      document.querySelector(".output_selector").hidden = true;
+      Q(".output_selector").hidden = true;
     }
 
     if (state.inputs.length > 1) {
-      document.querySelector(
-          'input[value="' +  state.mux_mode +'"][name="mux_mode"]')
-        .checked = true;
+      Q('input[value="' +  state.mux_mode +'"][name="mux_mode"]').checked = true;
       for (var mode_radio of document.querySelectorAll('input[name="mux_mode"]')) {
         mode_radio.onchange = (event) => {
           if (event.target.checked) {
@@ -287,15 +298,27 @@ document.body.onload = () => {
         }
       }
     } else {
-      document.querySelector('.mode_selector').hidden = true;
+      Q(".mode_selector").hidden = true;
     }
 
-    feature_checkbox('enable_drc', state);
-    feature_checkbox('enable_subwoofer', state);
-    feature_checkbox('enable_crossfeed', state);
+    feature_checkbox("enable_drc", state);
+    feature_checkbox("enable_subwoofer", state);
+    feature_checkbox("enable_crossfeed", state);
 
-    let loudness_box = document.querySelector(".loudness_box");
+    let bass_boost_box = Q(".bass_boost_box");
+    bass_boost_box.querySelector(".slider").value = state[slider_value];
+    autoupdate_slider(bass_boost_box, (bass_boost) => {
+      state.bass_boost = bass_boost;
+      return postState({"bass_boost": bass_boost});
+    });
+
+    let loudness_box = Q(".loudness_box");
     slider_with_checkbox(loudness_box, state.loudness, "loudness", "level");
+
+    autoupdate_slider(Q(".loudness_base_box"), (base_level_spl) => {
+      state.loudness.base_level_spl = base_level_spl;
+      return postState({"loudness": {"base_level_spl": base_level_spl}});
+    });
 
     let auto_checkbox = loudness_box.querySelector("#auto");
     auto_checkbox.checked = state.loudness.auto;
@@ -304,14 +327,14 @@ document.body.onload = () => {
     ));
 
     if (state.inputs.length > 1) {
-      let input_template = document.querySelector(".input.template")
+      let input_template = Q(".input.template")
       var id = 0;
       for (input of state.inputs) {
         add_input(id++, input, input_template);
       }
     }
 
-    document.querySelector("#controls").hidden = false;
+    Q("#controls").hidden = false;
   })
 };
 
