@@ -260,7 +260,7 @@ function slider_with_checkbox(container, state, name, slider_value) {
 document.body.onload = () => {
   makeRequest({method: "GET", url: "/api/state"})
   .then((result) => {
-    let Q = document.querySelector;
+    let Q = document.querySelector.bind(document);
     let state = JSON.parse(result);
 
     let volume_box = Q(".master_volume_box");
@@ -306,7 +306,7 @@ document.body.onload = () => {
     feature_checkbox("enable_crossfeed", state);
 
     let bass_boost_box = Q(".bass_boost_box");
-    bass_boost_box.querySelector(".slider").value = state[slider_value];
+    bass_boost_box.querySelector(".slider").value = state.bass_boost;
     autoupdate_slider(bass_boost_box, (bass_boost) => {
       state.bass_boost = bass_boost;
       return postState({"bass_boost": bass_boost});
@@ -315,7 +315,9 @@ document.body.onload = () => {
     let loudness_box = Q(".loudness_box");
     slider_with_checkbox(loudness_box, state.loudness, "loudness", "level");
 
-    autoupdate_slider(Q(".loudness_base_box"), (base_level_spl) => {
+    let loudness_base_box = Q(".loudness_base_box");
+    loudness_base_box.querySelector(".slider").value = state.loudness.base_level_spl;
+    autoupdate_slider(loudness_base_box, (base_level_spl) => {
       state.loudness.base_level_spl = base_level_spl;
       return postState({"loudness": {"base_level_spl": base_level_spl}});
     });
