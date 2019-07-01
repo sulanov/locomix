@@ -262,7 +262,7 @@ pub struct BassBoostFilter(BiquadFilter);
 
 impl BassBoostFilter {
     fn get_biquad_params(params: &SimpleFilterParams) -> BiquadParams {
-        BiquadParams::low_shelf_filter(params.sample_rate, 100.0, 1.0, params.gain_db)
+        BiquadParams::low_shelf_filter(params.sample_rate, 100.0, 0.7, params.gain_db)
     }
 }
 

@@ -131,6 +131,12 @@ fn run() -> Result<()> {
     println!("Crossfeed filter");
     draw_crossfeed_graph(sample_rate);
 
+    println!("Bass boost");
+    draw_filter_graph(
+        sample_rate,
+        MultichannelFilter::<BassBoostFilter>::new(SimpleFilterParams::new(sample_rate, 10.0)),
+    );
+
     println!("Loudness filter");
     draw_filter_graph(
         sample_rate,
