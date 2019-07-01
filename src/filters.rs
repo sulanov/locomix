@@ -439,7 +439,8 @@ impl StreamFilter for MultichannelFirFilter {
                 data: frame.take_channel(c).unwrap(),
                 response_channel: s,
                 size_multiplier: self.size_multiplier,
-            }).expect("Failed to send");
+            })
+            .expect("Failed to send");
         }
 
         for (i, (c, _t)) in self.threads.iter().enumerate() {
@@ -550,11 +551,10 @@ impl AudioFilter<FirFilter> for FirFilter {
             convolve(
                 &self.buffer[self.buffer_pos..],
                 &self.params.coefficients[0..p1_size],
+            ) + convolve(
+                &self.buffer[0..(self.window_size - p1_size)],
+                &self.params.coefficients[p1_size..self.window_size],
             )
-                + convolve(
-                    &self.buffer[0..(self.window_size - p1_size)],
-                    &self.params.coefficients[p1_size..self.window_size],
-                )
         }
     }
 }

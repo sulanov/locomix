@@ -24,14 +24,16 @@ impl StateScript {
             .arg(output)
             .status();
         match result {
-            Ok(status) => if !status.success() {
-                println!(
-                    "ERROR: {} {} failed with error code {}",
-                    self.script_path,
-                    state.as_str(),
-                    status.code().unwrap_or(0)
-                );
-            },
+            Ok(status) => {
+                if !status.success() {
+                    println!(
+                        "ERROR: {} {} failed with error code {}",
+                        self.script_path,
+                        state.as_str(),
+                        status.code().unwrap_or(0)
+                    );
+                }
+            }
             Err(e) => println!("ERROR: Failed to run {}: {}", self.script_path, e),
         }
     }

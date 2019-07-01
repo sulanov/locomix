@@ -39,9 +39,11 @@ impl LightController {
                 println!("INFO: Controlling light via {}", self.device_path);
                 self.dev = Some(d)
             }
-            Err(e) => if log_error {
-                println!("ERROR: Failed to open {}: {}", self.device_path, e);
-            },
+            Err(e) => {
+                if log_error {
+                    println!("ERROR: Failed to open {}: {}", self.device_path, e);
+                }
+            }
         }
     }
 

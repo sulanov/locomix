@@ -61,9 +61,11 @@ impl volume_device::VolumeDevice for Pga2311Volume {
         let v = (192.0 + 2.0 * gain.db).ceil() as i32;
         let v = (0.max(v).min(255)) as u8;
         match self.device.write(&[v, v]) {
-            Ok(bytes) => if bytes != 2 {
-                println!("ERROR: SPI write returned {}", bytes);
-            },
+            Ok(bytes) => {
+                if bytes != 2 {
+                    println!("ERROR: SPI write returned {}", bytes);
+                }
+            }
             Err(e) => {
                 println!("ERROR: SPI write failed {}", e);
             }

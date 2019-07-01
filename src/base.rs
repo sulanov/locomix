@@ -218,19 +218,23 @@ fn read_sample_s16le(buf: &[u8]) -> f32 {
 
 fn read_sample_s24le3(buf: &[u8]) -> f32 {
     (((((buf[0] as u32) << 8) | ((buf[1] as u32) << 16) | ((buf[2] as u32) << 24)) as i32 as f64
-        + 127.5) / 2147483648f64) as f32
+        + 127.5)
+        / 2147483648f64) as f32
 }
 
 fn read_sample_s24le4(buf: &[u8]) -> f32 {
     (((((buf[0] as u32) << 8) | ((buf[1] as u32) << 16) | ((buf[2] as u32) << 24)) as i32 as f64
-        + 127.5) / 2147483648f64) as f32
+        + 127.5)
+        / 2147483648f64) as f32
 }
 
 fn read_sample_s32le(buf: &[u8]) -> f32 {
     (((((buf[0] as u32) << 0)
         | ((buf[1] as u32) << 8)
         | ((buf[2] as u32) << 16)
-        | ((buf[3] as u32) << 24)) as i32 as f64 + 0.5) / 2147483648f64) as f32
+        | ((buf[3] as u32) << 24)) as i32 as f64
+        + 0.5)
+        / 2147483648f64) as f32
 }
 
 // Fast SIMD-optimized convolution. Optimized for NEON on Raspberry PI 3.
@@ -523,36 +527,46 @@ impl Frame {
 
             let shift = c * format.bytes_per_sample();
             match format {
-                SampleFormat::S16LE => for i in 0..self.len() {
-                    write_sample_s16le(
-                        data[i] * multiplier,
-                        &mut buf[i * bytes_per_frame + shift..],
-                    );
-                },
-                SampleFormat::S24LE3 => for i in 0..self.len() {
-                    write_sample_s24le3(
-                        data[i] * multiplier,
-                        &mut buf[i * bytes_per_frame + shift..],
-                    );
-                },
-                SampleFormat::S24LE4 => for i in 0..self.len() {
-                    write_sample_s24le4(
-                        data[i] * multiplier,
-                        &mut buf[i * bytes_per_frame + shift..],
-                    );
-                },
-                SampleFormat::S32LE => for i in 0..self.len() {
-                    write_sample_s32le(
-                        data[i] * multiplier,
-                        &mut buf[i * bytes_per_frame + shift..],
-                    );
-                },
-                SampleFormat::F32LE => for i in 0..self.len() {
-                    LittleEndian::write_f32(
-                        &mut buf[i * bytes_per_frame + shift..],
-                        data[i] * multiplier,
-                    );
-                },
+                SampleFormat::S16LE => {
+                    for i in 0..self.len() {
+                        write_sample_s16le(
+                            data[i] * multiplier,
+                            &mut buf[i * bytes_per_frame + shift..],
+                        );
+                    }
+                }
+                SampleFormat::S24LE3 => {
+                    for i in 0..self.len() {
+                        write_sample_s24le3(
+                            data[i] * multiplier,
+                            &mut buf[i * bytes_per_frame + shift..],
+                        );
+                    }
+                }
+                SampleFormat::S24LE4 => {
+                    for i in 0..self.len() {
+                        write_sample_s24le4(
+                            data[i] * multiplier,
+                            &mut buf[i * bytes_per_frame + shift..],
+                        );
+                    }
+                }
+                SampleFormat::S32LE => {
+                    for i in 0..self.len() {
+                        write_sample_s32le(
+                            data[i] * multiplier,
+                            &mut buf[i * bytes_per_frame + shift..],
+                        );
+                    }
+                }
+                SampleFormat::F32LE => {
+                    for i in 0..self.len() {
+                        LittleEndian::write_f32(
+                            &mut buf[i * bytes_per_frame + shift..],
+                            data[i] * multiplier,
+                        );
+                    }
+                }
             }
         }
 
@@ -589,22 +603,32 @@ impl Frame {
         for c in 0..channels.len() {
             let mut data = frame.ensure_channel(channels[c]);
             match format {
-                SampleFormat::S16LE => for i in 0..samples {
-                    data[i] = read_sample_s16le(&buffer[i * bytes_per_sample + c * 2..]);
-                },
-                SampleFormat::S24LE3 => for i in 0..samples {
-                    data[i] = read_sample_s24le3(&buffer[i * bytes_per_sample + c * 3..]);
-                },
-                SampleFormat::S24LE4 => for i in 0..samples {
-                    data[i] = read_sample_s24le4(&buffer[i * bytes_per_sample + c * 4..]);
-                },
-                SampleFormat::S32LE => for i in 0..samples {
-                    data[i] = read_sample_s32le(&buffer[i * bytes_per_sample + c * 4..]);
-                },
-                SampleFormat::F32LE => for i in 0..samples {
-                    data[i] =
-                        LittleEndian::read_f32(&buffer[i * bytes_per_sample + c * 4..]) + 1e-10f32;
-                },
+                SampleFormat::S16LE => {
+                    for i in 0..samples {
+                        data[i] = read_sample_s16le(&buffer[i * bytes_per_sample + c * 2..]);
+                    }
+                }
+                SampleFormat::S24LE3 => {
+                    for i in 0..samples {
+                        data[i] = read_sample_s24le3(&buffer[i * bytes_per_sample + c * 3..]);
+                    }
+                }
+                SampleFormat::S24LE4 => {
+                    for i in 0..samples {
+                        data[i] = read_sample_s24le4(&buffer[i * bytes_per_sample + c * 4..]);
+                    }
+                }
+                SampleFormat::S32LE => {
+                    for i in 0..samples {
+                        data[i] = read_sample_s32le(&buffer[i * bytes_per_sample + c * 4..]);
+                    }
+                }
+                SampleFormat::F32LE => {
+                    for i in 0..samples {
+                        data[i] = LittleEndian::read_f32(&buffer[i * bytes_per_sample + c * 4..])
+                            + 1e-10f32;
+                    }
+                }
             }
         }
 

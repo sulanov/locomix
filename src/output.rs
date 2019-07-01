@@ -225,7 +225,8 @@ impl AlsaOutput {
                 alsa::pcm::Format::S243LE,
                 alsa::pcm::Format::S24LE,
                 alsa::pcm::Format::S16LE,
-            ].iter()
+            ]
+            .iter()
             {
                 match hwp.set_format(*fmt) {
                     Ok(_) => break,

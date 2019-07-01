@@ -207,9 +207,11 @@ fn load_fir_filters(
     let mut filters = base::PerChannel::new();
     match files {
         None => return Ok(None),
-        Some(map) => for (c, f) in map {
-            filters.set(parse_channel_id(c)?, f)
-        },
+        Some(map) => {
+            for (c, f) in map {
+                filters.set(parse_channel_id(c)?, f)
+            }
+        }
     }
 
     if use_brutefir {
@@ -234,9 +236,11 @@ fn load_biquad_filters(
     let mut filters = base::PerChannel::new();
     match files {
         None => return Ok(None),
-        Some(map) => for (c, f) in map {
-            filters.set(parse_channel_id(c)?, filters::load_biquad_config(&f)?)
-        },
+        Some(map) => {
+            for (c, f) in map {
+                filters.set(parse_channel_id(c)?, filters::load_biquad_config(&f)?)
+            }
+        }
     }
 
     Ok(Some(Box::new(filters::PerChannelFilter::<
@@ -350,7 +354,8 @@ fn run() -> Result<(), RunError> {
             format!(
                 "Invalid period_duration: {}",
                 config.period_duration.unwrap()
-            ).as_str(),
+            )
+            .as_str(),
         ));
     }
 
@@ -492,7 +497,8 @@ fn run() -> Result<(), RunError> {
                     format!(
                 "subwoofer_crossover_frequency is set for output {}, which doesn't have subwoofer.",
                 name
-            ).as_str(),
+            )
+                    .as_str(),
                 ))
             }
             (false, None) => None,
@@ -524,9 +530,10 @@ fn run() -> Result<(), RunError> {
         let speakers = match output.speakers {
             Some(speakers) => {
                 let mut result = Vec::new();
-                let full_scale_output_volts = output.full_scale_output_volts.ok_or(RunError::new(
-                    "full_scale_output_volts must be specified with non-empty speaker config.",
-                ))?;
+                let full_scale_output_volts =
+                    output.full_scale_output_volts.ok_or(RunError::new(
+                        "full_scale_output_volts must be specified with non-empty speaker config.",
+                    ))?;
                 for s in speakers {
                     result.push(process_speaker_config(full_scale_output_volts, s)?);
                 }
