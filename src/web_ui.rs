@@ -1,15 +1,15 @@
-use base::*;
+use crate::base::*;
+use crate::state::*;
 use rouille;
 use rouille::Response;
-use state::*;
 use std::fs::File;
 use std::io::Read;
 use std::thread;
 
 fn load_file(filename: &str) -> Result<String> {
-    let mut file = try!(File::open(filename));
+    let mut file = File::open(filename)?;
     let mut content = String::new();
-    try!(file.read_to_string(&mut content));
+    file.read_to_string(&mut content)?;
     Ok(content)
 }
 

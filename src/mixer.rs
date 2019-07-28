@@ -1,13 +1,12 @@
-use async_input::AsyncInput;
-use base::*;
-use crossover;
-use downmixer;
-use filters::*;
-use output;
-use state;
-use std;
+use crate::async_input::AsyncInput;
+use crate::base::*;
+use crate::crossover;
+use crate::downmixer;
+use crate::filters::*;
+use crate::output;
+use crate::state;
+use crate::time::*;
 use std::cmp;
-use time::*;
 
 struct InputMixer {
     input: AsyncInput,
@@ -320,7 +319,7 @@ pub fn run_mixer_loop(
             stream_pos = 0;
         } else {
             for m in mixers.iter_mut() {
-                have_data |= try!(m.mix_into(&mut frame, mix_deadline));
+                have_data |= m.mix_into(&mut frame, mix_deadline)?;
             }
             stream_pos += frame.len() as i64;
         }

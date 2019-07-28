@@ -1,10 +1,9 @@
-extern crate toml;
-
-use base::*;
-use input_device::*;
-use state::*;
+use crate::base::*;
+use crate::input_device::*;
+use crate::state::*;
+use crate::time::{Time, TimeDelta};
 use std;
-use time::{Time, TimeDelta};
+use toml;
 
 const REOPEN_PERIOD_SECONDS: i64 = 3;
 

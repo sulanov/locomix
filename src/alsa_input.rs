@@ -1,16 +1,11 @@
-extern crate alsa;
-extern crate libc;
-extern crate nix;
-
-use a52_decoder;
-use base::*;
+use crate::a52_decoder;
+use crate::base::*;
+use crate::input::*;
+use crate::time::{Time, TimeDelta};
 use std;
 use std::collections::VecDeque;
 use std::error;
 use std::ffi::CString;
-use time::{Time, TimeDelta};
-
-use super::input::*;
 
 const CHANNELS: usize = 2;
 
@@ -73,20 +68,20 @@ const SILENCE_PERIOD_SECONDS: i64 = 5;
 
 impl AlsaInput {
     pub fn open(spec: DeviceSpec, period_duration: TimeDelta) -> Result<Box<AlsaInput>> {
-        let pcm = try!(alsa::PCM::open(
+        let pcm = alsa::PCM::open(
             &*CString::new(&spec.id[..]).unwrap(),
             alsa::Direction::Capture,
-            false
-        ));
+            false,
+        )?;
 
         let mut sample_rate = spec.sample_rate.unwrap_or(48000);
         let period_size;
         let format;
         let device_delay;
         {
-            let hwp = try!(alsa::pcm::HwParams::any(&pcm));
-            try!(hwp.set_channels(CHANNELS as u32));
-            try!(hwp.set_rate(sample_rate as u32, alsa::ValueOr::Nearest));
+            let hwp = alsa::pcm::HwParams::any(&pcm)?;
+            hwp.set_channels(CHANNELS as u32)?;
+            hwp.set_rate(sample_rate as u32, alsa::ValueOr::Nearest)?;
 
             for fmt in [
                 alsa::pcm::Format::S32LE,
@@ -103,18 +98,18 @@ impl AlsaInput {
             }
 
             let target_period_size = period_duration * sample_rate as i64 / TimeDelta::seconds(1);
-            try!(hwp.set_period_size_near(
+            hwp.set_period_size_near(
                 target_period_size as alsa::pcm::Frames,
-                alsa::ValueOr::Nearest
-            ));
-            try!(hwp.set_periods(8, alsa::ValueOr::Nearest));
-            try!(hwp.set_rate_resample(false));
-            try!(hwp.set_access(alsa::pcm::Access::RWInterleaved));
-            try!(pcm.hw_params(&hwp));
+                alsa::ValueOr::Nearest,
+            )?;
+            hwp.set_periods(8, alsa::ValueOr::Nearest)?;
+            hwp.set_rate_resample(false)?;
+            hwp.set_access(alsa::pcm::Access::RWInterleaved)?;
+            pcm.hw_params(&hwp)?;
 
-            sample_rate = try!(hwp.get_rate()) as usize;
-            period_size = try!(hwp.get_period_size()) as usize;
-            format = match try!(hwp.get_format()) {
+            sample_rate = hwp.get_rate()? as usize;
+            period_size = hwp.get_period_size()? as usize;
+            format = match hwp.get_format()? {
                 alsa::pcm::Format::S16LE => SampleFormat::S16LE,
                 alsa::pcm::Format::S243LE => SampleFormat::S24LE3,
                 alsa::pcm::Format::S24LE => SampleFormat::S24LE4,
@@ -129,7 +124,7 @@ impl AlsaInput {
                 spec.id,
                 &spec.name,
                 period_size,
-                try!(hwp.get_periods()),
+                hwp.get_periods()?,
                 sample_rate,
                 format
             );

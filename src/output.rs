@@ -1,14 +1,12 @@
-extern crate alsa;
-extern crate libc;
-extern crate nix;
-
-use base::*;
-use resampler;
+use crate::base::*;
+use crate::resampler;
+use crate::time::{Time, TimeDelta};
+use alsa;
+use libc;
 use std::cmp;
 use std::ffi::CString;
 use std::sync::mpsc;
 use std::thread;
-use time::{Time, TimeDelta};
 
 pub trait Output: Send {
     fn write(&mut self, frame: Frame) -> Result<()>;
@@ -133,7 +131,7 @@ impl AlsaWriteLoop {
             }
         }
 
-        let frames_written = try!(self.pcm.io().writei(&self.buffer[self.buffer_pos..])) as usize;
+        let frames_written = self.pcm.io().writei(&self.buffer[self.buffer_pos..])? as usize;
         self.buffer_pos += frames_written * self.bytes_per_frame;
 
         let stream_time_estimate = self.stream_time_estimate()?;
@@ -204,21 +202,21 @@ impl AlsaOutput {
         period_duration: TimeDelta,
         static_rate: bool,
     ) -> Result<AlsaOutput> {
-        let pcm = try!(alsa::PCM::open(
+        let pcm = alsa::PCM::open(
             &*CString::new(&spec.id[..]).unwrap(),
             alsa::Direction::Playback,
-            false
-        ));
+            false,
+        )?;
 
         let sample_rate;
         let format;
         let period_size;
         {
-            let hwp = try!(alsa::pcm::HwParams::any(&pcm));
-            try!(hwp.set_channels(spec.channels.len() as u32));
+            let hwp = alsa::pcm::HwParams::any(&pcm)?;
+            hwp.set_channels(spec.channels.len() as u32)?;
 
-            try!(hwp.set_access(alsa::pcm::Access::RWInterleaved));
-            try!(hwp.set_rate_resample(false));
+            hwp.set_access(alsa::pcm::Access::RWInterleaved)?;
+            hwp.set_rate_resample(false)?;
 
             for fmt in [
                 alsa::pcm::Format::S32LE,
@@ -236,7 +234,7 @@ impl AlsaOutput {
 
             sample_rate = match spec.sample_rate {
                 Some(rate) => {
-                    try!(hwp.set_rate(rate as u32, alsa::ValueOr::Nearest));
+                    hwp.set_rate(rate as u32, alsa::ValueOr::Nearest)?;
                     rate
                 }
                 None => {
@@ -261,15 +259,15 @@ impl AlsaOutput {
             };
 
             let target_period_size = period_duration * sample_rate as i64 / TimeDelta::seconds(1);
-            try!(hwp.set_period_size_near(
+            hwp.set_period_size_near(
                 target_period_size as alsa::pcm::Frames,
-                alsa::ValueOr::Nearest
-            ));
-            try!(hwp.set_periods(BUFFER_PERIODS as u32, alsa::ValueOr::Nearest));
-            try!(pcm.hw_params(&hwp));
+                alsa::ValueOr::Nearest,
+            )?;
+            hwp.set_periods(BUFFER_PERIODS as u32, alsa::ValueOr::Nearest)?;
+            pcm.hw_params(&hwp)?;
 
-            period_size = try!(hwp.get_period_size()) as usize;
-            format = match try!(hwp.get_format()) {
+            period_size = hwp.get_period_size()? as usize;
+            format = match hwp.get_format()? {
                 alsa::pcm::Format::S16LE => SampleFormat::S16LE,
                 alsa::pcm::Format::S243LE => SampleFormat::S24LE3,
                 alsa::pcm::Format::S24LE => SampleFormat::S24LE4,
@@ -282,7 +280,7 @@ impl AlsaOutput {
                 spec.name,
                 spec.id,
                 period_size,
-                try!(hwp.get_periods()),
+                hwp.get_periods()?,
                 sample_rate,
                 format,
                 spec.channels.len()
@@ -294,7 +292,7 @@ impl AlsaOutput {
             pcm.sw_params(&swp)?
         }
 
-        let (_, device_delay) = try!(pcm.avail_delay());
+        let (_, device_delay) = pcm.avail_delay()?;
         let min_delay = samples_to_timedelta(sample_rate as f64, device_delay as i64)
             + period_duration * BUFFER_PERIODS as i64
             + spec.delay;

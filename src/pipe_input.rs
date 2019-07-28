@@ -1,14 +1,13 @@
-extern crate libc;
-extern crate nix;
-
-use self::nix::fcntl;
-use base::*;
+use crate::base::*;
+use crate::time::{Time, TimeDelta};
+use libc;
+use nix;
+use nix::fcntl;
 use std;
 use std::fs::File;
 use std::io::Read;
 use std::os::linux::fs::MetadataExt;
 use std::os::unix::io::AsRawFd;
-use time::{Time, TimeDelta};
 
 use super::input::*;
 

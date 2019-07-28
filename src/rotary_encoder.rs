@@ -1,10 +1,9 @@
-extern crate rppal;
-extern crate toml;
-
-use base::*;
+use crate::base::*;
+use crate::time::{Time, TimeDelta};
+use crate::ui;
+use rppal;
 use std;
-use time::{Time, TimeDelta};
-use ui;
+use toml;
 
 fn parse_pin_param(config: &toml::value::Table, name: &str) -> Result<u8> {
     match config.get(name).and_then(|v| v.as_integer()) {

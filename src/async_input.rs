@@ -1,8 +1,8 @@
-use base;
-use input;
+use crate::base;
+use crate::input;
+use crate::time::TimeDelta;
 use std::sync::mpsc;
 use std::thread;
-use time::TimeDelta;
 
 enum PipeMessage {
     Frame(base::Frame, TimeDelta),

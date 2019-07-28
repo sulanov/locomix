@@ -1,6 +1,5 @@
-extern crate libc;
-
-use base::*;
+use crate::base::*;
+use libc;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Read;
@@ -64,7 +63,10 @@ pub struct InputDevice {
 
 impl InputDevice {
     pub fn new(device_path: &str) -> Result<InputDevice> {
-        let f = try!(OpenOptions::new().read(true).write(true).open(device_path));
+        let f = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(device_path)?;
 
         Ok(InputDevice { dev: f })
     }
@@ -92,7 +94,7 @@ impl InputDevice {
         unsafe {
             let event_slice =
                 slice::from_raw_parts_mut(&mut event as *mut _ as *mut u8, event_size);
-            try!(self.dev.read_exact(event_slice));
+            self.dev.read_exact(event_slice)?;
         }
         Ok(event)
     }
@@ -102,7 +104,7 @@ impl InputDevice {
         unsafe {
             let event_slice =
                 slice::from_raw_parts_mut(&mut event as *mut _ as *mut u8, event_size);
-            try!(self.dev.write_all(event_slice));
+            self.dev.write_all(event_slice)?;
         }
         Ok(())
     }

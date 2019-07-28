@@ -1,11 +1,10 @@
-extern crate alsa;
-extern crate toml;
-
-use base::*;
-use output::Output;
+use crate::base::*;
+use crate::output::Output;
+use crate::time::*;
+use alsa;
 use std::boxed::Box;
 use std::ffi::CString;
-use time::*;
+use toml;
 
 pub trait VolumeDevice: Send {
     // Sets volume to be applied by the device and returns the value that has
@@ -22,7 +21,10 @@ pub struct OutputWithVolumeDevice {
 }
 
 impl OutputWithVolumeDevice {
-    pub fn new(output: Box<dyn Output>, volume_device: Box<dyn VolumeDevice>) -> OutputWithVolumeDevice {
+    pub fn new(
+        output: Box<dyn Output>,
+        volume_device: Box<dyn VolumeDevice>,
+    ) -> OutputWithVolumeDevice {
         OutputWithVolumeDevice {
             output,
             volume_device,

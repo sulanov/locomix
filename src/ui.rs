@@ -1,15 +1,14 @@
-extern crate mono_display;
-use self::mono_display::gfx;
-use self::mono_display::DisplayDriver;
-
-use base;
-use base::{Error, Result};
-use state;
+use crate::base;
+use crate::base::{Error, Result};
+use crate::state;
+use crate::time::{Time, TimeDelta};
+use mono_display;
+use mono_display::gfx;
+use mono_display::DisplayDriver;
 use std;
 use std::boxed::Box;
 use std::sync::mpsc;
 use std::sync::Arc;
-use time::{Time, TimeDelta};
 
 impl From<mono_display::Error> for Error {
     fn from(e: mono_display::Error) -> Error {

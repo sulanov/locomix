@@ -80,7 +80,7 @@ fn draw_crossfeed_graph(sample_rate: f64) {
 }
 
 fn load_fir_params(filename: &str, size: usize) -> Result<FirFilterParams> {
-    let mut file = try!(fs::File::open(filename));
+    let mut file = fs::File::open(filename)?;
     let mut result = Vec::<f32>::new();
     loop {
         match file.read_f32::<NativeEndian>() {
@@ -165,10 +165,7 @@ fn run() -> Result<()> {
 
         println!("FIR filter {}", filename);
         let mut filters = PerChannel::new();
-        filters.set(
-            ChannelPos::FL,
-            try!(load_fir_params(&filename, filter_length)),
-        );
+        filters.set(ChannelPos::FL, load_fir_params(&filename, filter_length)?);
         draw_filter_graph(sample_rate, MultichannelFirFilter::new(filters));
     }
 

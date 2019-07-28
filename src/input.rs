@@ -1,6 +1,6 @@
-use base::*;
-use resampler::StreamResampler;
-use time::TimeDelta;
+use crate::base::*;
+use crate::resampler::StreamResampler;
+use crate::time::TimeDelta;
 
 pub trait Input: Send {
     fn read(&mut self) -> Result<Option<Frame>>;
@@ -42,7 +42,7 @@ impl InputResampler {
 
 impl Input for InputResampler {
     fn read(&mut self) -> Result<Option<Frame>> {
-        Ok(match try!(self.input.read()) {
+        Ok(match self.input.read()? {
             Some(f) => {
                 let updated = self.update_frame(f);
                 self.resampler.resample(updated)

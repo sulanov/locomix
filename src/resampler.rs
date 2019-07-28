@@ -1,10 +1,10 @@
-use base;
-use base::convolve;
+use crate::base;
+use crate::base::convolve;
+use crate::time::TimeDelta;
 use std::cmp;
 use std::collections::BTreeMap;
 use std::f32::consts::PI;
 use std::sync::Arc;
-use time::TimeDelta;
 
 const NUM_SUB_INTERVALS: usize = 32;
 

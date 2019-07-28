@@ -1,9 +1,8 @@
-extern crate rppal;
-extern crate toml;
-
 use self::rppal::spi;
-use base::*;
-use volume_device;
+use crate::base::*;
+use crate::volume_device;
+use rppal;
+use toml;
 
 pub struct Pga2311Volume {
     device: spi::Spi,

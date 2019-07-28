@@ -1,16 +1,13 @@
-extern crate tempfile;
-
-use base::*;
-use filters;
+use crate::base::*;
+use crate::filters;
+use crate::time::{Time, TimeDelta};
 use std;
 use std::cmp;
 use std::io::Read;
 use std::io::Write;
 use std::mem;
 use std::process::{Child, Command, Stdio};
-use time::{Time, TimeDelta};
-
-use self::tempfile::NamedTempFile;
+use tempfile::NamedTempFile;
 
 pub struct BruteFirChannel {
     child: Child,

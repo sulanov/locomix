@@ -1,4 +1,4 @@
-use base::*;
+use crate::base::*;
 
 pub struct Downmixer {
     active_channels: PerChannel<bool>,

@@ -1,5 +1,3 @@
-#![feature(allocator_api)]
-
 extern crate byteorder;
 extern crate getopts;
 extern crate locomix;
@@ -186,7 +184,7 @@ fn parse_channel_map(map_str: Option<String>) -> Result<Vec<base::ChannelPos>, R
 }
 
 fn load_fir_params(filename: &str, size: usize) -> Result<filters::FirFilterParams, RunError> {
-    let mut file = try!(fs::File::open(filename));
+    let mut file = fs::File::open(filename)?;
     let mut result = Vec::<f32>::new();
     loop {
         match file.read_f32::<NativeEndian>() {
@@ -321,7 +319,7 @@ fn run() -> Result<(), RunError> {
     opts.optmulti("c", "config", "Config file", "CONFIG_FILE");
     opts.optflag("h", "help", "Print this help menu");
 
-    let matches = try!(opts.parse(&args[1..]));
+    let matches = opts.parse(&args[1..])?;
 
     if matches.opt_present("h") {
         print!("Usage: {} --config <CONFIG_FILE>\n", args[0]);
@@ -333,11 +331,11 @@ fn run() -> Result<(), RunError> {
         Some(c) => c,
     };
 
-    let mut file = try!(fs::File::open(config_filename));
+    let mut file = fs::File::open(config_filename)?;
     let mut config_content = String::new();
-    try!(file.read_to_string(&mut config_content));
+    file.read_to_string(&mut config_content)?;
 
-    let config: Config = try!(toml::from_str(config_content.as_str()));
+    let config: Config = toml::from_str(config_content.as_str())?;
 
     let sample_rate = config.sample_rate.unwrap_or(48000);
     if sample_rate < 8000 || sample_rate > 192000 {
@@ -425,7 +423,7 @@ fn run() -> Result<(), RunError> {
                     name: name.clone(),
                     id: device,
                     sample_rate: output.sample_rate,
-                    channels: try!(parse_channel_map(channel_map)),
+                    channels: parse_channel_map(channel_map)?,
                     delay: TimeDelta::zero(),
                     enable_a52: false,
                 },
@@ -439,7 +437,7 @@ fn run() -> Result<(), RunError> {
                             name: "".to_string(),
                             id: d.device,
                             sample_rate: d.sample_rate.or(output.sample_rate),
-                            channels: try!(parse_channel_map(d.channel_map)),
+                            channels: parse_channel_map(d.channel_map)?,
                             delay: TimeDelta::milliseconds_f(d.delay.unwrap_or(0f64)),
                             enable_a52: false,
                         },
@@ -611,14 +609,14 @@ fn run() -> Result<(), RunError> {
         .enable_crossfeed
         .map(|enable| shared_state.lock().set_enable_crossfeed(enable));
 
-    Ok(try!(mixer::run_mixer_loop(
+    Ok(mixer::run_mixer_loop(
         inputs,
         outputs,
         sample_rate as f64,
         period_duration,
         shared_state,
         shared_stream_state,
-    )))
+    )?)
 }
 
 fn main() {

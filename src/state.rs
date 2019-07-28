@@ -1,9 +1,9 @@
-use base::Gain;
+use crate::base::Gain;
+use crate::time::Time;
 use std::collections::VecDeque;
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::sync::{Mutex, MutexGuard};
-use time::Time;
 
 pub const VOLUME_MIN: f32 = 30.0;
 pub const VOLUME_MAX: f32 = 110.0;

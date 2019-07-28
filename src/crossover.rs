@@ -1,5 +1,5 @@
-use base::*;
-use filters::*;
+use crate::base::*;
+use crate::filters::*;
 
 pub struct CrossoverFilter {
     frequency: f32,

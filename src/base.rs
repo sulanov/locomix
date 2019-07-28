@@ -1,12 +1,8 @@
-extern crate alsa;
-extern crate byteorder;
-extern crate rppal;
-
 #[cfg(feature = "simd")]
-extern crate simd;
+use simd;
 
-use self::byteorder::{ByteOrder, LittleEndian};
-
+use crate::time::{Time, TimeDelta};
+use byteorder::{ByteOrder, LittleEndian};
 use serde;
 use std;
 use std::cmp::{Eq, PartialEq};
@@ -18,7 +14,6 @@ use std::iter::Enumerate;
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 use std::result;
 use std::slice;
-use time::{Time, TimeDelta};
 
 #[cfg(feature = "simd")]
 use self::simd::f32x4;
