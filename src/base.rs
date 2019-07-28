@@ -1,5 +1,5 @@
-#[cfg(feature = "simd")]
-use simd;
+#[cfg(feature = "packed_simd")]
+use packed_simd;
 
 use crate::time::{Time, TimeDelta};
 use byteorder::{ByteOrder, LittleEndian};
@@ -15,8 +15,8 @@ use std::ops::{Add, AddAssign, Sub, SubAssign};
 use std::result;
 use std::slice;
 
-#[cfg(feature = "simd")]
-use self::simd::f32x4;
+#[cfg(feature = "packed_simd")]
+use self::packed_simd::f32x4;
 
 // Subwoofer channel is expected to be reproduced 10dB louder
 // than other channels.
@@ -233,7 +233,7 @@ fn read_sample_s32le(buf: &[u8]) -> f32 {
 }
 
 // Fast SIMD-optimized convolution. Optimized for NEON on Raspberry PI 3.
-#[cfg(feature = "simd")]
+#[cfg(feature = "packed_simd")]
 pub fn convolve(v1: &[f32], v2: &[f32]) -> f32 {
     assert!(v1.len() == v2.len());
 
@@ -241,11 +241,11 @@ pub fn convolve(v1: &[f32], v2: &[f32]) -> f32 {
     let mut sum2 = f32x4::splat(0.0);
 
     for i in 0..(v1.len() / 8) {
-        let v1_0 = f32x4::load(v1, i * 8);
-        let v1_4 = f32x4::load(v1, i * 8 + 4);
+        let v1_0 = f32x4::from_slice_unaligned(&v1[i * 8..]);
+        let v1_4 = f32x4::from_slice_unaligned(&v1[i * 8 + 4..]);
 
-        let v2_0 = f32x4::load(v2, i * 8);
-        let v2_4 = f32x4::load(v2, i * 8 + 4);
+        let v2_0 = f32x4::from_slice_unaligned(&v2[i * 8..]);
+        let v2_4 = f32x4::from_slice_unaligned(&v2[i * 8 + 4..]);
 
         sum1 = sum1 + v1_0 * v2_0;
         sum2 = sum2 + v1_4 * v2_4;
@@ -253,7 +253,8 @@ pub fn convolve(v1: &[f32], v2: &[f32]) -> f32 {
 
     let mut pos = (v1.len() / 8) * 8;
     while pos + 4 <= v1.len() {
-        sum1 = sum1 + f32x4::load(v1, pos) * f32x4::load(v2, pos);
+        sum1 = sum1
+            + f32x4::from_slice_unaligned(&v1[pos..]) * f32x4::from_slice_unaligned(&v2[pos..]);
         pos += 4;
     }
 
@@ -274,7 +275,7 @@ pub fn convolve(v1: &[f32], v2: &[f32]) -> f32 {
         + sum_end
 }
 
-#[cfg(not(feature = "simd"))]
+#[cfg(not(feature = "packed_simd"))]
 pub fn convolve(v1: &[f32], v2: &[f32]) -> f32 {
     let mut r = 0.0;
     let mut block_count = v1.len() / 4;
@@ -841,7 +842,7 @@ impl StreamPositionTracker {
 
 #[cfg(test)]
 mod tests {
-    use base::*;
+    use super::*;
 
     #[test]
     fn frame_read_write_s16le() {

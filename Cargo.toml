@@ -5,7 +5,7 @@ authors = ["Sergey Ulanov <sulanov@gmail.com>"]
 edition = "2018"
 
 [features]
-default = [ "sdl2" ]
+default = [ "sdl2", "packed_simd" ]
 
 sdl2 = [ "mono_display/sdl2" ]
 
@@ -22,7 +22,7 @@ serde_derive = "1.0.27"
 tempfile = "2.2.0"
 toml = "0.4.5"
 rppal = "0.8.0"
-simd = { version = "0.2.0", optional = true }
+packed_simd = { version = "0.3.3", optional = true }
 mono_display = "*"
 
 [profile.release]

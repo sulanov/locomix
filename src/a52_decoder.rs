@@ -408,12 +408,12 @@ impl Drop for A52Decoder {
 
 #[cfg(test)]
 mod tests {
-    use a52_decoder;
+    use super::*;
     use std::fs;
     use std::io::Read;
 
     fn test_file(file: &str, samples_min: usize, samples_max: usize) {
-        let mut dec = a52_decoder::A52Decoder::new();
+        let mut dec = A52Decoder::new();
         let mut file = fs::File::open(file).expect(format!("Failed to open {}", file).as_str());
 
         let mut samples_out = 0;

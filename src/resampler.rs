@@ -570,7 +570,7 @@ impl StreamResampler {
 
 #[cfg(test)]
 mod tests {
-    use resampler;
+    use super::*;
     use std::time::Instant;
 
     fn val(i: usize, rate: usize, freq: f64) -> f64 {
@@ -595,7 +595,7 @@ mod tests {
             buf.push(v as f32);
         }
 
-        let mut factory = resampler::ResamplerFactory::new(24);
+        let mut factory = ResamplerFactory::new(24);
         let mut r = factory.create_resampler(irate as f64, orate as f64);
         let mut out = Vec::new();
 

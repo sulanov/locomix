@@ -794,7 +794,7 @@ pub fn load_biquad_config(filename: &str) -> Result<MultiBiquadParams> {
 
 #[cfg(test)]
 mod tests {
-    use filters;
+    use super::*;
 
     #[test]
     fn test_parse_biquad_config() {
@@ -810,12 +810,12 @@ b1=0.0,
 b2=0.0,
 a1=0.0,
 a2=0.0";
-        let params = filters::parse_biquad_config(text.to_owned()).unwrap();
+        let params = parse_biquad_config(text.to_owned()).unwrap();
         assert!(params.len() == 1);
         assert!(params[0].b0 == 1.0023810711050223);
         assert!(params[0].b1 == -1.9968421156220293);
         assert!(params[0].b2 == 0.9944879025811898);
-        assert!(params[0].a1 == 1.9968534162959661);
-        assert!(params[0].a2 == -0.9968576730122751);
+        assert!(params[0].a1 == -1.9968534162959661);
+        assert!(params[0].a2 == 0.9968576730122751);
     }
 }
