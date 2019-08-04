@@ -384,8 +384,8 @@ pub struct MultichannelFirFilter {
 impl MultichannelFirFilter {
     pub fn new_pair(left: FirFilterParams, right: FirFilterParams) -> MultichannelFirFilter {
         let mut params = PerChannel::new();
-        params.set(ChannelPos::FL, left);
-        params.set(ChannelPos::FR, right);
+        params.set(CHANNEL_FL, left);
+        params.set(CHANNEL_FR, right);
         return MultichannelFirFilter::new(params);
     }
 
@@ -644,24 +644,24 @@ impl CrossfeedFilter {
 
         let delay = (CROSSFEED_DELAY * frame.sample_rate as f32 / 1000.0) as usize;
 
-        frame.ensure_channel(ChannelPos::FL);
-        frame.ensure_channel(ChannelPos::FR);
+        frame.ensure_channel(CHANNEL_FL);
+        frame.ensure_channel(CHANNEL_FR);
 
         CrossfeedFilter::crossfeed(
-            out.ensure_channel(ChannelPos::FL),
-            frame.get_channel(ChannelPos::FL).unwrap(),
-            frame.get_channel(ChannelPos::FR).unwrap(),
-            self.previous.ensure_channel(ChannelPos::FR),
+            out.ensure_channel(CHANNEL_FL),
+            frame.get_channel(CHANNEL_FL).unwrap(),
+            frame.get_channel(CHANNEL_FR).unwrap(),
+            self.previous.ensure_channel(CHANNEL_FR),
             delay,
             &mut self.left_straight_filter,
             &mut self.left_cross_filter,
         );
 
         CrossfeedFilter::crossfeed(
-            out.ensure_channel(ChannelPos::FR),
-            frame.get_channel(ChannelPos::FR).unwrap(),
-            frame.get_channel(ChannelPos::FL).unwrap(),
-            self.previous.ensure_channel(ChannelPos::FL),
+            out.ensure_channel(CHANNEL_FR),
+            frame.get_channel(CHANNEL_FR).unwrap(),
+            frame.get_channel(CHANNEL_FL).unwrap(),
+            self.previous.ensure_channel(CHANNEL_FL),
             delay,
             &mut self.right_straight_filter,
             &mut self.right_cross_filter,

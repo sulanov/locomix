@@ -618,7 +618,7 @@ impl CompositeOutput {
     pub fn add_device(&mut self, channel_map: Vec<ChannelPos>, out: Box<dyn Output>) {
         let mut unique_channels: Vec<ChannelPos> = vec![];
         for c in channel_map.iter() {
-            if *c != ChannelPos::Other && !unique_channels.contains(&c) {
+            if *c != CHANNEL_UNDEFINED && !unique_channels.contains(&c) {
                 unique_channels.push(*c);
                 *self.num_outs.get_or_insert(*c, || 0) += 1;
             }

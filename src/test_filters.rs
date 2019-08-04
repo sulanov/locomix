@@ -15,7 +15,7 @@ use std::fs;
 fn get_filter_response<F: StreamFilter>(f: &mut F, sample_rate: f64, freq: f64) -> f64 {
     let mut test_signal = Frame::new(sample_rate, time::Time::now(), 2 * sample_rate as usize);
     {
-        let pcm = test_signal.ensure_channel(ChannelPos::FL);
+        let pcm = test_signal.ensure_channel(CHANNEL_FL);
         for i in 0..pcm.len() {
             pcm[i] = (i as f64 / sample_rate * freq * 2.0 * PI).sin() as f32;
         }
@@ -25,7 +25,7 @@ fn get_filter_response<F: StreamFilter>(f: &mut F, sample_rate: f64, freq: f64) 
 
     let mut p_sum = 0.0f64;
     {
-        let pcm = response.get_channel(ChannelPos::FL).unwrap();
+        let pcm = response.get_channel(CHANNEL_FL).unwrap();
         for i in (pcm.len() / 2)..pcm.len() {
             p_sum += (pcm[i] as f64).powi(2);
         }
@@ -47,13 +47,13 @@ fn get_crossfeed_response(sample_rate: f64, freq: f64) -> f64 {
     let mut f = CrossfeedFilter::new(sample_rate);
     let mut test_signal = Frame::new(sample_rate, time::Time::now(), (sample_rate as usize) * 2);
     {
-        let pcm = test_signal.ensure_channel(ChannelPos::FL);
+        let pcm = test_signal.ensure_channel(CHANNEL_FL);
         for i in 0..pcm.len() {
             pcm[i] = (i as f64 / sample_rate * freq * 2.0 * PI).sin() as f32;
         }
     }
     {
-        let pcm = test_signal.ensure_channel(ChannelPos::FR);
+        let pcm = test_signal.ensure_channel(CHANNEL_FR);
         for i in 0..pcm.len() {
             pcm[i] = (i as f64 / sample_rate * freq * 2.0 * PI).sin() as f32;
         }
@@ -62,7 +62,7 @@ fn get_crossfeed_response(sample_rate: f64, freq: f64) -> f64 {
 
     let mut p_sum = 0.0;
     {
-        let pcm = response.get_channel(ChannelPos::FL).unwrap();
+        let pcm = response.get_channel(CHANNEL_FL).unwrap();
         for i in 0..response.len() {
             p_sum += (pcm[i] as f64).powi(2);
         }
@@ -152,7 +152,7 @@ fn run() -> Result<()> {
     for filename in matches.opt_strs("F") {
         println!("Brute FIR filter {}", filename);
         let mut f = PerChannel::new();
-        f.set(ChannelPos::FL, filename.clone());
+        f.set(CHANNEL_FL, filename.clone());
         draw_filter_graph(
             sample_rate,
             BruteFir::new(
@@ -165,14 +165,14 @@ fn run() -> Result<()> {
 
         println!("FIR filter {}", filename);
         let mut filters = PerChannel::new();
-        filters.set(ChannelPos::FL, load_fir_params(&filename, filter_length)?);
+        filters.set(CHANNEL_FL, load_fir_params(&filename, filter_length)?);
         draw_filter_graph(sample_rate, MultichannelFirFilter::new(filters));
     }
 
     for filename in matches.opt_strs("b") {
         println!("FIR filter {}", filename);
         let mut filters = PerChannel::new();
-        filters.set(ChannelPos::FL, load_biquad_config(&filename)?);
+        filters.set(CHANNEL_FL, load_biquad_config(&filename)?);
         draw_filter_graph(
             sample_rate,
             PerChannelFilter::<MultiBiquadFilter>::new(filters),

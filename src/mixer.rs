@@ -345,8 +345,8 @@ pub fn run_mixer_loop(
             state::StreamState::Active => {
                 let stream_info_packet = state::StreamInfoPacket {
                     time: frame.timestamp,
-                    left: get_stream_stats(frame.get_channel(ChannelPos::FL)),
-                    right: get_stream_stats(frame.get_channel(ChannelPos::FR)),
+                    left: get_stream_stats(frame.get_channel(CHANNEL_FL)),
+                    right: get_stream_stats(frame.get_channel(CHANNEL_FR)),
                 };
                 {
                     let mut stream_info = shared_stream_state.lock();

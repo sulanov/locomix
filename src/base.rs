@@ -53,32 +53,24 @@ impl SampleFormat {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Ord, PartialOrd)]
-pub enum ChannelPos {
-    Other = -1,
-    FL = 0,
-    FR = 1,
-    FC = 2,
-    SL = 3,
-    SR = 4,
-    SC = 5,
-    Sub = 6,
-}
+pub type ChannelPos = u8;
 
-const CHANNEL_MAX: usize = 7;
-const ALL_CHANNEL: [ChannelPos; CHANNEL_MAX] = [
-    ChannelPos::FL,
-    ChannelPos::FR,
-    ChannelPos::FC,
-    ChannelPos::SL,
-    ChannelPos::SR,
-    ChannelPos::SC,
-    ChannelPos::Sub,
-];
+pub const CHANNEL_UNDEFINED: ChannelPos = 255;
+pub const CHANNEL_FL: ChannelPos = 0;
+pub const CHANNEL_FR: ChannelPos = 1;
+pub const CHANNEL_FC: ChannelPos = 2;
+pub const CHANNEL_SL: ChannelPos = 3;
+pub const CHANNEL_SR: ChannelPos = 4;
+pub const CHANNEL_SC: ChannelPos = 5;
+pub const CHANNEL_LFE: ChannelPos = 7;
+
+pub const CHANNEL_MAX: ChannelPos = 20;
+
+pub const NUM_CHANNEL_MAX: usize = CHANNEL_MAX as usize;
 
 #[derive(Clone)]
 pub struct PerChannel<T> {
-    values: [Option<T>; CHANNEL_MAX],
+    values: [Option<T>; NUM_CHANNEL_MAX],
 }
 
 pub struct ChannelIter<'a, T: 'a> {
@@ -96,27 +88,27 @@ impl<'a, T> ChannelIter<'a, T> {
 impl<T> PerChannel<T> {
     pub fn new() -> PerChannel<T> {
         PerChannel {
-            values: [None, None, None, None, None, None, None],
+            values: Default::default(),
         }
     }
 
     pub fn get(&self, c: ChannelPos) -> Option<&T> {
-        assert!(c != ChannelPos::Other);
+        assert!(c < CHANNEL_MAX);
         self.values[c as usize].as_ref()
     }
 
     pub fn get_mut(&mut self, c: ChannelPos) -> Option<&mut T> {
-        assert!(c != ChannelPos::Other);
+        assert!(c < CHANNEL_MAX);
         self.values[c as usize].as_mut()
     }
 
     pub fn take(&mut self, c: ChannelPos) -> Option<T> {
-        assert!(c != ChannelPos::Other);
+        assert!(c < CHANNEL_MAX);
         self.values[c as usize].take()
     }
 
     pub fn get_or_insert<F: FnOnce() -> T>(&mut self, c: ChannelPos, default: F) -> &mut T {
-        assert!(c != ChannelPos::Other);
+        assert!(c < CHANNEL_MAX);
         if !self.have_channel(c) {
             self.values[c as usize] = Some(default());
         }
@@ -124,12 +116,12 @@ impl<T> PerChannel<T> {
     }
 
     pub fn have_channel(&self, c: ChannelPos) -> bool {
-        assert!(c != ChannelPos::Other);
+        assert!(c < CHANNEL_MAX);
         self.values[c as usize].is_some()
     }
 
     pub fn set(&mut self, c: ChannelPos, v: T) {
-        assert!(c != ChannelPos::Other);
+        assert!(c < CHANNEL_MAX);
         self.values[c as usize] = Some(v)
     }
 
@@ -138,7 +130,7 @@ impl<T> PerChannel<T> {
     }
 
     pub fn clear(&mut self) {
-        self.values = [None, None, None, None, None, None, None];
+        self.values = Default::default();
     }
 }
 
@@ -153,7 +145,7 @@ impl<'a, T> Iterator for ChannelIter<'a, T> {
                     if v.is_none() {
                         continue;
                     } else {
-                        return v.as_mut().map(|v| (ALL_CHANNEL[i], v));
+                        return v.as_mut().map(|v| (i as ChannelPos, v));
                     }
                 }
             }
@@ -513,9 +505,12 @@ impl Frame {
         let multiplier = self.gain.get_multiplier();
         let mut buf = vec![0; bytes_per_frame * self.len()];
         for c in 0..out_channels.len() {
-            if out_channels[c] == ChannelPos::Other {
+            if out_channels[c] == CHANNEL_UNDEFINED {
                 continue;
             }
+
+            assert!(out_channels[c] < CHANNEL_MAX);
+
             let data = match self.channels.get(out_channels[c]) {
                 Some(data) => data,
                 None => continue,
@@ -578,7 +573,7 @@ impl Frame {
         Frame::from_buffer(
             format,
             sample_rate,
-            &[ChannelPos::FL, ChannelPos::FR],
+            &[CHANNEL_FL, CHANNEL_FR],
             buffer,
             timestamp,
         )
@@ -859,7 +854,7 @@ mod tests {
 
         let frame = Frame::from_buffer_stereo(SampleFormat::S16LE, 44100.0, &buf[..], Time::now());
         let buf2 = frame
-            .to_buffer_with_channel_map(SampleFormat::S16LE, &[ChannelPos::FL, ChannelPos::FR]);
+            .to_buffer_with_channel_map(SampleFormat::S16LE, &[CHANNEL_FL, CHANNEL_FR]);
 
         assert_eq!(buf.len(), buf2.len());
         for i in 0..buf.len() {
@@ -870,11 +865,11 @@ mod tests {
     #[test]
     fn clamping() {
         let mut frame = Frame::new(100.0, Time::now(), 1);
-        frame.ensure_channel(ChannelPos::FL)[0] = 1.5;
-        frame.ensure_channel(ChannelPos::FR)[0] = -1.5;
+        frame.ensure_channel(CHANNEL_FL)[0] = 1.5;
+        frame.ensure_channel(CHANNEL_FR)[0] = -1.5;
 
         let buf16 = frame
-            .to_buffer_with_channel_map(SampleFormat::S16LE, &[ChannelPos::FL, ChannelPos::FR]);
+            .to_buffer_with_channel_map(SampleFormat::S16LE, &[CHANNEL_FL, CHANNEL_FR]);
 
         // 32767
         assert_eq!(buf16[0], 0xff);
@@ -885,7 +880,7 @@ mod tests {
         assert_eq!(buf16[3], 0x80);
 
         let buf24 = frame
-            .to_buffer_with_channel_map(SampleFormat::S24LE3, &[ChannelPos::FL, ChannelPos::FR]);
+            .to_buffer_with_channel_map(SampleFormat::S24LE3, &[CHANNEL_FL, CHANNEL_FR]);
 
         assert_eq!(buf24[0], 0xff);
         assert_eq!(buf24[1], 0xff);
@@ -896,7 +891,7 @@ mod tests {
         assert_eq!(buf24[5], 0x80);
 
         let buf32 = frame
-            .to_buffer_with_channel_map(SampleFormat::S32LE, &[ChannelPos::FL, ChannelPos::FR]);
+            .to_buffer_with_channel_map(SampleFormat::S32LE, &[CHANNEL_FL, CHANNEL_FR]);
 
         assert_eq!(buf32[0], 0xff);
         assert_eq!(buf32[1], 0xff);

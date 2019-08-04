@@ -19,7 +19,7 @@ impl CrossoverFilter {
         let frequency = self.frequency;
         let sample_rate = frame.sample_rate;
         for (c, pcm) in frame.iter_channels() {
-            if c == ChannelPos::Sub {
+            if c == CHANNEL_LFE {
                 continue;
             }
 
@@ -38,7 +38,7 @@ impl CrossoverFilter {
                 .apply_multi(pcm);
         }
 
-        let filter = self.channels.get_or_insert(ChannelPos::Sub, || {
+        let filter = self.channels.get_or_insert(CHANNEL_LFE, || {
             CascadingFilter::new(&BiquadParams::low_pass_filter(
                 frame.sample_rate as BqCoef,
                 frequency as BqCoef,
@@ -48,7 +48,7 @@ impl CrossoverFilter {
 
         filter.apply_multi(&mut bass[..]);
 
-        frame.mix_channel(ChannelPos::Sub, bass, 1.0 / SUBWOOFER_LEVEL);
+        frame.mix_channel(CHANNEL_LFE, bass, 1.0 / SUBWOOFER_LEVEL);
 
         frame
     }

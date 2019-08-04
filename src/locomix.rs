@@ -148,14 +148,14 @@ struct Config {
 
 fn parse_channel_id(id: String) -> Result<base::ChannelPos, RunError> {
     match id.to_uppercase().as_str() {
-        "L" | "FL" | "LEFT" => Ok(base::ChannelPos::FL),
-        "R" | "FR" | "RIGHT" => Ok(base::ChannelPos::FR),
-        "C" | "FC" | "CENTER" | "CENTRE" => Ok(base::ChannelPos::FC),
-        "SL" | "SURROUND_LEFT" => Ok(base::ChannelPos::SL),
-        "SR" | "SURROUND_RIGHT" => Ok(base::ChannelPos::SR),
-        "SC" | "SURROUND" | "SURROUND_CENTER" | "SURROUND_CENTRE" => Ok(base::ChannelPos::SC),
-        "S" | "B" | "SUB" | "LFE" => Ok(base::ChannelPos::Sub),
-        "_" => Ok(base::ChannelPos::Other),
+        "L" | "FL" | "LEFT" => Ok(base::CHANNEL_FL),
+        "R" | "FR" | "RIGHT" => Ok(base::CHANNEL_FR),
+        "C" | "FC" | "CENTER" | "CENTRE" => Ok(base::CHANNEL_FC),
+        "SL" | "SURROUND_LEFT" => Ok(base::CHANNEL_SL),
+        "SR" | "SURROUND_RIGHT" => Ok(base::CHANNEL_SR),
+        "SC" | "SURROUND" | "SURROUND_CENTER" | "SURROUND_CENTRE" => Ok(base::CHANNEL_SC),
+        "S" | "B" | "SUB" | "LFE" => Ok(base::CHANNEL_LFE),
+        "_" => Ok(base::CHANNEL_UNDEFINED),
         _ => Err(RunError::new(
             format!("Invalid channel id: {}", id).as_str(),
         )),
@@ -466,12 +466,12 @@ fn run() -> Result<(), RunError> {
         let mut channels = base::PerChannel::new();
         for d in devices.iter() {
             for c in d.0.channels.iter() {
-                if *c != base::ChannelPos::Other {
+                if *c != base::CHANNEL_UNDEFINED {
                     channels.set(*c, true);
                 }
             }
         }
-        let have_subwoofer = channels.get(base::ChannelPos::Sub) == Some(&true);
+        let have_subwoofer = channels.get(base::CHANNEL_LFE) == Some(&true);
 
         let mut out = output::CompositeOutput::new();
         for (spec, volume) in devices {

@@ -64,79 +64,79 @@ const SPDIF_PAUSE: u8 = 3;
 
 type ChannelMap = &'static [base::ChannelPos];
 
-static CHMAP_MONO: ChannelMap = &[base::ChannelPos::FC];
-static CHMAP_MONO_LFE: ChannelMap = &[base::ChannelPos::Sub, base::ChannelPos::FC];
+static CHMAP_MONO: ChannelMap = &[base::CHANNEL_FC];
+static CHMAP_MONO_LFE: ChannelMap = &[base::CHANNEL_LFE, base::CHANNEL_FC];
 
-static CHMAP_STEREO: ChannelMap = &[base::ChannelPos::FL, base::ChannelPos::FR];
+static CHMAP_STEREO: ChannelMap = &[base::CHANNEL_FL, base::CHANNEL_FR];
 static CHMAP_STEREO_LFE: ChannelMap = &[
-    base::ChannelPos::Sub,
-    base::ChannelPos::FL,
-    base::ChannelPos::FR,
+    base::CHANNEL_LFE,
+    base::CHANNEL_FL,
+    base::CHANNEL_FR,
 ];
 
 static CHMAP_3F: ChannelMap = &[
-    base::ChannelPos::FL,
-    base::ChannelPos::FC,
-    base::ChannelPos::FR,
+    base::CHANNEL_FL,
+    base::CHANNEL_FC,
+    base::CHANNEL_FR,
 ];
 static CHMAP_3F_LFE: ChannelMap = &[
-    base::ChannelPos::Sub,
-    base::ChannelPos::FL,
-    base::ChannelPos::FC,
-    base::ChannelPos::FR,
+    base::CHANNEL_LFE,
+    base::CHANNEL_FL,
+    base::CHANNEL_FC,
+    base::CHANNEL_FR,
 ];
 
 static CHMAP_2F1R: ChannelMap = &[
-    base::ChannelPos::FL,
-    base::ChannelPos::FR,
-    base::ChannelPos::SC,
+    base::CHANNEL_FL,
+    base::CHANNEL_FR,
+    base::CHANNEL_SC,
 ];
 static CHMAP_2F1R_LFE: ChannelMap = &[
-    base::ChannelPos::Sub,
-    base::ChannelPos::FL,
-    base::ChannelPos::FR,
-    base::ChannelPos::SC,
+    base::CHANNEL_LFE,
+    base::CHANNEL_FL,
+    base::CHANNEL_FR,
+    base::CHANNEL_SC,
 ];
 static CHMAP_3F1R: ChannelMap = &[
-    base::ChannelPos::FL,
-    base::ChannelPos::FC,
-    base::ChannelPos::FR,
-    base::ChannelPos::SC,
+    base::CHANNEL_FL,
+    base::CHANNEL_FC,
+    base::CHANNEL_FR,
+    base::CHANNEL_SC,
 ];
 static CHMAP_3F1R_LFE: ChannelMap = &[
-    base::ChannelPos::Sub,
-    base::ChannelPos::FL,
-    base::ChannelPos::FC,
-    base::ChannelPos::FR,
-    base::ChannelPos::SC,
+    base::CHANNEL_LFE,
+    base::CHANNEL_FL,
+    base::CHANNEL_FC,
+    base::CHANNEL_FR,
+    base::CHANNEL_SC,
 ];
 static CHMAP_2F2R: ChannelMap = &[
-    base::ChannelPos::FL,
-    base::ChannelPos::FR,
-    base::ChannelPos::SL,
-    base::ChannelPos::SR,
+    base::CHANNEL_FL,
+    base::CHANNEL_FR,
+    base::CHANNEL_SL,
+    base::CHANNEL_SR,
 ];
 static CHMAP_2F2R_LFE: ChannelMap = &[
-    base::ChannelPos::Sub,
-    base::ChannelPos::FL,
-    base::ChannelPos::FR,
-    base::ChannelPos::SL,
-    base::ChannelPos::SR,
+    base::CHANNEL_LFE,
+    base::CHANNEL_FL,
+    base::CHANNEL_FR,
+    base::CHANNEL_SL,
+    base::CHANNEL_SR,
 ];
 static CHMAP_3F2R: ChannelMap = &[
-    base::ChannelPos::FL,
-    base::ChannelPos::FC,
-    base::ChannelPos::FR,
-    base::ChannelPos::SL,
-    base::ChannelPos::SR,
+    base::CHANNEL_FL,
+    base::CHANNEL_FC,
+    base::CHANNEL_FR,
+    base::CHANNEL_SL,
+    base::CHANNEL_SR,
 ];
 static CHMAP_3F2R_LFE: ChannelMap = &[
-    base::ChannelPos::Sub,
-    base::ChannelPos::FL,
-    base::ChannelPos::FC,
-    base::ChannelPos::FR,
-    base::ChannelPos::SL,
-    base::ChannelPos::SR,
+    base::CHANNEL_LFE,
+    base::CHANNEL_FL,
+    base::CHANNEL_FC,
+    base::CHANNEL_FR,
+    base::CHANNEL_SL,
+    base::CHANNEL_SR,
 ];
 
 // Each frame contains 6 parts, 256 samples for each frame.

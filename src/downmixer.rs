@@ -39,30 +39,30 @@ impl Downmixer {
     pub fn process(&self, mut frame: Frame) -> Frame {
         self.downmix_channel(
             &mut frame,
-            ChannelPos::Sub,
+            CHANNEL_LFE,
             &[
-                (ChannelPos::FL, 0.5 * SUBWOOFER_LEVEL),
-                (ChannelPos::FL, 0.5 * SUBWOOFER_LEVEL),
+                (CHANNEL_FL, 0.5 * SUBWOOFER_LEVEL),
+                (CHANNEL_FL, 0.5 * SUBWOOFER_LEVEL),
             ],
         );
         self.downmix_channel(
             &mut frame,
-            ChannelPos::FC,
-            &[(ChannelPos::FL, 0.5), (ChannelPos::FR, 0.5)],
+            CHANNEL_FC,
+            &[(CHANNEL_FL, 0.5), (CHANNEL_FR, 0.5)],
         );
-        self.downmix_channel(&mut frame, ChannelPos::SL, &[(ChannelPos::FL, 1.0)]);
-        self.downmix_channel(&mut frame, ChannelPos::SR, &[(ChannelPos::FR, 1.0)]);
-        if self.have_channel(ChannelPos::SL) && self.have_channel(ChannelPos::SR) {
+        self.downmix_channel(&mut frame, CHANNEL_SL, &[(CHANNEL_FL, 1.0)]);
+        self.downmix_channel(&mut frame, CHANNEL_SR, &[(CHANNEL_FR, 1.0)]);
+        if self.have_channel(CHANNEL_SL) && self.have_channel(CHANNEL_SR) {
             self.downmix_channel(
                 &mut frame,
-                ChannelPos::SC,
-                &[(ChannelPos::SL, 0.5), (ChannelPos::SR, 0.5)],
+                CHANNEL_SC,
+                &[(CHANNEL_SL, 0.5), (CHANNEL_SR, 0.5)],
             );
         } else {
             self.downmix_channel(
                 &mut frame,
-                ChannelPos::SC,
-                &[(ChannelPos::FL, 0.5), (ChannelPos::FR, 0.5)],
+                CHANNEL_SC,
+                &[(CHANNEL_FL, 0.5), (CHANNEL_FR, 0.5)],
             );
         }
         frame
