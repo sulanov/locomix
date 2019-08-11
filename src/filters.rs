@@ -10,16 +10,20 @@ use std::thread;
 pub type BqCoef = f64;
 pub type FirCoef = f32;
 
-pub trait AudioFilter<T> {
-    type Params: Clone + Send;
-    fn new(params: &Self::Params) -> T;
-    fn set_params(&mut self, params: &Self::Params);
+pub trait AudioFilter: Send {
     fn apply_one(&mut self, sample: f32) -> f32;
     fn apply_multi(&mut self, buffer: &mut [f32]) {
         for i in 0..buffer.len() {
             buffer[i] = self.apply_one(buffer[i]);
         }
     }
+    fn reset(&mut self);
+}
+
+pub trait AudioFilterWithParams<T> {
+    type Params: Clone + Send;
+    fn new(params: &Self::Params) -> T;
+    fn set_params(&mut self, params: &Self::Params);
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -138,7 +142,7 @@ pub struct BiquadFilter {
     z2: BqCoef,
 }
 
-impl AudioFilter<BiquadFilter> for BiquadFilter {
+impl AudioFilterWithParams<BiquadFilter> for BiquadFilter {
     type Params = BiquadParams;
 
     fn new(params: &BiquadParams) -> BiquadFilter {
@@ -154,7 +158,9 @@ impl AudioFilter<BiquadFilter> for BiquadFilter {
     fn set_params(&mut self, params: &BiquadParams) {
         self.p = *params;
     }
+}
 
+impl AudioFilter for BiquadFilter {
     fn apply_one(&mut self, x0: f32) -> f32 {
         let x0 = x0 as BqCoef;
         let z0 = self.p.b0 * x0 + self.p.b1 * self.x1 + self.p.b2 * self.x2
@@ -165,6 +171,12 @@ impl AudioFilter<BiquadFilter> for BiquadFilter {
         self.x2 = self.x1;
         self.x1 = x0;
         z0 as f32
+    }
+    fn reset(&mut self) {
+        self.x1 = 0.0;
+        self.x2 = 0.0;
+        self.z1 = 0.0;
+        self.z2 = 0.0;
     }
 }
 
@@ -183,7 +195,7 @@ impl SimpleFilterParams {
     }
 }
 
-pub trait FilterPairConfig {
+pub trait FilterPairConfig: Send {
     type Impl: FilterPairConfig;
     fn new(p: &SimpleFilterParams) -> Self::Impl;
     fn set_params(&mut self, p: &SimpleFilterParams);
@@ -197,7 +209,7 @@ pub struct FilterPair<C: FilterPairConfig> {
     config: C::Impl,
 }
 
-impl<C: FilterPairConfig> AudioFilter<FilterPair<C>> for FilterPair<C> {
+impl<C: FilterPairConfig> AudioFilterWithParams<FilterPair<C>> for FilterPair<C> {
     type Params = SimpleFilterParams;
 
     fn new(params: &Self::Params) -> FilterPair<C> {
@@ -215,9 +227,15 @@ impl<C: FilterPairConfig> AudioFilter<FilterPair<C>> for FilterPair<C> {
         self.filter1.set_params(&self.config.get_filter1_params());
         self.filter2.set_params(&self.config.get_filter2_params());
     }
+}
 
+impl<C: FilterPairConfig> AudioFilter for FilterPair<C> {
     fn apply_one(&mut self, sample: f32) -> f32 {
         self.filter2.apply_one(self.filter1.apply_one(sample))
+    }
+    fn reset(&mut self) {
+        self.filter1.reset();
+        self.filter2.reset();
     }
 }
 
@@ -266,7 +284,7 @@ impl BassBoostFilter {
     }
 }
 
-impl AudioFilter<BassBoostFilter> for BassBoostFilter {
+impl AudioFilterWithParams<BassBoostFilter> for BassBoostFilter {
     type Params = SimpleFilterParams;
 
     fn new(params: &Self::Params) -> Self {
@@ -275,11 +293,17 @@ impl AudioFilter<BassBoostFilter> for BassBoostFilter {
     fn set_params(&mut self, params: &Self::Params) {
         self.0.set_params(&Self::get_biquad_params(params))
     }
+}
+
+impl AudioFilter for BassBoostFilter {
     fn apply_one(&mut self, sample: f32) -> f32 {
         self.0.apply_one(sample)
     }
     fn apply_multi(&mut self, buffer: &mut [f32]) {
         self.0.apply_multi(buffer)
+    }
+    fn reset(&mut self) {
+        self.0.reset()
     }
 }
 
@@ -288,12 +312,12 @@ pub trait StreamFilter: Send {
     fn reset(&mut self);
 }
 
-pub struct MultichannelFilter<T: AudioFilter<T>> {
+pub struct MultichannelFilter<T: AudioFilterWithParams<T>> {
     params: T::Params,
     filters: PerChannel<T>,
 }
 
-impl<T: AudioFilter<T>> MultichannelFilter<T> {
+impl<T: AudioFilterWithParams<T>> MultichannelFilter<T> {
     pub fn new(params: T::Params) -> MultichannelFilter<T> {
         MultichannelFilter {
             params: params,
@@ -309,7 +333,7 @@ impl<T: AudioFilter<T>> MultichannelFilter<T> {
     }
 }
 
-impl<T: AudioFilter<T> + Send> StreamFilter for MultichannelFilter<T> {
+impl<T: AudioFilter + AudioFilterWithParams<T> + Send> StreamFilter for MultichannelFilter<T> {
     fn apply(&mut self, mut frame: Frame) -> Frame {
         for (c, pcm) in frame.iter_channels() {
             if !self.filters.have_channel(c) {
@@ -326,12 +350,12 @@ impl<T: AudioFilter<T> + Send> StreamFilter for MultichannelFilter<T> {
     }
 }
 
-pub struct PerChannelFilter<T: AudioFilter<T>> {
+pub struct PerChannelFilter<T: AudioFilterWithParams<T>> {
     params: PerChannel<T::Params>,
     filters: PerChannel<T>,
 }
 
-impl<T: AudioFilter<T> + Send> PerChannelFilter<T> {
+impl<T: AudioFilter + AudioFilterWithParams<T> + Send> PerChannelFilter<T> {
     pub fn new(params: PerChannel<T::Params>) -> PerChannelFilter<T> {
         let mut result = PerChannelFilter {
             params: params,
@@ -347,7 +371,7 @@ impl<T: AudioFilter<T> + Send> PerChannelFilter<T> {
     }
 }
 
-impl<T: AudioFilter<T> + Send> StreamFilter for PerChannelFilter<T> {
+impl<T: AudioFilter + AudioFilterWithParams<T> + Send> StreamFilter for PerChannelFilter<T> {
     fn apply(&mut self, mut frame: Frame) -> Frame {
         for (c, f) in self.filters.iter() {
             match frame.get_channel_mut(c) {
@@ -516,7 +540,7 @@ impl FirFilter {
     }
 }
 
-impl AudioFilter<FirFilter> for FirFilter {
+impl AudioFilterWithParams<FirFilter> for FirFilter {
     type Params = FirFilterParams;
 
     fn new(params: &FirFilterParams) -> FirFilter {
@@ -536,7 +560,9 @@ impl AudioFilter<FirFilter> for FirFilter {
         self.buffer_pos = 0;
         self.window_size = size;
     }
+}
 
+impl AudioFilter for FirFilter {
     fn apply_one(&mut self, x0: f32) -> f32 {
         self.buffer_pos = (self.buffer_pos + self.buffer.len() - 1) % self.buffer.len();
         self.buffer[self.buffer_pos] = x0;
@@ -556,6 +582,10 @@ impl AudioFilter<FirFilter> for FirFilter {
                 &self.params.coefficients[p1_size..self.window_size],
             )
         }
+    }
+
+    fn reset(&mut self) {
+        self.buffer = vec![0.0; self.params.coefficients.len()];
     }
 }
 
@@ -678,7 +708,7 @@ pub struct CascadingFilter {
     filter_2: BiquadFilter,
 }
 
-impl AudioFilter<CascadingFilter> for CascadingFilter {
+impl AudioFilterWithParams<CascadingFilter> for CascadingFilter {
     type Params = BiquadParams;
 
     fn new(params: &BiquadParams) -> CascadingFilter {
@@ -692,9 +722,15 @@ impl AudioFilter<CascadingFilter> for CascadingFilter {
         self.filter_1.set_params(params);
         self.filter_2.set_params(params);
     }
+}
 
+impl AudioFilter for CascadingFilter {
     fn apply_one(&mut self, sample: f32) -> f32 {
         self.filter_2.apply_one(self.filter_1.apply_one(sample))
+    }
+    fn reset(&mut self) {
+        self.filter_1.reset();
+        self.filter_2.reset();
     }
 }
 
@@ -704,7 +740,7 @@ pub struct MultiBiquadFilter {
     filters: Vec<BiquadFilter>,
 }
 
-impl AudioFilter<MultiBiquadFilter> for MultiBiquadFilter {
+impl AudioFilterWithParams<MultiBiquadFilter> for MultiBiquadFilter {
     type Params = MultiBiquadParams;
 
     fn new(params: &Self::Params) -> MultiBiquadFilter {
@@ -729,7 +765,9 @@ impl AudioFilter<MultiBiquadFilter> for MultiBiquadFilter {
             self.filters.truncate(params.len());
         }
     }
+}
 
+impl AudioFilter for MultiBiquadFilter {
     fn apply_one(&mut self, mut sample: f32) -> f32 {
         for f in self.filters.iter_mut() {
             sample = f.apply_one(sample);
@@ -740,6 +778,12 @@ impl AudioFilter<MultiBiquadFilter> for MultiBiquadFilter {
     fn apply_multi(&mut self, buffer: &mut [f32]) {
         for f in self.filters.iter_mut() {
             f.apply_multi(buffer);
+        }
+    }
+
+    fn reset(&mut self) {
+        for f in self.filters.iter_mut() {
+            f.reset();
         }
     }
 }

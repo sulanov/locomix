@@ -68,17 +68,9 @@ static CHMAP_MONO: ChannelMap = &[base::CHANNEL_FC];
 static CHMAP_MONO_LFE: ChannelMap = &[base::CHANNEL_LFE, base::CHANNEL_FC];
 
 static CHMAP_STEREO: ChannelMap = &[base::CHANNEL_FL, base::CHANNEL_FR];
-static CHMAP_STEREO_LFE: ChannelMap = &[
-    base::CHANNEL_LFE,
-    base::CHANNEL_FL,
-    base::CHANNEL_FR,
-];
+static CHMAP_STEREO_LFE: ChannelMap = &[base::CHANNEL_LFE, base::CHANNEL_FL, base::CHANNEL_FR];
 
-static CHMAP_3F: ChannelMap = &[
-    base::CHANNEL_FL,
-    base::CHANNEL_FC,
-    base::CHANNEL_FR,
-];
+static CHMAP_3F: ChannelMap = &[base::CHANNEL_FL, base::CHANNEL_FC, base::CHANNEL_FR];
 static CHMAP_3F_LFE: ChannelMap = &[
     base::CHANNEL_LFE,
     base::CHANNEL_FL,
@@ -86,11 +78,7 @@ static CHMAP_3F_LFE: ChannelMap = &[
     base::CHANNEL_FR,
 ];
 
-static CHMAP_2F1R: ChannelMap = &[
-    base::CHANNEL_FL,
-    base::CHANNEL_FR,
-    base::CHANNEL_SC,
-];
+static CHMAP_2F1R: ChannelMap = &[base::CHANNEL_FL, base::CHANNEL_FR, base::CHANNEL_SC];
 static CHMAP_2F1R_LFE: ChannelMap = &[
     base::CHANNEL_LFE,
     base::CHANNEL_FL,

@@ -1,12 +1,16 @@
-extern crate byteorder;
-extern crate getopts;
-extern crate locomix;
 #[macro_use]
 extern crate serde_derive;
-extern crate toml;
+
+#[macro_use]
+extern crate pest_derive;
+
+mod filter_expr;
 
 use self::byteorder::{NativeEndian, ReadBytesExt};
+use byteorder;
+use getopts;
 use getopts::Options;
+use locomix;
 use locomix::alsa_input;
 use locomix::async_input;
 use locomix::base;
@@ -32,6 +36,7 @@ use std::env;
 use std::fs;
 use std::io;
 use std::io::Read;
+use toml;
 
 #[global_allocator]
 static ALLOCATOR: System = System;

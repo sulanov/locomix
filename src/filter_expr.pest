@@ -1,0 +1,15 @@
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+letter = @{ 'a'..'z'| 'A'..'Z' }
+name_char = @{ 'a'..'z'| 'A'..'Z' | "_" | '0'..'9' }
+name = @{ letter ~name_char* }
+channel = { name }
+number = @{ "-"? ~ digit+ }
+digit = { '0'..'9' }
+level = { number ~ "db" }
+paren_expr = { "(" ~ expression ~ ")" }
+mult_operand = { filter | channel | paren_expr }
+mult = { level ~ "*" ~ mult_operand }
+sum_operand = { mult | filter | channel | paren_expr }
+sum = { sum_operand ~ ("+" ~ sum_operand)+ }
+filter = { name ~ "(" ~ expression ~ ")" }
+expression = { sum | mult | filter | channel }

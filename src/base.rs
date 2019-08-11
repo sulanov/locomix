@@ -63,10 +63,25 @@ pub const CHANNEL_SL: ChannelPos = 3;
 pub const CHANNEL_SR: ChannelPos = 4;
 pub const CHANNEL_SC: ChannelPos = 5;
 pub const CHANNEL_LFE: ChannelPos = 7;
+pub const CHANNEL_DYNAMIC_BASE: ChannelPos = 8;
 
 pub const CHANNEL_MAX: ChannelPos = 20;
 
 pub const NUM_CHANNEL_MAX: usize = CHANNEL_MAX as usize;
+
+pub fn parse_channel_id(id: &str) -> Option<ChannelPos> {
+    match id {
+        "L" | "left" => Some(CHANNEL_FL),
+        "R" | "right" => Some(CHANNEL_FR),
+        "C" | "center" | "centre" => Some(CHANNEL_FC),
+        "SL" | "surround_left" => Some(CHANNEL_SL),
+        "SR" | "surround_right" => Some(CHANNEL_SR),
+        "SC" | "surround" | "surround_center" | "surround_centre" => Some(CHANNEL_SC),
+        "LFE" => Some(CHANNEL_LFE),
+        "_" => Some(CHANNEL_UNDEFINED),
+        _ => None,
+    }
+}
 
 #[derive(Clone)]
 pub struct PerChannel<T> {
@@ -312,7 +327,7 @@ pub fn get_sample_timestamp(start: Time, sample_rate: f64, sample: i64) -> Time 
     start + samples_to_timedelta(sample_rate, sample)
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct Gain {
     pub db: f32,
 }
@@ -679,6 +694,12 @@ impl From<rppal::gpio::Error> for Error {
     }
 }
 
+impl<R: pest::RuleType> From<pest::error::Error<R>> for Error {
+    fn from(e: pest::error::Error<R>) -> Error {
+        Error::from_string(format!("Failed to parse format expression: {}", e))
+    }
+}
+
 #[derive(Clone, Eq, PartialEq)]
 pub struct DeviceSpec {
     pub name: String,
@@ -853,8 +874,7 @@ mod tests {
         }
 
         let frame = Frame::from_buffer_stereo(SampleFormat::S16LE, 44100.0, &buf[..], Time::now());
-        let buf2 = frame
-            .to_buffer_with_channel_map(SampleFormat::S16LE, &[CHANNEL_FL, CHANNEL_FR]);
+        let buf2 = frame.to_buffer_with_channel_map(SampleFormat::S16LE, &[CHANNEL_FL, CHANNEL_FR]);
 
         assert_eq!(buf.len(), buf2.len());
         for i in 0..buf.len() {
@@ -868,8 +888,8 @@ mod tests {
         frame.ensure_channel(CHANNEL_FL)[0] = 1.5;
         frame.ensure_channel(CHANNEL_FR)[0] = -1.5;
 
-        let buf16 = frame
-            .to_buffer_with_channel_map(SampleFormat::S16LE, &[CHANNEL_FL, CHANNEL_FR]);
+        let buf16 =
+            frame.to_buffer_with_channel_map(SampleFormat::S16LE, &[CHANNEL_FL, CHANNEL_FR]);
 
         // 32767
         assert_eq!(buf16[0], 0xff);
@@ -879,8 +899,8 @@ mod tests {
         assert_eq!(buf16[2], 0x00);
         assert_eq!(buf16[3], 0x80);
 
-        let buf24 = frame
-            .to_buffer_with_channel_map(SampleFormat::S24LE3, &[CHANNEL_FL, CHANNEL_FR]);
+        let buf24 =
+            frame.to_buffer_with_channel_map(SampleFormat::S24LE3, &[CHANNEL_FL, CHANNEL_FR]);
 
         assert_eq!(buf24[0], 0xff);
         assert_eq!(buf24[1], 0xff);
@@ -890,8 +910,8 @@ mod tests {
         assert_eq!(buf24[4], 0x00);
         assert_eq!(buf24[5], 0x80);
 
-        let buf32 = frame
-            .to_buffer_with_channel_map(SampleFormat::S32LE, &[CHANNEL_FL, CHANNEL_FR]);
+        let buf32 =
+            frame.to_buffer_with_channel_map(SampleFormat::S32LE, &[CHANNEL_FL, CHANNEL_FR]);
 
         assert_eq!(buf32[0], 0xff);
         assert_eq!(buf32[1], 0xff);
