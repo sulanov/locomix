@@ -251,7 +251,7 @@ impl StreamFilter for FilterExprProcessor {
             self.threadpool.execute(move || {
                 let mut result = Vec::new();
                 source.apply(&*frame_arc, &mut result);
-                tx.send((channel, source, result));
+                tx.send((channel, source, result)).expect("Failed to send");
             });
         }
         let mut results = Vec::new();

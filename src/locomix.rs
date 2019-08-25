@@ -241,7 +241,7 @@ fn load_biquad_filters(
         None => return Ok(None),
         Some(map) => {
             for (c, f) in map {
-                filters.set(parse_channel_id(c)?, filters::load_biquad_config(&f)?)
+                filters.set(parse_channel_id(c)?, filters::load_biquad_values(&f)?)
             }
         }
     }

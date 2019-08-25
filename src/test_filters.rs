@@ -170,9 +170,9 @@ fn run() -> Result<()> {
     }
 
     for filename in matches.opt_strs("b") {
-        println!("FIR filter {}", filename);
+        println!("biquad filter {}", filename);
         let mut filters = PerChannel::new();
-        filters.set(CHANNEL_FL, load_biquad_config(&filename)?);
+        filters.set(CHANNEL_FL, load_biquad_values(&filename)?);
         draw_filter_graph(
             sample_rate,
             PerChannelFilter::<MultiBiquadFilter>::new(filters),

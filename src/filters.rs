@@ -26,7 +26,7 @@ pub trait AudioFilterWithParams<T> {
     fn set_params(&mut self, params: &Self::Params);
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct BiquadParams {
     b0: BqCoef,
     b1: BqCoef,
@@ -125,6 +125,31 @@ impl BiquadParams {
             -2.0 * w0_cos,
             1.0 - alpha,
         )
+    }
+
+    pub fn peaking_filter(
+        sample_rate: BqCoef,
+        f0: BqCoef,
+        slope: BqCoef,
+        gain_db: BqCoef,
+    ) -> BiquadParams {
+        let w0 = 2.0 * PI * f0 / sample_rate;
+        let w0_cos = w0.cos();
+        let a = (10.0 as BqCoef).powf(gain_db / 40.0);
+        let alpha = w0.sin() / 2.0 * ((a + 1.0 / a) * (1.0 / slope - 1.0) + 2.0).sqrt();
+
+        BiquadParams::new(
+            1.0 + alpha * a,
+            -2.0 * w0_cos,
+            1.0 - alpha * a,
+            1.0 + alpha / a,
+            -2.0 * w0_cos,
+            1.0 - alpha / a,
+        )
+    }
+
+    pub fn identity_filter() -> BiquadParams {
+        BiquadParams::new(1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
     }
 
     pub fn is_identity(&self) -> bool {
@@ -795,7 +820,7 @@ fn parse_param(s: &str, expected_prefix: &str) -> Option<BqCoef> {
     s[expected_prefix.len()..].parse::<BqCoef>().ok()
 }
 
-fn parse_filter_config(parts: &[&str]) -> Option<BiquadParams> {
+fn parse_filter_values(parts: &[&str]) -> Option<BiquadParams> {
     Some(BiquadParams {
         b0: parse_param(parts[1], "b0=")?,
         b1: parse_param(parts[2], "b1=")?,
@@ -805,7 +830,7 @@ fn parse_filter_config(parts: &[&str]) -> Option<BiquadParams> {
     })
 }
 
-pub fn parse_biquad_config(contents: String) -> Option<MultiBiquadParams> {
+pub fn parse_biquad_values(contents: String) -> Option<MultiBiquadParams> {
     let contents = contents
         .replace("\n", "")
         .replace("\r", "")
@@ -818,7 +843,7 @@ pub fn parse_biquad_config(contents: String) -> Option<MultiBiquadParams> {
     let mut params = vec![];
 
     for i in 0..(parts.len() / 6) {
-        let f = parse_filter_config(&parts[i * 6..i * 6 + 6])?;
+        let f = parse_filter_values(&parts[i * 6..i * 6 + 6])?;
         if !f.is_identity() {
             params.push(f);
         }
@@ -831,9 +856,122 @@ pub fn parse_biquad_config(contents: String) -> Option<MultiBiquadParams> {
     }
 }
 
-pub fn load_biquad_config(filename: &str) -> Result<MultiBiquadParams> {
-    parse_biquad_config(fs::read_to_string(&filename)?)
+pub fn load_biquad_values(filename: &str) -> Result<MultiBiquadParams> {
+    parse_biquad_values(fs::read_to_string(&filename)?)
         .ok_or_else(|| Error::from_string("Failed to parse ".to_owned() + &filename))
+}
+
+pub fn parse_biquad_line(sample_rate: f64, parts: &[&str]) -> Option<BiquadParams> {
+    if parts.len() == 0 {
+        return None;
+    }
+    let mut q = None;
+    let mut f0 = None;
+    let mut gain_db = None;
+
+    let mut pos = 1;
+    while pos < parts.len() {
+        match parts[pos] {
+            "Fc" => {
+                if pos + 2 >= parts.len() || parts[pos + 2] != "Hz" || f0.is_some() {
+                    return None;
+                }
+                f0 = Some(parts[pos + 1].parse::<f64>().ok()?);
+                pos += 3;
+            }
+            "Gain" => {
+                if pos + 2 >= parts.len() || parts[pos + 2] != "dB" || gain_db.is_some() {
+                    return None;
+                }
+                gain_db = Some(parts[pos + 1].parse::<f64>().ok()?);
+                pos += 3;
+            }
+            "Q" => {
+                if pos + 1 >= parts.len() || q.is_some() {
+                    return None;
+                }
+                q = Some(parts[pos + 1].parse::<f64>().ok()?);
+                pos += 2;
+            }
+            _ => return None,
+        }
+    }
+
+    let q = q.unwrap_or(1.0);
+
+    let filter_name = parts[0];
+
+    let filter = match filter_name {
+        "LS" => BiquadParams::low_shelf_filter(sample_rate, f0?, q, gain_db?),
+        "HS" => BiquadParams::high_shelf_filter(sample_rate, f0?, q, gain_db?),
+        "LP" => BiquadParams::low_pass_filter(sample_rate, f0?, q),
+        "HP" => BiquadParams::high_pass_filter(sample_rate, f0?, q),
+        "PK" => BiquadParams::peaking_filter(sample_rate, f0?, q, gain_db?),
+        "None" => BiquadParams::identity_filter(),
+        _ => return None,
+    };
+    Some(filter)
+}
+
+pub fn parse_biquad_definition(sample_rate: f64, contents: String) -> Result<MultiBiquadParams> {
+    let mut params = vec![];
+
+    for line in contents.split("\n") {
+        let parts = line.split_whitespace().collect::<Vec<&str>>();
+        if parts.len() == 0 {
+            continue;
+        }
+        let filter = parse_biquad_line(sample_rate, &parts)
+            .ok_or_else(|| Error::from_string(format!("Can't parse filter line \"{}\"", line)))?;
+        if !filter.is_identity() {
+            params.push(filter);
+        }
+    }
+
+    if params.is_empty() {
+        Err(Error::new("Invalid biquad filter config"))
+    } else {
+        Ok(params)
+    }
+}
+
+pub fn parse_biquad_config(sample_rate: f64, contents: String) -> Result<MultiBiquadParams> {
+    let mut params = vec![];
+
+    for line in contents.split("\n") {
+        if !line.starts_with("Filter") {
+            continue;
+        }
+        let colon_pos = line
+            .find(":")
+            .ok_or_else(|| Error::from_string(format!("Can't parse filter line \"{}\"", line)))?;
+        let (_name, description) = line.split_at(colon_pos + 1);
+        let parts = description.split_whitespace().collect::<Vec<&str>>();
+
+        if parts.len() < 2 {
+            return Err(Error::from_string(format!(
+                "Can't parse filter line \"{}\"",
+                line
+            )));
+        }
+
+        println!("{:?}", parts);
+        if parts[0] != "ON" {
+            continue;
+        }
+
+        let filter = parse_biquad_line(sample_rate, &parts[1..])
+            .ok_or_else(|| Error::from_string(format!("Can't parse filter line \"{}\"", line)))?;
+        if !filter.is_identity() {
+            params.push(filter);
+        }
+    }
+
+    if params.is_empty() {
+        Err(Error::new("Invalid biquad filter config"))
+    } else {
+        Ok(params)
+    }
 }
 
 #[cfg(test)]
@@ -841,7 +979,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_biquad_config() {
+    fn test_parse_biquad_values() {
         let text = "biquad1,
 b0=1.0023810711050223,
 b1=-1.9968421156220293,
@@ -854,12 +992,53 @@ b1=0.0,
 b2=0.0,
 a1=0.0,
 a2=0.0";
-        let params = parse_biquad_config(text.to_owned()).unwrap();
+        let params = parse_biquad_values(text.to_owned()).unwrap();
         assert!(params.len() == 1);
         assert!(params[0].b0 == 1.0023810711050223);
         assert!(params[0].b1 == -1.9968421156220293);
         assert!(params[0].b2 == 0.9944879025811898);
         assert!(params[0].a1 == -1.9968534162959661);
         assert!(params[0].a2 == 0.9968576730122751);
+    }
+
+    #[test]
+    fn test_parse_biquad_config() {
+        let text = "Some text
+Filter  1: ON  LS       Fc    23.0 Hz  Gain  16.0 dB
+Filter  2: ON  PK       Fc    36.1 Hz  Gain -12.0 dB  Q  2.00
+Filter  1: ON  HP       Fc    2300.0 Hz  Q 1.2
+Filter  3: ON  PK       Fc    74.9 Hz  Gain -12.0 dB  Q  4.00
+Filter  4: ON  None   
+Filter  5: ON  None   
+";
+        let params = parse_biquad_config(48000.0, text.to_owned()).unwrap();
+        assert!(
+            params
+                == vec![
+                    BiquadParams::low_shelf_filter(48000.0, 23.0, 1.0, 16.0),
+                    BiquadParams::peaking_filter(48000.0, 36.1, 2.0, -12.0),
+                    BiquadParams::high_pass_filter(48000.0, 2300.0, 1.2),
+                    BiquadParams::peaking_filter(48000.0, 74.9, 4.0, -12.0),
+                ]
+        );
+    }
+
+    #[test]
+    fn test_parse_biquad_definition() {
+        let text = "LS       Fc    23.0 Hz  Gain  16.0 dB
+PK       Fc    36.1 Hz  Gain -12.0 dB  Q  2.00
+HP       Fc    2300.0 Hz  Q 1.2
+PK       Fc    74.9 Hz  Gain -12.0 dB  Q  4.00
+";
+        let params = parse_biquad_definition(48000.0, text.to_owned()).unwrap();
+        assert!(
+            params
+                == vec![
+                    BiquadParams::low_shelf_filter(48000.0, 23.0, 1.0, 16.0),
+                    BiquadParams::peaking_filter(48000.0, 36.1, 2.0, -12.0),
+                    BiquadParams::high_pass_filter(48000.0, 2300.0, 1.2),
+                    BiquadParams::peaking_filter(48000.0, 74.9, 4.0, -12.0),
+                ]
+        );
     }
 }
