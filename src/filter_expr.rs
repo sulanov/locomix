@@ -12,14 +12,14 @@ use threadpool::ThreadPool;
 struct FilterExprParser;
 
 #[derive(PartialEq, Debug)]
-enum FilterExpr {
+pub enum FilterExpr {
     Channel(String),
     Filter(String, Box<FilterExpr>),
     Gain(Gain, Box<FilterExpr>),
     Mix(Vec<FilterExpr>),
 }
 
-fn parse_filter_expr(expr_str: &str) -> Result<FilterExpr> {
+pub fn parse_filter_expr(expr_str: &str) -> Result<FilterExpr> {
     use pest::iterators::Pair;
     fn parse_expr(pair: Pair<Rule>) -> FilterExpr {
         match pair.as_rule() {
@@ -60,8 +60,10 @@ fn parse_filter_expr(expr_str: &str) -> Result<FilterExpr> {
             Rule::sum => FilterExpr::Mix(pair.into_inner().map(parse_expr).collect()),
             Rule::paren_expr => parse_expr(pair.into_inner().next().unwrap()),
             Rule::expression => parse_expr(pair.into_inner().next().unwrap()),
+            Rule::expression_string => parse_expr(pair.into_inner().next().unwrap()),
 
             Rule::WHITESPACE
+            | Rule::EOI
             | Rule::letter
             | Rule::name_char
             | Rule::name
@@ -71,7 +73,7 @@ fn parse_filter_expr(expr_str: &str) -> Result<FilterExpr> {
         }
     }
 
-    let expr = FilterExprParser::parse(Rule::expression, expr_str)?
+    let expr = FilterExprParser::parse(Rule::expression_string, expr_str)?
         .next()
         .unwrap();
     Ok(parse_expr(expr))
@@ -80,6 +82,7 @@ fn parse_filter_expr(expr_str: &str) -> Result<FilterExpr> {
 trait ChannelSource: Send {
     fn apply(&mut self, frame: &Frame, output: &mut Vec<f32>);
     fn reset(&mut self);
+    fn expand_channel_set(&self, channels: &mut PerChannel<bool>);
 }
 
 struct DirectChannelSource {
@@ -94,6 +97,9 @@ impl ChannelSource for DirectChannelSource {
         }
     }
     fn reset(&mut self) {}
+    fn expand_channel_set(&self, channels: &mut PerChannel<bool>) {
+        channels.set(self.channel, true);
+    }
 }
 
 struct FilterChannelSource {
@@ -109,6 +115,9 @@ impl ChannelSource for FilterChannelSource {
     fn reset(&mut self) {
         self.filter.reset();
         self.base.reset();
+    }
+    fn expand_channel_set(&self, channels: &mut PerChannel<bool>) {
+        self.base.expand_channel_set(channels);
     }
 }
 
@@ -126,6 +135,9 @@ impl ChannelSource for GainChannelSource {
     }
     fn reset(&mut self) {
         self.base.reset();
+    }
+    fn expand_channel_set(&self, channels: &mut PerChannel<bool>) {
+        self.base.expand_channel_set(channels);
     }
 }
 
@@ -149,9 +161,14 @@ impl ChannelSource for MixChannelSource {
             t.reset()
         }
     }
+    fn expand_channel_set(&self, channels: &mut PerChannel<bool>) {
+        for t in self.terms.iter() {
+            t.expand_channel_set(channels);
+        }
+    }
 }
 
-enum FilterConfig {
+pub enum FilterConfig {
     Biquad(MultiBiquadParams),
     Fir(FirFilterParams),
 }
@@ -195,16 +212,16 @@ fn filter_expr_to_channel_source(
     Ok(result)
 }
 
-struct FilterExprProcessor {
+pub struct FilterExprProcessor {
     names: BTreeMap<String, ChannelPos>,
     channels: Vec<(ChannelPos, Box<dyn ChannelSource>)>,
     threadpool: ThreadPool,
 }
 
 impl FilterExprProcessor {
-    fn new(
-        filters: BTreeMap<String, FilterConfig>,
-        channel_exprs: Vec<(String, FilterExpr)>,
+    pub fn new(
+        filters: &BTreeMap<String, FilterConfig>,
+        channel_exprs: &Vec<(String, FilterExpr)>,
     ) -> Result<FilterExprProcessor> {
         let mut names = BTreeMap::new();
         let mut channels = Vec::new();
@@ -212,18 +229,23 @@ impl FilterExprProcessor {
         for (name, expr) in channel_exprs {
             let pos = next_pos;
             next_pos += 1;
-            if parse_channel_id(&name).is_some() || names.get(&name).is_some() {
+            if parse_channel_id(&name).is_some() || names.get(name).is_some() {
                 return Err(Error::from_string(format!(
                     "Filtered channel name is not unique: {}",
                     name
                 )));
             }
-            names.insert(name, pos);
+            names.insert(name.clone(), pos);
             let source = filter_expr_to_channel_source(&expr, &filters)?;
             channels.push((pos, source));
         }
 
-        let threadpool = ThreadPool::new(channels.len());
+        let num_threads = if channels.is_empty() {
+            1
+        } else {
+            channels.len()
+        };
+        let threadpool = ThreadPool::new(num_threads);
         Ok(FilterExprProcessor {
             names,
             channels,
@@ -231,17 +253,28 @@ impl FilterExprProcessor {
         })
     }
 
-    fn get_channel_pos(&self, name: &str) -> Option<ChannelPos> {
+    pub fn get_channel_pos(&self, name: &str) -> Option<ChannelPos> {
         let result = parse_channel_id(name);
         if result.is_some() {
             return result;
         }
         self.names.get(name).map(|x| *x)
     }
+
+    pub fn expand_channel_set(&self, channels: &mut PerChannel<bool>) {
+        for (c, src) in self.channels.iter() {
+            if channels.get(*c) == Some(&true) {
+                src.expand_channel_set(channels);
+            }
+        }
+    }
 }
 
 impl StreamFilter for FilterExprProcessor {
     fn apply(&mut self, frame: Frame) -> Frame {
+        if self.channels.is_empty() {
+            return frame;
+        }
         let frame_arc = Arc::new(frame);
 
         let (tx, rx) = channel();
@@ -251,9 +284,11 @@ impl StreamFilter for FilterExprProcessor {
             self.threadpool.execute(move || {
                 let mut result = Vec::new();
                 source.apply(&*frame_arc, &mut result);
+                std::mem::drop(frame_arc);
                 tx.send((channel, source, result)).expect("Failed to send");
             });
         }
+        std::mem::drop(tx);
         let mut results = Vec::new();
         for (channel, source, result) in rx.iter() {
             results.push((channel, result));
@@ -282,6 +317,7 @@ mod tests {
 
     #[test]
     fn parse() {
+        assert!(parse_filter_expr("Left()").is_err());
         assert!(parse_filter_expr("Left").unwrap() == FilterExpr::Channel("Left".to_string()));
         assert!(
             parse_filter_expr("f_1(A)").unwrap()

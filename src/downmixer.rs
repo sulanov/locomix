@@ -37,34 +37,27 @@ impl Downmixer {
     }
 
     pub fn process(&self, mut frame: Frame) -> Frame {
+        self.downmix_channel(&mut frame, CHANNEL_LFE, &[(CHANNEL_FC, SUBWOOFER_LEVEL)]);
+
         self.downmix_channel(
             &mut frame,
-            CHANNEL_LFE,
-            &[
-                (CHANNEL_FL, 0.5 * SUBWOOFER_LEVEL),
-                (CHANNEL_FL, 0.5 * SUBWOOFER_LEVEL),
-            ],
-        );
-        self.downmix_channel(
-            &mut frame,
-            CHANNEL_FC,
-            &[(CHANNEL_FL, 0.5), (CHANNEL_FR, 0.5)],
+            CHANNEL_SC,
+            &[(CHANNEL_SL, 0.5), (CHANNEL_SR, 0.5)],
         );
         self.downmix_channel(&mut frame, CHANNEL_SL, &[(CHANNEL_FL, 1.0)]);
         self.downmix_channel(&mut frame, CHANNEL_SR, &[(CHANNEL_FR, 1.0)]);
-        if self.have_channel(CHANNEL_SL) && self.have_channel(CHANNEL_SR) {
-            self.downmix_channel(
-                &mut frame,
-                CHANNEL_SC,
-                &[(CHANNEL_SL, 0.5), (CHANNEL_SR, 0.5)],
-            );
+
+        if self.have_channel(CHANNEL_FC) {
+            self.downmix_channel(&mut frame, CHANNEL_FL, &[(CHANNEL_FC, 1.0)]);
+            self.downmix_channel(&mut frame, CHANNEL_FR, &[(CHANNEL_FC, 1.0)]);
         } else {
             self.downmix_channel(
                 &mut frame,
-                CHANNEL_SC,
+                CHANNEL_FC,
                 &[(CHANNEL_FL, 0.5), (CHANNEL_FR, 0.5)],
             );
         }
+
         frame
     }
 }

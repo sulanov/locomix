@@ -1,7 +1,7 @@
 use crate::async_input::AsyncInput;
 use crate::base::*;
-use crate::crossover;
 use crate::downmixer;
+use crate::filter_expr;
 use crate::filters::*;
 use crate::output;
 use crate::state;
@@ -96,109 +96,34 @@ impl InputMixer {
 
 pub struct FilteredOutput {
     output: Box<dyn output::Output>,
-    fir_filter: Option<Box<dyn StreamFilter>>,
-    biquad_filter: Option<Box<dyn StreamFilter>>,
-    subwoofer_config: Option<state::SubwooferConfig>,
-
-    drc_enabled: bool,
-    subwoofer_enabled: bool,
-
     downmixer: downmixer::Downmixer,
-    crossover: Option<crossover::CrossoverFilter>,
-    state_observer: state::StateObserver,
+    filter_proc: filter_expr::FilterExprProcessor,
 }
 
 impl FilteredOutput {
     pub fn new(
         output: Box<dyn output::Output>,
         out_channels: PerChannel<bool>,
-        fir_filter: Option<Box<dyn StreamFilter>>,
-        biquad_filter: Option<Box<dyn StreamFilter>>,
-        subwoofer_config: Option<state::SubwooferConfig>,
-        shared_state: &state::SharedState,
+        filter_proc: filter_expr::FilterExprProcessor,
     ) -> Box<dyn output::Output> {
-        let enable_drc = shared_state.lock().state().enable_drc.unwrap_or(false);
-        let enable_subwoofer = shared_state
-            .lock()
-            .state()
-            .enable_subwoofer
-            .unwrap_or(false);
-        let mut result = Box::new(FilteredOutput {
+        Box::new(FilteredOutput {
             output: output,
-            fir_filter: fir_filter,
-            biquad_filter: biquad_filter,
-            subwoofer_config: subwoofer_config,
-
-            drc_enabled: enable_drc,
-            subwoofer_enabled: enable_subwoofer,
-
+            filter_proc,
             downmixer: downmixer::Downmixer::new(out_channels),
-            crossover: None,
-            state_observer: shared_state.lock().add_observer(),
-        });
-        result.update_crossover();
-        result
-    }
-
-    fn update_crossover(&mut self) {
-        self.crossover = match (self.subwoofer_enabled, self.subwoofer_config) {
-            (false, _) => None,
-            (true, None) => None,
-            (
-                true,
-                Some(state::SubwooferConfig {
-                    crossover_frequency,
-                }),
-            ) => Some(crossover::CrossoverFilter::new(crossover_frequency)),
-        };
+        })
     }
 }
 
 impl output::Output for FilteredOutput {
     fn write(&mut self, frame: Frame) -> Result<()> {
-        let mut need_reset = false;
-        for msg in self.state_observer.try_iter() {
-            match msg {
-                state::StateChange::SetEnableDrc { enable } => {
-                    self.drc_enabled = enable;
-                    need_reset = true;
-                }
-                state::StateChange::SetEnableSubwoofer { enable } => {
-                    self.subwoofer_enabled = enable;
-                    need_reset = true;
-                }
-                _ => (),
-            }
-        }
-
-        if need_reset {
-            self.update_crossover();
-            self.fir_filter.as_mut().map(|f| f.reset());
-            self.biquad_filter.as_mut().map(|f| f.reset());
-        }
-
         let frame = self.downmixer.process(frame);
-
-        let frame = match self.crossover.as_mut() {
-            Some(c) => c.apply(frame),
-            None => frame,
-        };
-
-        let frame = match (self.drc_enabled, self.fir_filter.as_mut()) {
-            (true, Some(f)) => f.apply(frame),
-            _ => frame,
-        };
-
-        let frame = match (self.drc_enabled, self.biquad_filter.as_mut()) {
-            (true, Some(f)) => f.apply(frame),
-            _ => frame,
-        };
-
+        let frame = self.filter_proc.apply(frame);
         self.output.write(frame)
     }
 
     fn deactivate(&mut self) {
         self.output.deactivate();
+        self.filter_proc.reset();
     }
 
     fn sample_rate(&self) -> f64 {

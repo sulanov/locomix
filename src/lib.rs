@@ -1,10 +1,12 @@
-extern crate serde;
-
 #[macro_use]
 extern crate rouille;
 #[macro_use]
 extern crate serde_derive;
+#[macro_use]
+extern crate pest_derive;
+
 extern crate lazy_static;
+extern crate serde;
 
 pub mod alsa_input;
 pub mod async_input;
@@ -13,6 +15,7 @@ pub mod brutefir;
 pub mod control;
 pub mod crossover;
 pub mod downmixer;
+pub mod filter_expr;
 pub mod filters;
 pub mod input;
 pub mod input_device;

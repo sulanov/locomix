@@ -3,9 +3,7 @@ use crate::time;
 use std;
 use std::f64::consts::PI;
 use std::fs;
-use std::sync::mpsc;
 use std::sync::Arc;
-use std::thread;
 
 pub type BqCoef = f64;
 pub type FirCoef = f32;
@@ -414,124 +412,6 @@ impl<T: AudioFilter + AudioFilterWithParams<T> + Send> StreamFilter for PerChann
     }
 }
 
-enum FilterJob {
-    Apply {
-        data: Vec<f32>,
-        size_multiplier: usize,
-        response_channel: mpsc::Sender<Vec<f32>>,
-    },
-    Reset,
-}
-
-pub struct MultichannelFirFilter {
-    threads: PerChannel<mpsc::Sender<FilterJob>>,
-    size_multiplier: usize,
-    delay1: f64,
-    delay2: f64,
-}
-
-impl MultichannelFirFilter {
-    pub fn new_pair(left: FirFilterParams, right: FirFilterParams) -> MultichannelFirFilter {
-        let mut params = PerChannel::new();
-        params.set(CHANNEL_FL, left);
-        params.set(CHANNEL_FR, right);
-        return MultichannelFirFilter::new(params);
-    }
-
-    pub fn new(mut params: PerChannel<FirFilterParams>) -> MultichannelFirFilter {
-        let mut threads = PerChannel::new();
-        for (channel, channel_params) in params.iter() {
-            let (job_sender, job_receiver) = mpsc::channel::<FilterJob>();
-            let params = channel_params.clone();
-            threads.set(channel, job_sender);
-            thread::spawn(move || {
-                let mut filter = FirFilter::new(&params);
-                for job in job_receiver.iter() {
-                    match job {
-                        FilterJob::Apply {
-                            mut data,
-                            size_multiplier,
-                            response_channel,
-                        } => {
-                            filter.window_size = filter.buffer.len() * size_multiplier / 256;
-                            filter.apply_multi(&mut data[..]);
-                            response_channel.send(data).expect("Failed to send");
-                        }
-                        FilterJob::Reset => {
-                            filter.reset();
-                        }
-                    }
-                }
-            });
-        }
-
-        MultichannelFirFilter {
-            threads: threads,
-            size_multiplier: 256,
-            delay1: 0.0,
-            delay2: 0.0,
-        }
-    }
-}
-
-impl StreamFilter for MultichannelFirFilter {
-    fn apply(&mut self, mut frame: Frame) -> Frame {
-        let start = time::Time::now();
-
-        let mut recv_channels = vec![];
-
-        for (c, t) in self.threads.iter() {
-            let (s, r) = mpsc::channel::<Vec<f32>>();
-            recv_channels.push(r);
-            frame.ensure_channel(c);
-            t.send(FilterJob::Apply {
-                data: frame.take_channel(c).unwrap(),
-                response_channel: s,
-                size_multiplier: self.size_multiplier,
-            })
-            .expect("Failed to send");
-        }
-
-        for (i, (c, _t)) in self.threads.iter().enumerate() {
-            let v = recv_channels[i].recv().expect("Failed to apply filter");
-            frame.set_channel(c, v);
-        }
-
-        let now = time::Time::now();
-        let delay = (now - start).in_seconds_f() / frame.duration().in_seconds_f();
-        let mean_delay = (self.delay1 + self.delay2 + delay) / 3.0;
-        let m: f64 = if mean_delay > 0.9 && self.size_multiplier > 1 {
-            0.5
-        } else if mean_delay < 0.4 && self.size_multiplier < 256 {
-            2.0
-        } else {
-            1.0
-        };
-        self.delay1 = self.delay2;
-        self.delay2 = delay;
-
-        if m != 1.0 {
-            self.size_multiplier = self.size_multiplier * (2.0 * m) as usize / 2;
-            self.delay1 *= m;
-            self.delay2 *= m;
-            println!(
-                "Updated FIR filter size to {}, delay: {:?} ",
-                self.size_multiplier as f32 / 256.0,
-                mean_delay
-            );
-        }
-
-        frame
-    }
-
-    fn reset(&mut self) {
-        for (_c, t) in self.threads.iter() {
-            t.send(FilterJob::Reset)
-                .expect("Failed to send reset command");
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct FirFilterParams {
     coefficients: Arc<Vec<FirCoef>>,
@@ -555,14 +435,6 @@ pub struct FirFilter {
     buffer_pos: usize,
 
     window_size: usize,
-}
-
-impl FirFilter {
-    fn reset(&mut self) {
-        for v in &mut self.buffer {
-            *v = 0.0;
-        }
-    }
 }
 
 impl AudioFilterWithParams<FirFilter> for FirFilter {
@@ -972,6 +844,11 @@ pub fn parse_biquad_config(sample_rate: f64, contents: String) -> Result<MultiBi
     } else {
         Ok(params)
     }
+}
+
+pub fn load_biquad_config(sample_rate: f64, filename: &str) -> Result<MultiBiquadParams> {
+    parse_biquad_config(sample_rate, fs::read_to_string(&filename)?)
+        .map_err(|e| Error::from_string(format!("Failed to parse {}: {}", filename, e)))
 }
 
 #[cfg(test)]

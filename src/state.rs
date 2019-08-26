@@ -27,11 +27,6 @@ pub struct InputState {
     pub gain: Gain,
 }
 
-#[derive(Serialize, Copy, Clone)]
-pub struct SubwooferConfig {
-    pub crossover_frequency: f32,
-}
-
 #[derive(Serialize)]
 pub struct SpeakersConfig {
     pub name: String,
@@ -43,8 +38,6 @@ pub struct SpeakersConfig {
 #[derive(Serialize)]
 pub struct OutputState {
     pub name: String,
-    pub subwoofer: Option<SubwooferConfig>,
-    pub drc_supported: bool,
 
     pub speakers: Vec<SpeakersConfig>,
     pub current_speakers: Option<usize>,
@@ -115,8 +108,6 @@ pub struct State {
     pub mux_mode: MuxMode,
     pub bass_boost: Gain,
     pub loudness: LoudnessConfig,
-    pub enable_drc: Option<bool>,
-    pub enable_subwoofer: Option<bool>,
     pub enable_crossfeed: Option<bool>,
     pub stream_state: StreamState,
 }
@@ -173,8 +164,6 @@ impl StateController {
                 volume: DEFAULT_VOLUME,
                 bass_boost: Gain { db: 0.0 },
                 loudness: LoudnessConfig::default(),
-                enable_drc: None,
-                enable_subwoofer: None,
                 enable_crossfeed: None,
                 stream_state: StreamState::Active,
             },
@@ -191,12 +180,6 @@ impl StateController {
     }
 
     pub fn add_output(&mut self, state: OutputState) {
-        if self.state.enable_drc.is_none() && state.drc_supported {
-            self.state.enable_drc = Some(true);
-        }
-        if self.state.enable_subwoofer.is_none() && state.subwoofer.is_some() {
-            self.state.enable_subwoofer = Some(true);
-        }
         self.state.outputs.push(state);
     }
 
@@ -293,13 +276,6 @@ impl StateController {
         self.broadcast(StateChange::SetMuxMode { mux_mode: mux_mode });
     }
 
-    pub fn set_enable_drc(&mut self, enable: bool) {
-        if self.state.enable_drc.is_some() {
-            self.state.enable_drc = Some(enable);
-            self.broadcast(StateChange::SetEnableDrc { enable });
-        }
-    }
-
     pub fn set_bass_boost(&mut self, bass_boost: Gain) {
         self.state.bass_boost = bass_boost;
         self.broadcast(StateChange::SetBassBoost { bass_boost });
@@ -316,13 +292,6 @@ impl StateController {
             device: input_id,
             gain: gain,
         });
-    }
-
-    pub fn set_enable_subwoofer(&mut self, enable: bool) {
-        if self.state.enable_subwoofer.is_some() {
-            self.state.enable_subwoofer = Some(enable);
-            self.broadcast(StateChange::SetEnableSubwoofer { enable });
-        }
     }
 
     pub fn set_enable_crossfeed(&mut self, enable: bool) {

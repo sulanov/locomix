@@ -1,11 +1,6 @@
 #[macro_use]
 extern crate serde_derive;
 
-#[macro_use]
-extern crate pest_derive;
-
-mod filter_expr;
-
 use self::byteorder::{NativeEndian, ReadBytesExt};
 use byteorder;
 use getopts;
@@ -14,8 +9,8 @@ use locomix;
 use locomix::alsa_input;
 use locomix::async_input;
 use locomix::base;
-use locomix::brutefir;
 use locomix::control;
+use locomix::filter_expr;
 use locomix::filters;
 use locomix::input;
 use locomix::light;
@@ -97,6 +92,16 @@ struct InputConfig {
 }
 
 #[derive(Deserialize)]
+struct FilterConfig {
+    name: String,
+    biquad: Option<String>,
+    biquad_config: Option<String>,
+    biquad_values_file: Option<String>,
+    fir_file: Option<String>,
+    fir_length: Option<usize>,
+}
+
+#[derive(Deserialize)]
 struct CompositeOutputEntry {
     device: String,
     sample_rate: Option<usize>,
@@ -124,12 +129,7 @@ struct OutputConfig {
     channel_map: Option<String>,
     volume: Option<toml::value::Table>,
 
-    subwoofer_crossover_frequency: Option<usize>,
-    fir_filters: Option<BTreeMap<String, String>>,
-    fir_length: Option<usize>,
-    use_brutefir: Option<bool>,
-
-    biquad_filters: Option<BTreeMap<String, String>>,
+    filtered_channels: Option<BTreeMap<String, String>>,
 
     full_scale_output_volts: Option<f32>,
     speakers: Option<Vec<SpeakersConfig>>,
@@ -146,28 +146,16 @@ struct Config {
     resampler_window: Option<usize>,
 
     input: Vec<InputConfig>,
+    filter: Vec<FilterConfig>,
     output: Vec<OutputConfig>,
     control_device: Option<Vec<toml::value::Table>>,
     enable_display: Option<bool>,
 }
 
-fn parse_channel_id(id: String) -> Result<base::ChannelPos, RunError> {
-    match id.to_uppercase().as_str() {
-        "L" | "FL" | "LEFT" => Ok(base::CHANNEL_FL),
-        "R" | "FR" | "RIGHT" => Ok(base::CHANNEL_FR),
-        "C" | "FC" | "CENTER" | "CENTRE" => Ok(base::CHANNEL_FC),
-        "SL" | "SURROUND_LEFT" => Ok(base::CHANNEL_SL),
-        "SR" | "SURROUND_RIGHT" => Ok(base::CHANNEL_SR),
-        "SC" | "SURROUND" | "SURROUND_CENTER" | "SURROUND_CENTRE" => Ok(base::CHANNEL_SC),
-        "S" | "B" | "SUB" | "LFE" => Ok(base::CHANNEL_LFE),
-        "_" => Ok(base::CHANNEL_UNDEFINED),
-        _ => Err(RunError::new(
-            format!("Invalid channel id: {}", id).as_str(),
-        )),
-    }
-}
-
-fn parse_channel_map(map_str: Option<String>) -> Result<Vec<base::ChannelPos>, RunError> {
+fn parse_channel_map(
+    map_str: Option<String>,
+    parse_channel: &dyn Fn(&str) -> Option<base::ChannelPos>,
+) -> Result<Vec<base::ChannelPos>, RunError> {
     let unwrapped = map_str.unwrap_or("L R".to_string());
     let names: Vec<String> = unwrapped
         .as_str()
@@ -176,7 +164,9 @@ fn parse_channel_map(map_str: Option<String>) -> Result<Vec<base::ChannelPos>, R
         .collect();
     let mut result: Vec<base::ChannelPos> = vec![];
     for n in names {
-        result.push(parse_channel_id(n)?);
+        let c = parse_channel(&n)
+            .ok_or_else(|| RunError::from_string(format!("Unknown channel ID: {}", n)))?;
+        result.push(c);
     }
 
     if result.len() < 2 {
@@ -200,55 +190,29 @@ fn load_fir_params(filename: &str, size: usize) -> Result<filters::FirFilterPara
     Ok(filters::FirFilterParams::new(result, size))
 }
 
-fn load_fir_filters(
-    files: Option<BTreeMap<String, String>>,
-    length: usize,
-    sample_rate: usize,
-    period_duration: TimeDelta,
-    use_brutefir: bool,
-) -> Result<Option<Box<dyn filters::StreamFilter>>, RunError> {
-    let mut filters = base::PerChannel::new();
-    match files {
-        None => return Ok(None),
-        Some(map) => {
-            for (c, f) in map {
-                filters.set(parse_channel_id(c)?, f)
-            }
+fn load_filters(
+    filter_configs: Vec<FilterConfig>,
+    sample_rate: f64,
+) -> Result<BTreeMap<String, filter_expr::FilterConfig>, RunError> {
+    let mut result = BTreeMap::new();
+    for fc in filter_configs {
+        if result.get(&fc.name).is_some() {
+            return Err(RunError::from_string(format!(
+                "Duplicaite filter name: {}",
+                fc.name
+            )));
         }
+        let f = match (fc.biquad, fc.biquad_config, fc.biquad_values_file, fc.fir_file) {
+            (Some(biquad), None, None, None) => filter_expr::FilterConfig::Biquad(filters::parse_biquad_definition(sample_rate, biquad)?),
+            (None, Some(filename), None, None) => filter_expr::FilterConfig::Biquad(filters::load_biquad_config(sample_rate, &filename)?),
+            (None, None, Some(filename), None) => filter_expr::FilterConfig::Biquad(filters::load_biquad_values(&filename)?),
+            (None, None, None, Some(filename)) => filter_expr::FilterConfig::Fir(load_fir_params(&filename, fc.fir_length.unwrap_or(5000))?),
+            (None, None, None, None) => return Err(RunError::new("One of `biquad`, `biquad_file`, `biquad_values_file` `fir_file` must be specified for each filter." )),
+            _ => return Err(RunError::new("Only one of `biquad`, `biquad_file`, `biquad_values_file` `fir_file` must be specified for each filter." )),
+        };
+        result.insert(fc.name, f);
     }
-
-    if use_brutefir {
-        Ok(Some(Box::new(brutefir::BruteFir::new(
-            filters,
-            sample_rate,
-            period_duration,
-            length,
-        )?)))
-    } else {
-        let mut loaded = base::PerChannel::new();
-        for (c, f) in filters.iter() {
-            loaded.set(c, load_fir_params(&f, length)?);
-        }
-        Ok(Some(Box::new(filters::MultichannelFirFilter::new(loaded))))
-    }
-}
-
-fn load_biquad_filters(
-    files: Option<BTreeMap<String, String>>,
-) -> Result<Option<Box<dyn filters::StreamFilter>>, RunError> {
-    let mut filters = base::PerChannel::new();
-    match files {
-        None => return Ok(None),
-        Some(map) => {
-            for (c, f) in map {
-                filters.set(parse_channel_id(c)?, filters::load_biquad_values(&f)?)
-            }
-        }
-    }
-
-    Ok(Some(Box::new(filters::PerChannelFilter::<
-        filters::MultiBiquadFilter,
-    >::new(filters))))
+    Ok(result)
 }
 
 fn process_speaker_config(
@@ -385,7 +349,7 @@ fn run() -> Result<(), RunError> {
             name: name,
             id: input.device,
             sample_rate: input.sample_rate,
-            channels: parse_channel_map(input.channel_map)?,
+            channels: parse_channel_map(input.channel_map, &base::parse_channel_id)?,
             delay: TimeDelta::zero(),
             enable_a52: input.enable_a52.unwrap_or(false),
         };
@@ -416,11 +380,19 @@ fn run() -> Result<(), RunError> {
         return Err(RunError::new("No inputs specified."));
     }
 
+    let filters = load_filters(config.filter, sample_rate as f64)?;
+
     let mut outputs = Vec::<Box<dyn output::Output>>::new();
     let mut index = 0;
     for output in config.output {
         index += 1;
         let name = output.name.unwrap_or(format!("Output {}", index));
+
+        let mut exprs = vec![];
+        for (name, expr) in output.filtered_channels.unwrap_or_else(|| BTreeMap::new()) {
+            exprs.push((name, filter_expr::parse_filter_expr(&expr)?));
+        }
+        let filter_proc = filter_expr::FilterExprProcessor::new(&filters, &exprs)?;
 
         let devices = match (output.device, output.channel_map, output.devices) {
             (Some(device), channel_map, None) => vec![(
@@ -428,7 +400,10 @@ fn run() -> Result<(), RunError> {
                     name: name.clone(),
                     id: device,
                     sample_rate: output.sample_rate,
-                    channels: parse_channel_map(channel_map)?,
+                    channels: parse_channel_map(
+                        channel_map,
+                        &(|id| filter_proc.get_channel_pos(id)),
+                    )?,
                     delay: TimeDelta::zero(),
                     enable_a52: false,
                 },
@@ -442,7 +417,10 @@ fn run() -> Result<(), RunError> {
                             name: "".to_string(),
                             id: d.device,
                             sample_rate: d.sample_rate.or(output.sample_rate),
-                            channels: parse_channel_map(d.channel_map)?,
+                            channels: parse_channel_map(
+                                d.channel_map,
+                                &(|id| filter_proc.get_channel_pos(id)),
+                            )?,
                             delay: TimeDelta::milliseconds_f(d.delay.unwrap_or(0f64)),
                             enable_a52: false,
                         },
@@ -469,14 +447,14 @@ fn run() -> Result<(), RunError> {
         };
 
         let mut channels = base::PerChannel::new();
-        for d in devices.iter() {
-            for c in d.0.channels.iter() {
+        for (d, _) in devices.iter() {
+            for c in d.channels.iter() {
                 if *c != base::CHANNEL_UNDEFINED {
                     channels.set(*c, true);
                 }
             }
         }
-        let have_subwoofer = channels.get(base::CHANNEL_LFE) == Some(&true);
+        filter_proc.expand_channel_set(&mut channels);
 
         let mut out = output::CompositeOutput::new();
         for (spec, volume) in devices {
@@ -493,42 +471,6 @@ fn run() -> Result<(), RunError> {
 
             out.add_device(channels, out_dev);
         }
-
-        let sub_config = match (have_subwoofer, output.subwoofer_crossover_frequency) {
-            (false, Some(_)) => {
-                return Err(RunError::new(
-                    format!(
-                "subwoofer_crossover_frequency is set for output {}, which doesn't have subwoofer.",
-                name
-            )
-                    .as_str(),
-                ))
-            }
-            (false, None) => None,
-            (true, None) => Some(state::SubwooferConfig {
-                crossover_frequency: 80.0,
-            }),
-            (true, Some(f)) if f > 20 && f < 1000 => Some(state::SubwooferConfig {
-                crossover_frequency: 80.0,
-            }),
-            (true, Some(f)) => {
-                return Err(RunError::new(
-                    format!("Invalid subwoofer_crossover_frequency: {}", f).as_str(),
-                ))
-            }
-        };
-
-        let fir_length = output.fir_length.unwrap_or(5000);
-        let use_brutefir = output.use_brutefir.unwrap_or(false);
-        let fir_filters = load_fir_filters(
-            output.fir_filters,
-            fir_length,
-            sample_rate,
-            period_duration,
-            use_brutefir,
-        )?;
-
-        let biquad_filters = load_biquad_filters(output.biquad_filters)?;
 
         let speakers = match output.speakers {
             Some(speakers) => {
@@ -547,8 +489,6 @@ fn run() -> Result<(), RunError> {
 
         shared_state.lock().add_output(state::OutputState {
             name: name.clone(),
-            drc_supported: fir_filters.is_some() || fir_filters.is_some(),
-            subwoofer: sub_config,
             current_speakers: if speakers.is_empty() { None } else { Some(0) },
             speakers,
         });
@@ -556,10 +496,7 @@ fn run() -> Result<(), RunError> {
         let out = output::AsyncOutput::new(mixer::FilteredOutput::new(
             Box::new(out),
             channels,
-            fir_filters,
-            biquad_filters,
-            sub_config,
-            &shared_state,
+            filter_proc,
         ));
 
         outputs.push(out);

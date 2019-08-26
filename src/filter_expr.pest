@@ -13,3 +13,4 @@ sum_operand = { mult | filter | channel | paren_expr }
 sum = { sum_operand ~ ("+" ~ sum_operand)+ }
 filter = { name ~ "(" ~ expression ~ ")" }
 expression = { sum | mult | filter | channel }
+expression_string = { SOI ~ expression ~ EOI }

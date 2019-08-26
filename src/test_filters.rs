@@ -2,15 +2,12 @@ extern crate byteorder;
 extern crate getopts;
 extern crate locomix;
 
-use self::byteorder::{NativeEndian, ReadBytesExt};
 use getopts::Options;
 use locomix::base::*;
-use locomix::brutefir::*;
 use locomix::filters::*;
 use locomix::time;
 use std::env;
 use std::f64::consts::PI;
-use std::fs;
 
 fn get_filter_response<F: StreamFilter>(f: &mut F, sample_rate: f64, freq: f64) -> f64 {
     let mut test_signal = Frame::new(sample_rate, time::Time::now(), 2 * sample_rate as usize);
@@ -79,18 +76,6 @@ fn draw_crossfeed_graph(sample_rate: f64) {
     }
 }
 
-fn load_fir_params(filename: &str, size: usize) -> Result<FirFilterParams> {
-    let mut file = fs::File::open(filename)?;
-    let mut result = Vec::<f32>::new();
-    loop {
-        match file.read_f32::<NativeEndian>() {
-            Ok(value) => result.push(value),
-            Err(_) => break,
-        }
-    }
-    Ok(FirFilterParams::new(result, size))
-}
-
 fn print_usage(program: &str, opts: Options) {
     let brief = format!("Usage: {} [options]", program);
     print!("{}", opts.usage(&brief));
@@ -142,32 +127,6 @@ fn run() -> Result<()> {
         sample_rate,
         MultichannelFilter::<LoudnessFilter>::new(SimpleFilterParams::new(sample_rate, 10.0)),
     );
-
-    let filter_length = match matches.opt_str("L").map(|x| x.parse::<usize>()) {
-        None => 5000,
-        Some(Ok(length)) => length,
-        Some(Err(_)) => return Err(Error::new("Cannot parse filter length.")),
-    };
-
-    for filename in matches.opt_strs("F") {
-        println!("Brute FIR filter {}", filename);
-        let mut f = PerChannel::new();
-        f.set(CHANNEL_FL, filename.clone());
-        draw_filter_graph(
-            sample_rate,
-            BruteFir::new(
-                f,
-                sample_rate as usize,
-                time::TimeDelta::milliseconds(5),
-                filter_length,
-            )?,
-        );
-
-        println!("FIR filter {}", filename);
-        let mut filters = PerChannel::new();
-        filters.set(CHANNEL_FL, load_fir_params(&filename, filter_length)?);
-        draw_filter_graph(sample_rate, MultichannelFirFilter::new(filters));
-    }
 
     for filename in matches.opt_strs("b") {
         println!("biquad filter {}", filename);

@@ -41,8 +41,6 @@ fn serve_web(address: &str, shared_state: SharedState) {
                      current_output: Option<usize>,
                      current_speakers: Option<usize>,
                      mux_mode: Option<MuxMode>,
-                     enable_drc: Option<bool>,
-                     enable_subwoofer: Option<bool>,
                      enable_crossfeed: Option<bool>,
                      bass_boost: Option<f32>,
                      loudness: Option<LoudnessParams>,
@@ -71,14 +69,6 @@ fn serve_web(address: &str, shared_state: SharedState) {
 
                 json.mux_mode.map( |mux_mode| {
                     state_controller.set_mux_mode(mux_mode);
-                });
-
-                json.enable_drc.map( |enable| {
-                    state_controller.set_enable_drc(enable);
-                });
-
-                json.enable_subwoofer.map( |enable| {
-                    state_controller.set_enable_subwoofer(enable);
                 });
 
                 json.enable_crossfeed.map( |enable| {
