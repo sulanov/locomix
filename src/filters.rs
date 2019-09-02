@@ -128,13 +128,13 @@ impl BiquadParams {
     pub fn peaking_filter(
         sample_rate: BqCoef,
         f0: BqCoef,
-        slope: BqCoef,
+        q: BqCoef,
         gain_db: BqCoef,
     ) -> BiquadParams {
         let w0 = 2.0 * PI * f0 / sample_rate;
         let w0_cos = w0.cos();
         let a = (10.0 as BqCoef).powf(gain_db / 40.0);
-        let alpha = w0.sin() / 2.0 * ((a + 1.0 / a) * (1.0 / slope - 1.0) + 2.0).sqrt();
+        let alpha = w0.sin() / (2.0 * q);
 
         BiquadParams::new(
             1.0 + alpha * a,
@@ -814,9 +814,10 @@ pub fn parse_biquad_config(sample_rate: f64, contents: String) -> Result<MultiBi
         if !line.starts_with("Filter") {
             continue;
         }
-        let colon_pos = line
-            .find(":")
-            .ok_or_else(|| Error::from_string(format!("Can't parse filter line \"{}\"", line)))?;
+        let colon_pos = match line.find(":") {
+            Some(p) => p,
+            None => continue,
+        };
         let (_name, description) = line.split_at(colon_pos + 1);
         let parts = description.split_whitespace().collect::<Vec<&str>>();
 

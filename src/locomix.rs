@@ -95,7 +95,7 @@ struct InputConfig {
 struct FilterConfig {
     name: String,
     biquad: Option<String>,
-    biquad_config: Option<String>,
+    biquad_file: Option<String>,
     biquad_values_file: Option<String>,
     fir_file: Option<String>,
     fir_length: Option<usize>,
@@ -202,7 +202,7 @@ fn load_filters(
                 fc.name
             )));
         }
-        let f = match (fc.biquad, fc.biquad_config, fc.biquad_values_file, fc.fir_file) {
+        let f = match (fc.biquad, fc.biquad_file, fc.biquad_values_file, fc.fir_file) {
             (Some(biquad), None, None, None) => filter_expr::FilterConfig::Biquad(filters::parse_biquad_definition(sample_rate, biquad)?),
             (None, Some(filename), None, None) => filter_expr::FilterConfig::Biquad(filters::load_biquad_config(sample_rate, &filename)?),
             (None, None, Some(filename), None) => filter_expr::FilterConfig::Biquad(filters::load_biquad_values(&filename)?),
