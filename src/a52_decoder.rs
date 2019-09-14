@@ -3,7 +3,7 @@
 
 use crate::base;
 use crate::time;
-use libc::{c_int, c_void, uint32_t, uint8_t};
+use libc::{c_int, c_void};
 use std::cmp;
 use std::slice;
 
@@ -32,17 +32,17 @@ type dynrng_callback = Option<extern "C" fn(sample_t, *mut c_void)>;
 
 #[link(name = "a52")]
 extern "C" {
-    fn a52_init(mm_accel: uint32_t) -> *mut a52_state_t;
+    fn a52_init(mm_accel: u32) -> *mut a52_state_t;
     fn a52_samples(state: *mut a52_state_t) -> *const sample_t;
     fn a52_syncinfo(
-        buf: *const uint8_t,
+        buf: *const u8,
         flags: *mut c_int,
         sample_rate: *mut c_int,
         bit_rate: *mut c_int,
     ) -> c_int;
     fn a52_frame(
         state: *mut a52_state_t,
-        buf: *const uint8_t,
+        buf: *const u8,
         flags: *mut c_int,
         level: *const sample_t,
         bias: sample_t,
