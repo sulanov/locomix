@@ -146,7 +146,7 @@ struct Config {
     resampler_window: Option<usize>,
 
     input: Vec<InputConfig>,
-    filter: Vec<FilterConfig>,
+    filter: Option<Vec<FilterConfig>>,
     output: Vec<OutputConfig>,
     control_device: Option<Vec<toml::value::Table>>,
     enable_display: Option<bool>,
@@ -191,11 +191,11 @@ fn load_fir_params(filename: &str, size: usize) -> Result<filters::FirFilterPara
 }
 
 fn load_filters(
-    filter_configs: Vec<FilterConfig>,
+    filter_configs: Option<Vec<FilterConfig>>,
     sample_rate: f64,
 ) -> Result<BTreeMap<String, filter_expr::FilterConfig>, RunError> {
     let mut result = BTreeMap::new();
-    for fc in filter_configs {
+    for fc in filter_configs.unwrap_or(vec![]) {
         if result.get(&fc.name).is_some() {
             return Err(RunError::from_string(format!(
                 "Duplicaite filter name: {}",
