@@ -84,6 +84,12 @@ impl UserInterface for HeadlessUi {
                         .lock()
                         .move_volume(base::Gain { db: 0.5 * d as f32 });
                 }
+                Ok(InputEvent::Pressed(Key::VolumeUp)) => {
+                    shared_state.lock().move_volume(base::Gain { db: 1.0 });
+                }
+                Ok(InputEvent::Pressed(Key::VolumeDown)) => {
+                    shared_state.lock().move_volume(base::Gain { db: -1.0 });
+                }
                 Ok(_) => (),
             }
         }
